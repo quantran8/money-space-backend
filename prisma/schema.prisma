@@ -1,0 +1,684 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum HouseholdRole {
+  owner
+  partner
+  viewer
+}
+
+enum PermissionLevel {
+  view_summary
+  view_grouped
+  view_detail
+  edit_content
+  admin
+}
+
+enum UpdateFrequency {
+  weekly
+  monthly
+  manual
+}
+
+enum InviteStatus {
+  pending
+  accepted
+  expired
+  cancelled
+}
+
+enum SnapshotStatus {
+  good
+  attention
+  tight
+  insufficient_data
+}
+
+enum SnapshotSourceMode {
+  manual
+  calculated
+  mixed
+}
+
+enum AssetType {
+  cash
+  bank_account
+  saving_deposit
+  bond
+  gold
+  stock
+  fund
+  crypto
+  foreign_currency
+  real_estate
+  insurance
+  loan_receivable
+  certificate_of_deposit
+  investment
+  other
+}
+
+enum AssetValuationMode {
+  manual
+  market_priced
+  formula_calculated
+}
+
+enum AssetLiquidity {
+  usable_now
+  not_immediately_usable
+  long_term
+}
+
+enum VisibilityLevel {
+  summary_only
+  grouped
+  detail
+  private
+}
+
+enum AssetClass {
+  gold
+  crypto
+  stock
+  fund
+  foreign_currency
+}
+
+enum AssetCalculationType {
+  saving_deposit
+  bond
+  loan_receivable
+  certificate_of_deposit
+  custom_interest
+}
+
+enum InterestRateType {
+  fixed
+  floating
+}
+
+enum CompoundingFrequency {
+  none
+  daily
+  monthly
+  quarterly
+  yearly
+  at_maturity
+}
+
+enum PayoutFrequency {
+  at_maturity
+  monthly
+  quarterly
+  yearly
+}
+
+enum AssetCalculationStatus {
+  active
+  matured
+  closed
+  cancelled
+}
+
+enum AssetValuationMethod {
+  manual
+  market_price_api
+  formula_calculated
+  statement
+  appraised
+  other
+}
+
+enum ConfidenceLevel {
+  low
+  medium
+  high
+}
+
+enum PaymentFrequency {
+  once
+  weekly
+  monthly
+  quarterly
+  yearly
+}
+
+enum PaymentStatus {
+  unpaid
+  paid
+  pending_confirmation
+  postponed
+  overdue
+}
+
+enum AttentionLevel {
+  normal
+  important
+  urgent
+}
+
+enum MoneyEventType {
+  expense
+  income
+  transfer
+  asset_purchase
+  asset_sale
+  asset_update
+  payment_paid
+  goal_contribution
+  debt_update
+  adjustment
+  other
+}
+
+enum MoneyEventCategory {
+  housing
+  education
+  transport
+  health
+  family_support
+  insurance
+  saving
+  investment
+  debt
+  income
+  repair
+  household
+  children
+  travel
+  other
+}
+
+enum MoneyDirection {
+  inflow
+  outflow
+  neutral
+}
+
+enum MoneyEventStatus {
+  recorded
+  pending_confirmation
+  cancelled
+}
+
+enum GoalCategory {
+  emergency_fund
+  home
+  home_repair
+  children
+  travel
+  debt_repayment
+  investment
+  education
+  other
+}
+
+enum GoalPriority {
+  low
+  medium
+  high
+}
+
+enum GoalStatus {
+  active
+  paused
+  completed
+  cancelled
+}
+
+enum RelatedObjectType {
+  asset
+  upcoming_payment
+  financial_goal
+  snapshot
+  money_event
+}
+
+enum AttentionItemStatus {
+  open
+  seen
+  resolved
+  dismissed
+}
+
+model Profile {
+  id                         String              @id @db.Uuid
+  fullName                   String?             @map("full_name")
+  displayName                String?             @map("display_name")
+  avatarUrl                  String?             @map("avatar_url")
+  email                      String?
+  phone                      String?
+  createdAt                  DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                  DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  householdsCreated          Household[]         @relation("HouseholdCreatedBy")
+  householdMembers           HouseholdMember[]   @relation("HouseholdMemberUser")
+  invitedHouseholdMembers    HouseholdMember[]   @relation("HouseholdMemberInvitedBy")
+  householdInvitesSent       HouseholdInvite[]   @relation("HouseholdInviteInvitedBy")
+  householdInvitesAccepted   HouseholdInvite[]   @relation("HouseholdInviteAcceptedBy")
+  snapshotsCreated           Snapshot[]          @relation("SnapshotCreatedBy")
+  assetsCreated              Asset[]             @relation("AssetCreatedBy")
+  assetsUpdated              Asset[]             @relation("AssetUpdatedBy")
+  assetValuationsCreated     AssetValuation[]    @relation("AssetValuationCreatedBy")
+  assetValuationsUpdated     AssetValuation[]    @relation("AssetValuationUpdatedBy")
+  upcomingPaymentsCreated    UpcomingPayment[]   @relation("UpcomingPaymentCreatedBy")
+  upcomingPaymentsUpdated    UpcomingPayment[]   @relation("UpcomingPaymentUpdatedBy")
+  upcomingPaymentsPaidBy     UpcomingPayment[]   @relation("UpcomingPaymentPaidBy")
+  financialGoalsCreated      FinancialGoal[]     @relation("FinancialGoalCreatedBy")
+  financialGoalsUpdated      FinancialGoal[]     @relation("FinancialGoalUpdatedBy")
+  moneyEventsCreated         MoneyEvent[]        @relation("MoneyEventCreatedBy")
+  moneyEventsUpdated         MoneyEvent[]        @relation("MoneyEventUpdatedBy")
+  attentionItemsCreated      AttentionItem[]     @relation("AttentionItemCreatedBy")
+  attentionItemsSeen         AttentionItem[]     @relation("AttentionItemSeenBy")
+  attentionItemsResolved     AttentionItem[]     @relation("AttentionItemResolvedBy")
+  auditLogsActed             AuditLog[]          @relation("AuditLogActor")
+
+  @@map("profiles")
+}
+
+model Household {
+  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String
+  currency             String                @default("VND")
+  updateFrequency      UpdateFrequency       @default(weekly) @map("update_frequency")
+  createdById          String                @map("created_by") @db.Uuid
+  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt            DateTime?             @map("deleted_at") @db.Timestamptz(6)
+  createdBy            Profile               @relation("HouseholdCreatedBy", fields: [createdById], references: [id])
+  householdMembers     HouseholdMember[]
+  householdInvites     HouseholdInvite[]
+  snapshots            Snapshot[]
+  assets               Asset[]
+  assetMarketPositions AssetMarketPosition[]
+  assetCalculationTerms AssetCalculationTerm[]
+  assetValuations      AssetValuation[]
+  snapshotAssetValues  SnapshotAssetValue[]
+  upcomingPayments     UpcomingPayment[]
+  financialGoals       FinancialGoal[]
+  moneyEvents          MoneyEvent[]
+  attentionItems       AttentionItem[]
+  auditLogs            AuditLog[]
+
+  @@map("households")
+}
+
+model HouseholdMember {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId        String            @map("household_id") @db.Uuid
+  userId             String            @map("user_id") @db.Uuid
+  role               HouseholdRole     @default(partner)
+  permissionLevel    PermissionLevel   @default(view_detail) @map("permission_level")
+  joinedAt           DateTime          @default(now()) @map("joined_at") @db.Timestamptz(6)
+  invitedById        String?           @map("invited_by") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  household          Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user               Profile           @relation("HouseholdMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy          Profile?          @relation("HouseholdMemberInvitedBy", fields: [invitedById], references: [id])
+  heldAssets         Asset[]           @relation("AssetHolderMember")
+  ownedUpcomingPayments UpcomingPayment[] @relation("UpcomingPaymentOwnerMember")
+
+  @@unique([householdId, userId], map: "household_members_unique")
+  @@map("household_members")
+}
+
+model HouseholdInvite {
+  id                     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId            String           @map("household_id") @db.Uuid
+  invitedById            String           @map("invited_by") @db.Uuid
+  inviteeEmail           String?          @map("invitee_email")
+  inviteePhone           String?          @map("invitee_phone")
+  token                  String           @unique
+  status                 InviteStatus     @default(pending)
+  defaultRole            HouseholdRole    @default(partner) @map("default_role")
+  defaultPermissionLevel PermissionLevel  @default(view_detail) @map("default_permission_level")
+  expiresAt              DateTime         @map("expires_at") @db.Timestamptz(6)
+  acceptedById           String?          @map("accepted_by") @db.Uuid
+  acceptedAt             DateTime?        @map("accepted_at") @db.Timestamptz(6)
+  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  household              Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitedBy              Profile          @relation("HouseholdInviteInvitedBy", fields: [invitedById], references: [id])
+  acceptedBy             Profile?         @relation("HouseholdInviteAcceptedBy", fields: [acceptedById], references: [id])
+
+  @@map("household_invites")
+}
+
+model Snapshot {
+  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId          String              @map("household_id") @db.Uuid
+  snapshotDate         DateTime            @default(now()) @map("snapshot_date") @db.Date
+  totalLiquid          Decimal             @default(0) @map("total_liquid") @db.Decimal(14, 2)
+  totalSavings         Decimal             @default(0) @map("total_savings") @db.Decimal(14, 2)
+  totalLongTermAssets  Decimal             @default(0) @map("total_long_term_assets") @db.Decimal(14, 2)
+  totalDebt            Decimal             @default(0) @map("total_debt") @db.Decimal(14, 2)
+  upcomingDueAmount    Decimal             @default(0) @map("upcoming_due_amount") @db.Decimal(14, 2)
+  attentionCount       Int                 @default(0) @map("attention_count")
+  status               SnapshotStatus      @default(insufficient_data)
+  sourceMode           SnapshotSourceMode  @default(manual) @map("source_mode")
+  note                 String?
+  createdById          String              @map("created_by") @db.Uuid
+  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt            DateTime?           @map("deleted_at") @db.Timestamptz(6)
+  household            Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy            Profile             @relation("SnapshotCreatedBy", fields: [createdById], references: [id])
+  snapshotAssetValues  SnapshotAssetValue[]
+  moneyEvents          MoneyEvent[]        @relation("MoneyEventSnapshot")
+
+  @@map("snapshots")
+}
+
+model Asset {
+  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId           String                  @map("household_id") @db.Uuid
+  name                  String
+  type                  AssetType
+  valuationMode         AssetValuationMode      @default(manual) @map("valuation_mode")
+  currentValue          Decimal                 @default(0) @map("current_value") @db.Decimal(14, 2)
+  currency              String                  @default("VND")
+  valueUpdatedAt        DateTime?               @map("value_updated_at") @db.Timestamptz(6)
+  holderMemberId        String?                 @map("holder_member_id") @db.Uuid
+  liquidity             AssetLiquidity          @default(usable_now)
+  purpose               String?
+  visibilityLevel       VisibilityLevel         @default(detail) @map("visibility_level")
+  note                  String?
+  createdById           String                  @map("created_by") @db.Uuid
+  createdAt             DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById           String?                 @map("updated_by") @db.Uuid
+  updatedAt             DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt             DateTime?               @map("deleted_at") @db.Timestamptz(6)
+  household             Household               @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  holderMember          HouseholdMember?        @relation("AssetHolderMember", fields: [holderMemberId], references: [id])
+  createdBy             Profile                 @relation("AssetCreatedBy", fields: [createdById], references: [id])
+  updatedBy             Profile?                @relation("AssetUpdatedBy", fields: [updatedById], references: [id])
+  marketPositions       AssetMarketPosition[]
+  calculationTerms      AssetCalculationTerm[]
+  valuations            AssetValuation[]
+  snapshotValues        SnapshotAssetValue[]
+  fromMoneyEvents       MoneyEvent[]            @relation("MoneyEventFromAsset")
+  toMoneyEvents         MoneyEvent[]            @relation("MoneyEventToAsset")
+  paidUpcomingPayments  UpcomingPayment[]       @relation("UpcomingPaymentPaidFromAsset")
+  linkedFinancialGoals  FinancialGoal[]         @relation("FinancialGoalLinkedAsset")
+
+  @@map("assets")
+}
+
+model AssetMarketPosition {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId       String       @map("household_id") @db.Uuid
+  assetId           String       @map("asset_id") @db.Uuid
+  symbol            String?
+  market            String?
+  assetClass        AssetClass   @map("asset_class")
+  quantity          Decimal      @db.Decimal(20, 8)
+  unit              String?
+  quoteCurrency     String       @map("quote_currency")
+  priceSource       String?      @map("price_source")
+  priceSourceSymbol String?      @map("price_source_symbol")
+  lastPrice         Decimal?     @map("last_price") @db.Decimal(20, 8)
+  lastPriceAt       DateTime?    @map("last_price_at") @db.Timestamptz(6)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  household         Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  asset             Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@map("asset_market_positions")
+}
+
+model MarketPrice {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assetClass        AssetClass       @map("asset_class")
+  symbol            String
+  market            String?
+  quoteCurrency     String           @map("quote_currency")
+  price             Decimal          @db.Decimal(20, 8)
+  priceTime         DateTime         @map("price_time") @db.Timestamptz(6)
+  source            String
+  sourcePayloadHash String?          @map("source_payload_hash")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  assetValuations   AssetValuation[]
+
+  @@map("market_prices")
+}
+
+model FxRate {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  baseCurrency    String           @map("base_currency")
+  quoteCurrency   String           @map("quote_currency")
+  rate            Decimal          @db.Decimal(20, 8)
+  rateTime        DateTime         @map("rate_time") @db.Timestamptz(6)
+  source          String
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  assetValuations AssetValuation[]
+
+  @@map("fx_rates")
+}
+
+model AssetCalculationTerm {
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId        String                 @map("household_id") @db.Uuid
+  assetId            String                 @map("asset_id") @db.Uuid
+  calculationType    AssetCalculationType   @map("calculation_type")
+  principalAmount    Decimal                @map("principal_amount") @db.Decimal(14, 2)
+  currency           String                 @default("VND")
+  startDate          DateTime               @map("start_date") @db.Date
+  maturityDate       DateTime?              @map("maturity_date") @db.Date
+  interestRate       Decimal?               @map("interest_rate") @db.Decimal(8, 4)
+  interestRateType   InterestRateType?      @map("interest_rate_type")
+  compoundingFrequency CompoundingFrequency? @map("compounding_frequency")
+  payoutFrequency    PayoutFrequency?       @map("payout_frequency")
+  couponRate         Decimal?               @map("coupon_rate") @db.Decimal(8, 4)
+  couponFrequency    PayoutFrequency?       @map("coupon_frequency")
+  expectedReturnRate Decimal?               @map("expected_return_rate") @db.Decimal(8, 4)
+  status             AssetCalculationStatus @default(active)
+  createdAt          DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?              @map("deleted_at") @db.Timestamptz(6)
+  household          Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  asset              Asset                  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  assetValuations    AssetValuation[]
+
+  @@map("asset_calculation_terms")
+}
+
+model AssetValuation {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId        String               @map("household_id") @db.Uuid
+  assetId            String               @map("asset_id") @db.Uuid
+  value              Decimal              @db.Decimal(14, 2)
+  currency           String               @default("VND")
+  valuationDate      DateTime             @map("valuation_date") @db.Date
+  valuationMethod    AssetValuationMethod @map("valuation_method")
+  source             String?
+  confidenceLevel    ConfidenceLevel?     @map("confidence_level")
+  marketPriceId      String?              @map("market_price_id") @db.Uuid
+  fxRateId           String?              @map("fx_rate_id") @db.Uuid
+  calculationTermId  String?              @map("calculation_term_id") @db.Uuid
+  note               String?
+  createdById        String?              @map("created_by") @db.Uuid
+  createdAt          DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById        String?              @map("updated_by") @db.Uuid
+  updatedAt          DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  household          Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  asset              Asset                @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  marketPrice        MarketPrice?         @relation(fields: [marketPriceId], references: [id])
+  fxRate             FxRate?              @relation(fields: [fxRateId], references: [id])
+  calculationTerm    AssetCalculationTerm? @relation(fields: [calculationTermId], references: [id])
+  createdBy          Profile?             @relation("AssetValuationCreatedBy", fields: [createdById], references: [id])
+  updatedBy          Profile?             @relation("AssetValuationUpdatedBy", fields: [updatedById], references: [id])
+  snapshotAssetValues SnapshotAssetValue[]
+
+  @@map("asset_valuations")
+}
+
+model SnapshotAssetValue {
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId      String               @map("household_id") @db.Uuid
+  snapshotId       String               @map("snapshot_id") @db.Uuid
+  assetId          String               @map("asset_id") @db.Uuid
+  assetName        String               @map("asset_name")
+  assetType        AssetType            @map("asset_type")
+  liquidity        AssetLiquidity
+  value            Decimal              @db.Decimal(14, 2)
+  currency         String               @default("VND")
+  valuationId      String?              @map("valuation_id") @db.Uuid
+  valuationMethod  AssetValuationMethod? @map("valuation_method")
+  valuationDate    DateTime?            @map("valuation_date") @db.Date
+  visibilityLevel  VisibilityLevel      @map("visibility_level")
+  createdAt        DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  household        Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  snapshot         Snapshot             @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  asset            Asset                @relation(fields: [assetId], references: [id])
+  valuation        AssetValuation?      @relation(fields: [valuationId], references: [id])
+
+  @@unique([snapshotId, assetId], map: "snapshot_asset_values_unique")
+  @@map("snapshot_asset_values")
+}
+
+model UpcomingPayment {
+  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId         String            @map("household_id") @db.Uuid
+  name                String
+  amount              Decimal           @default(0) @db.Decimal(14, 2)
+  dueDate             DateTime          @map("due_date") @db.Date
+  frequency           PaymentFrequency  @default(once)
+  autoCreateNext      Boolean           @default(false) @map("auto_create_next")
+  ownerMemberId       String?           @map("owner_member_id") @db.Uuid
+  status              PaymentStatus     @default(unpaid)
+  attentionLevel      AttentionLevel    @default(normal) @map("attention_level")
+  isAttentionNeeded   Boolean           @default(false) @map("is_attention_needed")
+  note                String?
+  paidAt              DateTime?         @map("paid_at") @db.Timestamptz(6)
+  paidById            String?           @map("paid_by") @db.Uuid
+  paidAmount          Decimal?          @map("paid_amount") @db.Decimal(14, 2)
+  paidFromAssetId     String?           @map("paid_from_asset_id") @db.Uuid
+  createdById         String            @map("created_by") @db.Uuid
+  createdAt           DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById         String?           @map("updated_by") @db.Uuid
+  updatedAt           DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?         @map("deleted_at") @db.Timestamptz(6)
+  household           Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ownerMember         HouseholdMember?  @relation("UpcomingPaymentOwnerMember", fields: [ownerMemberId], references: [id])
+  paidBy              Profile?          @relation("UpcomingPaymentPaidBy", fields: [paidById], references: [id])
+  paidFromAsset       Asset?            @relation("UpcomingPaymentPaidFromAsset", fields: [paidFromAssetId], references: [id])
+  createdBy           Profile           @relation("UpcomingPaymentCreatedBy", fields: [createdById], references: [id])
+  updatedBy           Profile?          @relation("UpcomingPaymentUpdatedBy", fields: [updatedById], references: [id])
+  moneyEvents         MoneyEvent[]      @relation("MoneyEventUpcomingPayment")
+
+  @@map("upcoming_payments")
+}
+
+model FinancialGoal {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId        String           @map("household_id") @db.Uuid
+  name               String
+  category           GoalCategory     @default(other)
+  targetAmount       Decimal          @default(0) @map("target_amount") @db.Decimal(14, 2)
+  currentAmount      Decimal          @default(0) @map("current_amount") @db.Decimal(14, 2)
+  deadline           DateTime?        @db.Date
+  priority           GoalPriority     @default(medium)
+  status             GoalStatus       @default(active)
+  linkedAssetId      String?          @map("linked_asset_id") @db.Uuid
+  note               String?
+  createdById        String           @map("created_by") @db.Uuid
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById        String?          @map("updated_by") @db.Uuid
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  household          Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  linkedAsset        Asset?           @relation("FinancialGoalLinkedAsset", fields: [linkedAssetId], references: [id])
+  createdBy          Profile          @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
+  updatedBy          Profile?         @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
+  moneyEvents        MoneyEvent[]     @relation("MoneyEventFinancialGoal")
+
+  @@map("financial_goals")
+}
+
+model MoneyEvent {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId        String            @map("household_id") @db.Uuid
+  title              String
+  description        String?
+  eventType          MoneyEventType    @map("event_type")
+  category           MoneyEventCategory @default(other)
+  amount             Decimal           @default(0) @db.Decimal(14, 2)
+  currency           String            @default("VND")
+  eventDate          DateTime          @map("event_date") @db.Date
+  direction          MoneyDirection
+  fromAssetId        String?           @map("from_asset_id") @db.Uuid
+  toAssetId          String?           @map("to_asset_id") @db.Uuid
+  upcomingPaymentId  String?           @map("upcoming_payment_id") @db.Uuid
+  financialGoalId    String?           @map("financial_goal_id") @db.Uuid
+  snapshotId         String?           @map("snapshot_id") @db.Uuid
+  isLargeEvent       Boolean           @default(false) @map("is_large_event")
+  isAttentionNeeded  Boolean           @default(false) @map("is_attention_needed")
+  visibilityLevel    VisibilityLevel   @default(detail) @map("visibility_level")
+  status             MoneyEventStatus  @default(recorded)
+  createdById        String            @map("created_by") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById        String?           @map("updated_by") @db.Uuid
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt          DateTime?         @map("deleted_at") @db.Timestamptz(6)
+  household          Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromAsset          Asset?            @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
+  toAsset            Asset?            @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
+  upcomingPayment    UpcomingPayment?  @relation("MoneyEventUpcomingPayment", fields: [upcomingPaymentId], references: [id])
+  financialGoal      FinancialGoal?    @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
+  snapshot           Snapshot?         @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
+  createdBy          Profile           @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
+  updatedBy          Profile?          @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
+
+  @@map("money_events")
+}
+
+model AttentionItem {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId       String              @map("household_id") @db.Uuid
+  title             String
+  reason            String?
+  amount            Decimal?            @db.Decimal(14, 2)
+  relatedObjectType RelatedObjectType?  @map("related_object_type")
+  relatedObjectId   String?             @map("related_object_id") @db.Uuid
+  level             AttentionLevel      @default(normal)
+  status            AttentionItemStatus @default(open)
+  visibilityLevel   VisibilityLevel     @default(detail) @map("visibility_level")
+  createdById       String              @map("created_by") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  seenById          String?             @map("seen_by") @db.Uuid
+  seenAt            DateTime?           @map("seen_at") @db.Timestamptz(6)
+  resolvedById      String?             @map("resolved_by") @db.Uuid
+  resolvedAt        DateTime?           @map("resolved_at") @db.Timestamptz(6)
+  deletedAt         DateTime?           @map("deleted_at") @db.Timestamptz(6)
+  household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy         Profile             @relation("AttentionItemCreatedBy", fields: [createdById], references: [id])
+  seenBy            Profile?            @relation("AttentionItemSeenBy", fields: [seenById], references: [id])
+  resolvedBy        Profile?            @relation("AttentionItemResolvedBy", fields: [resolvedById], references: [id])
+
+  @@map("attention_items")
+}
+
+model AuditLog {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId String    @map("household_id") @db.Uuid
+  actorId     String    @map("actor_id") @db.Uuid
+  action      String
+  entityType  String    @map("entity_type")
+  entityId    String?   @map("entity_id") @db.Uuid
+  metadata    Json      @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  actor       Profile   @relation("AuditLogActor", fields: [actorId], references: [id])
+
+  @@map("audit_logs")
+}
