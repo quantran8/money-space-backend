@@ -4,6 +4,7 @@ import type {
 import type { AssetValuation } from '../../modules/assets/entities/asset-valuation.entity';
 import type { AttentionItem } from '../../modules/dashboard/entities/attention-item.entity';
 import type { SnapshotPoint } from '../../modules/dashboard/entities/snapshot-point.entity';
+import type { Debt } from '../../modules/debts/entities/debt.entity';
 import type {
   FinancialGoal,
 } from '../../modules/goals/entities/financial-goal.entity';
@@ -213,6 +214,49 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
   };
 }
 
+export function mapDebt(row: DbRow, term?: DbRow, period?: DbRow): Debt {
+  return {
+    id: row.id,
+    householdId: row.householdId ?? row.household_id,
+    name: row.name,
+    debtType: row.debtType ?? row.debt_type,
+    lenderType: row.lenderType ?? row.lender_type,
+    lenderName: row.lenderName ?? row.lender_name ?? undefined,
+    originalAmount: numberFromDb(row.originalAmount ?? row.original_amount),
+    outstandingAmount: numberFromDb(
+      row.outstandingAmount ?? row.outstanding_amount,
+    ),
+    currency: row.currency ?? 'VND',
+    borrowedAt:
+      row.borrowedAt ?? row.borrowed_at
+        ? dateOnly(row.borrowedAt ?? row.borrowed_at)
+        : undefined,
+    expectedFinalDueDate:
+      row.expectedFinalDueDate ?? row.expected_final_due_date
+        ? dateOnly(row.expectedFinalDueDate ?? row.expected_final_due_date)
+        : undefined,
+    status: row.status,
+    ownerMemberId: row.ownerMemberId ?? row.owner_member_id ?? undefined,
+    receivedToAssetId:
+      row.receivedToAssetId ?? row.received_to_asset_id ?? undefined,
+    paymentFrequency:
+      term?.paymentFrequency ?? term?.payment_frequency ?? undefined,
+    fixedPaymentAmount: term
+      ? numberFromDb(term.fixedPaymentAmount ?? term.fixed_payment_amount)
+      : undefined,
+    minimumPaymentAmount: term
+      ? numberFromDb(term.minimumPaymentAmount ?? term.minimum_payment_amount)
+      : undefined,
+    interestType: term?.interestType ?? term?.interest_type ?? undefined,
+    interestCalculation:
+      term?.interestCalculation ?? term?.interest_calculation ?? undefined,
+    interestRate: period
+      ? numberFromDb(period.interestRate ?? period.interest_rate)
+      : undefined,
+    note: row.note ?? undefined,
+  };
+}
+
 export function mapMoneyEvent(row: DbRow): MoneyEvent {
   return {
     id: row.id,
@@ -227,6 +271,7 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     fromAssetId: row.fromAssetId ?? row.from_asset_id ?? undefined,
     toAssetId: row.toAssetId ?? row.to_asset_id ?? undefined,
     upcomingPaymentId: row.upcomingPaymentId ?? row.upcoming_payment_id ?? undefined,
+    debtId: row.debtId ?? row.debt_id ?? undefined,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? undefined,
   };
 }
@@ -239,6 +284,7 @@ export function mapUpcomingPayment(row: DbRow): UpcomingPayment {
     amount: numberFromDb(row.amount),
     dueDate: dateOnly(row.dueDate ?? row.due_date),
     owner: row.ownerMemberId ?? row.owner_member_id ?? 'Chua phan cong',
+    debtId: row.debtId ?? row.debt_id ?? undefined,
     status: toUiPaymentStatus(row.status, row.attentionLevel ?? row.attention_level),
   };
 }

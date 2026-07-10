@@ -2,7 +2,8 @@ export type MoneyEventType =
   | 'expense'
   | 'income'
   | 'transfer'
-  | 'goal_contribution';
+  | 'goal_contribution'
+  | 'debt_update';
 
 export type MoneyDirection = 'inflow' | 'outflow' | 'neutral';
 
@@ -19,5 +20,6 @@ export interface MoneyEvent {
   fromAssetId?: string;
   toAssetId?: string;
   upcomingPaymentId?: string;
+  debtId?: string;
   financialGoalId?: string;
 }

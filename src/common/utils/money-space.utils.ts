@@ -108,6 +108,9 @@ export function deriveDirection(
   if (type === 'expense') {
     return 'outflow';
   }
+  if (type === 'debt_update') {
+    return 'outflow';
+  }
   return 'neutral';
 }
 
@@ -219,6 +222,7 @@ export function toMoneyEventCard(event: MoneyEvent) {
     fromAssetId: event.fromAssetId,
     toAssetId: event.toAssetId,
     upcomingPaymentId: event.upcomingPaymentId,
+    debtId: event.debtId,
     financialGoalId: event.financialGoalId,
   };
 }
@@ -232,6 +236,7 @@ export function toPaymentCard(payment: UpcomingPayment) {
     due: formatDateLabel(payment.dueDate),
     dueDate: payment.dueDate,
     owner: payment.owner,
+    debtId: payment.debtId,
     status: payment.status,
   };
 }

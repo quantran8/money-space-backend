@@ -54,6 +54,7 @@ export class PaymentsService {
       amount: payload.amount,
       dueDate: payload.dueDate,
       owner: payload.owner ?? 'Chua phan cong',
+      debtId: payload.debtId,
       status: normalizePaymentStatus(payload.status),
     };
 
@@ -76,6 +77,7 @@ export class PaymentsService {
       amount: payload.amount ?? payment.amount,
       dueDate: payload.dueDate ?? payment.dueDate,
       owner: payload.owner ?? payment.owner,
+      debtId: payload.debtId ?? payment.debtId,
       status: normalizePaymentStatus(payload.status ?? payment.status),
     };
 

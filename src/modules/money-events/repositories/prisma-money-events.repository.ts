@@ -73,6 +73,7 @@ export class PrismaMoneyEventsRepository
         fromAssetId: event.fromAssetId,
         toAssetId: event.toAssetId,
         upcomingPaymentId: event.upcomingPaymentId,
+        debtId: event.debtId,
         financialGoalId: event.financialGoalId,
         createdById: household.createdBy,
       } as any,
@@ -93,6 +94,7 @@ export class PrismaMoneyEventsRepository
         fromAssetId: event.fromAssetId,
         toAssetId: event.toAssetId,
         upcomingPaymentId: event.upcomingPaymentId,
+        debtId: event.debtId,
         financialGoalId: event.financialGoalId,
       } as any,
     });

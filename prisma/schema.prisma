@@ -166,6 +166,71 @@ enum AttentionLevel {
   urgent
 }
 
+enum DebtType {
+  family_loan
+  friend_loan
+  bank_loan
+  consumer_finance
+  mortgage
+  credit_card
+  installment
+  other
+}
+
+enum LenderType {
+  family
+  friend
+  bank
+  credit_institution
+  company
+  other
+}
+
+enum DebtStatus {
+  active
+  paid_off
+  paused
+  overdue
+  cancelled
+}
+
+enum DebtRepaymentType {
+  flexible
+  fixed_schedule
+  installment
+  interest_only
+  minimum_payment
+  bullet_payment
+}
+
+enum DebtPrincipalPaymentType {
+  flexible
+  equal_principal
+  equal_payment
+  custom
+}
+
+enum DebtInterestType {
+  none
+  fixed
+  floating
+  staged
+}
+
+enum DebtInterestCalculation {
+  simple_interest
+  reducing_balance
+  flat_rate
+  custom
+}
+
+enum DebtInterestRateType {
+  fixed
+  floating
+  promotional
+  adjusted
+}
+
 enum MoneyEventType {
   expense
   income
@@ -241,6 +306,7 @@ enum RelatedObjectType {
   financial_goal
   snapshot
   money_event
+  debt
 }
 
 enum AttentionItemStatus {
@@ -272,6 +338,8 @@ model Profile {
   upcomingPaymentsCreated    UpcomingPayment[]   @relation("UpcomingPaymentCreatedBy")
   upcomingPaymentsUpdated    UpcomingPayment[]   @relation("UpcomingPaymentUpdatedBy")
   upcomingPaymentsPaidBy     UpcomingPayment[]   @relation("UpcomingPaymentPaidBy")
+  debtsCreated               Debt[]              @relation("DebtCreatedBy")
+  debtsUpdated               Debt[]              @relation("DebtUpdatedBy")
   financialGoalsCreated      FinancialGoal[]     @relation("FinancialGoalCreatedBy")
   financialGoalsUpdated      FinancialGoal[]     @relation("FinancialGoalUpdatedBy")
   moneyEventsCreated         MoneyEvent[]        @relation("MoneyEventCreatedBy")
@@ -285,7 +353,7 @@ model Profile {
 }
 
 model Household {
-  id                   String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                   String                @id @default(uuid(7)) @db.Uuid
   name                 String
   currency             String                @default("VND")
   updateFrequency      UpdateFrequency       @default(weekly) @map("update_frequency")
@@ -302,6 +370,9 @@ model Household {
   assetCalculationTerms AssetCalculationTerm[]
   assetValuations      AssetValuation[]
   snapshotAssetValues  SnapshotAssetValue[]
+  debts                Debt[]
+  debtTerms            DebtTerm[]
+  debtInterestPeriods  DebtInterestPeriod[]
   upcomingPayments     UpcomingPayment[]
   financialGoals       FinancialGoal[]
   moneyEvents          MoneyEvent[]
@@ -312,7 +383,7 @@ model Household {
 }
 
 model HouseholdMember {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                 String            @id @default(uuid(7)) @db.Uuid
   householdId        String            @map("household_id") @db.Uuid
   userId             String            @map("user_id") @db.Uuid
   role               HouseholdRole     @default(partner)
@@ -326,13 +397,14 @@ model HouseholdMember {
   invitedBy          Profile?          @relation("HouseholdMemberInvitedBy", fields: [invitedById], references: [id])
   heldAssets         Asset[]           @relation("AssetHolderMember")
   ownedUpcomingPayments UpcomingPayment[] @relation("UpcomingPaymentOwnerMember")
+  ownedDebts           Debt[]            @relation("DebtOwnerMember")
 
   @@unique([householdId, userId], map: "household_members_unique")
   @@map("household_members")
 }
 
 model HouseholdInvite {
-  id                     String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                     String           @id @default(uuid(7)) @db.Uuid
   householdId            String           @map("household_id") @db.Uuid
   invitedById            String           @map("invited_by") @db.Uuid
   inviteeEmail           String?          @map("invitee_email")
@@ -354,7 +426,7 @@ model HouseholdInvite {
 }
 
 model Snapshot {
-  id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                   String              @id @default(uuid(7)) @db.Uuid
   householdId          String              @map("household_id") @db.Uuid
   snapshotDate         DateTime            @default(now()) @map("snapshot_date") @db.Date
   totalLiquid          Decimal             @default(0) @map("total_liquid") @db.Decimal(14, 2)
@@ -378,7 +450,7 @@ model Snapshot {
 }
 
 model Asset {
-  id                    String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                    String                  @id @default(uuid(7)) @db.Uuid
   householdId           String                  @map("household_id") @db.Uuid
   name                  String
   type                  AssetType
@@ -407,13 +479,14 @@ model Asset {
   fromMoneyEvents       MoneyEvent[]            @relation("MoneyEventFromAsset")
   toMoneyEvents         MoneyEvent[]            @relation("MoneyEventToAsset")
   paidUpcomingPayments  UpcomingPayment[]       @relation("UpcomingPaymentPaidFromAsset")
+  receivedDebts         Debt[]                  @relation("DebtReceivedToAsset")
   linkedFinancialGoals  FinancialGoal[]         @relation("FinancialGoalLinkedAsset")
 
   @@map("assets")
 }
 
 model AssetMarketPosition {
-  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                String       @id @default(uuid(7)) @db.Uuid
   householdId       String       @map("household_id") @db.Uuid
   assetId           String       @map("asset_id") @db.Uuid
   symbol            String?
@@ -436,7 +509,7 @@ model AssetMarketPosition {
 }
 
 model MarketPrice {
-  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                String           @id @default(uuid(7)) @db.Uuid
   assetClass        AssetClass       @map("asset_class")
   symbol            String
   market            String?
@@ -452,7 +525,7 @@ model MarketPrice {
 }
 
 model FxRate {
-  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id              String           @id @default(uuid(7)) @db.Uuid
   baseCurrency    String           @map("base_currency")
   quoteCurrency   String           @map("quote_currency")
   rate            Decimal          @db.Decimal(20, 8)
@@ -465,7 +538,7 @@ model FxRate {
 }
 
 model AssetCalculationTerm {
-  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                 String                 @id @default(uuid(7)) @db.Uuid
   householdId        String                 @map("household_id") @db.Uuid
   assetId            String                 @map("asset_id") @db.Uuid
   calculationType    AssetCalculationType   @map("calculation_type")
@@ -492,7 +565,7 @@ model AssetCalculationTerm {
 }
 
 model AssetValuation {
-  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                 String               @id @default(uuid(7)) @db.Uuid
   householdId        String               @map("household_id") @db.Uuid
   assetId            String               @map("asset_id") @db.Uuid
   value              Decimal              @db.Decimal(14, 2)
@@ -523,7 +596,7 @@ model AssetValuation {
 }
 
 model SnapshotAssetValue {
-  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id               String               @id @default(uuid(7)) @db.Uuid
   householdId      String               @map("household_id") @db.Uuid
   snapshotId       String               @map("snapshot_id") @db.Uuid
   assetId          String               @map("asset_id") @db.Uuid
@@ -546,8 +619,84 @@ model SnapshotAssetValue {
   @@map("snapshot_asset_values")
 }
 
+model Debt {
+  id                    String                 @id @default(uuid(7)) @db.Uuid
+  householdId           String                 @map("household_id") @db.Uuid
+  name                  String
+  debtType              DebtType               @map("debt_type")
+  lenderType            LenderType             @map("lender_type")
+  lenderName            String?                @map("lender_name")
+  originalAmount        Decimal                @default(0) @map("original_amount") @db.Decimal(14, 2)
+  outstandingAmount     Decimal                @default(0) @map("outstanding_amount") @db.Decimal(14, 2)
+  currency              String                 @default("VND")
+  borrowedAt            DateTime?              @map("borrowed_at") @db.Date
+  expectedFinalDueDate  DateTime?              @map("expected_final_due_date") @db.Date
+  status                DebtStatus             @default(active)
+  ownerMemberId         String?                @map("owner_member_id") @db.Uuid
+  receivedToAssetId     String?                @map("received_to_asset_id") @db.Uuid
+  note                  String?
+  createdById           String?                @map("created_by") @db.Uuid
+  createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById           String?                @map("updated_by") @db.Uuid
+  updatedAt             DateTime?              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt             DateTime?              @map("deleted_at") @db.Timestamptz(6)
+  household             Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  ownerMember           HouseholdMember?       @relation("DebtOwnerMember", fields: [ownerMemberId], references: [id])
+  receivedToAsset       Asset?                 @relation("DebtReceivedToAsset", fields: [receivedToAssetId], references: [id])
+  createdBy             Profile?               @relation("DebtCreatedBy", fields: [createdById], references: [id])
+  updatedBy             Profile?               @relation("DebtUpdatedBy", fields: [updatedById], references: [id])
+  terms                 DebtTerm[]
+  interestPeriods       DebtInterestPeriod[]
+  upcomingPayments      UpcomingPayment[]
+  moneyEvents           MoneyEvent[]
+
+  @@map("debts")
+}
+
+model DebtTerm {
+  id                    String                   @id @default(uuid(7)) @db.Uuid
+  householdId           String                   @map("household_id") @db.Uuid
+  debtId                String                   @map("debt_id") @db.Uuid
+  repaymentType         DebtRepaymentType        @map("repayment_type")
+  principalPaymentType  DebtPrincipalPaymentType? @map("principal_payment_type")
+  paymentFrequency      String?                  @map("payment_frequency")
+  fixedPaymentAmount    Decimal?                 @map("fixed_payment_amount") @db.Decimal(14, 2)
+  minimumPaymentAmount  Decimal?                 @map("minimum_payment_amount") @db.Decimal(14, 2)
+  startDate             DateTime?                @map("start_date") @db.Date
+  endDate               DateTime?                @map("end_date") @db.Date
+  hasInterest           Boolean                  @default(false) @map("has_interest")
+  interestType          DebtInterestType         @default(none) @map("interest_type")
+  interestCalculation   DebtInterestCalculation? @map("interest_calculation")
+  gracePeriodMonths     Int?                     @map("grace_period_months")
+  createdAt             DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime?                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt             DateTime?                @map("deleted_at") @db.Timestamptz(6)
+  household             Household                @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  debt                  Debt                     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  @@map("debt_terms")
+}
+
+model DebtInterestPeriod {
+  id            String               @id @default(uuid(7)) @db.Uuid
+  householdId   String               @map("household_id") @db.Uuid
+  debtId        String               @map("debt_id") @db.Uuid
+  startDate     DateTime             @map("start_date") @db.Date
+  endDate       DateTime?            @map("end_date") @db.Date
+  interestRate  Decimal              @map("interest_rate") @db.Decimal(8, 4)
+  rateType      DebtInterestRateType @default(fixed) @map("rate_type")
+  note          String?
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime?            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt     DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  household     Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  debt          Debt                 @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  @@map("debt_interest_periods")
+}
+
 model UpcomingPayment {
-  id                  String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                  String            @id @default(uuid(7)) @db.Uuid
   householdId         String            @map("household_id") @db.Uuid
   name                String
   amount              Decimal           @default(0) @db.Decimal(14, 2)
@@ -555,6 +704,7 @@ model UpcomingPayment {
   frequency           PaymentFrequency  @default(once)
   autoCreateNext      Boolean           @default(false) @map("auto_create_next")
   ownerMemberId       String?           @map("owner_member_id") @db.Uuid
+  debtId              String?           @map("debt_id") @db.Uuid
   status              PaymentStatus     @default(unpaid)
   attentionLevel      AttentionLevel    @default(normal) @map("attention_level")
   isAttentionNeeded   Boolean           @default(false) @map("is_attention_needed")
@@ -570,6 +720,7 @@ model UpcomingPayment {
   deletedAt           DateTime?         @map("deleted_at") @db.Timestamptz(6)
   household           Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
   ownerMember         HouseholdMember?  @relation("UpcomingPaymentOwnerMember", fields: [ownerMemberId], references: [id])
+  debt                Debt?             @relation(fields: [debtId], references: [id])
   paidBy              Profile?          @relation("UpcomingPaymentPaidBy", fields: [paidById], references: [id])
   paidFromAsset       Asset?            @relation("UpcomingPaymentPaidFromAsset", fields: [paidFromAssetId], references: [id])
   createdBy           Profile           @relation("UpcomingPaymentCreatedBy", fields: [createdById], references: [id])
@@ -580,7 +731,7 @@ model UpcomingPayment {
 }
 
 model FinancialGoal {
-  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                 String           @id @default(uuid(7)) @db.Uuid
   householdId        String           @map("household_id") @db.Uuid
   name               String
   category           GoalCategory     @default(other)
@@ -606,7 +757,7 @@ model FinancialGoal {
 }
 
 model MoneyEvent {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                 String            @id @default(uuid(7)) @db.Uuid
   householdId        String            @map("household_id") @db.Uuid
   title              String
   description        String?
@@ -619,6 +770,7 @@ model MoneyEvent {
   fromAssetId        String?           @map("from_asset_id") @db.Uuid
   toAssetId          String?           @map("to_asset_id") @db.Uuid
   upcomingPaymentId  String?           @map("upcoming_payment_id") @db.Uuid
+  debtId             String?           @map("debt_id") @db.Uuid
   financialGoalId    String?           @map("financial_goal_id") @db.Uuid
   snapshotId         String?           @map("snapshot_id") @db.Uuid
   isLargeEvent       Boolean           @default(false) @map("is_large_event")
@@ -634,6 +786,7 @@ model MoneyEvent {
   fromAsset          Asset?            @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
   toAsset            Asset?            @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
   upcomingPayment    UpcomingPayment?  @relation("MoneyEventUpcomingPayment", fields: [upcomingPaymentId], references: [id])
+  debt               Debt?             @relation(fields: [debtId], references: [id])
   financialGoal      FinancialGoal?    @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
   snapshot           Snapshot?         @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
   createdBy          Profile           @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
@@ -643,7 +796,7 @@ model MoneyEvent {
 }
 
 model AttentionItem {
-  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id                String              @id @default(uuid(7)) @db.Uuid
   householdId       String              @map("household_id") @db.Uuid
   title             String
   reason            String?
@@ -669,7 +822,7 @@ model AttentionItem {
 }
 
 model AuditLog {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id          String    @id @default(uuid(7)) @db.Uuid
   householdId String    @map("household_id") @db.Uuid
   actorId     String    @map("actor_id") @db.Uuid
   action      String

@@ -12,6 +12,7 @@ export class AppService {
         '/api/households',
         '/api/households/:householdId/dashboard',
         '/api/households/:householdId/assets',
+        '/api/households/:householdId/debts',
         '/api/households/:householdId/members',
         '/api/households/:householdId/money-events',
         '/api/households/:householdId/upcoming-payments',

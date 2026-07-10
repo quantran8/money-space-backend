@@ -1,4 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { HouseholdMember } from './entities/member.entity';
 import {
   defaultPermissionForRole,
@@ -32,15 +33,10 @@ export class MembersService {
 
   async createMember(householdId: string, payload: CreateMemberDto) {
     await this.membersRepository.assertHousehold(householdId);
-    if (!payload.profileId) {
-      throw new BadRequestException(
-        'profileId is required when creating a member in Supabase',
-      );
-    }
 
     const member: HouseholdMember = {
       id: this.membersRepository.createId('member'),
-      profileId: payload.profileId,
+      profileId: payload.profileId ?? randomUUID(),
       householdId,
       name: payload.name.trim(),
       email: payload.email.trim(),

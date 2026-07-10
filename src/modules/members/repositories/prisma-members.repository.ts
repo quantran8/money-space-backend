@@ -58,6 +58,21 @@ export class PrismaMembersRepository
   }
 
   async insertMember(member: HouseholdMember): Promise<void> {
+    await this.prisma.profile.upsert({
+      where: { id: member.profileId },
+      update: {
+        email: member.email,
+        displayName: member.name,
+        fullName: member.name,
+      } as any,
+      create: {
+        id: member.profileId,
+        email: member.email,
+        displayName: member.name,
+        fullName: member.name,
+      } as any,
+    });
+
     await this.prisma.householdMember.create({
       data: {
         id: member.id,
@@ -71,6 +86,15 @@ export class PrismaMembersRepository
   }
 
   async updateMember(memberId: string, member: HouseholdMember): Promise<void> {
+    await this.prisma.profile.updateMany({
+      where: { id: member.profileId },
+      data: {
+        email: member.email,
+        displayName: member.name,
+        fullName: member.name,
+      } as any,
+    });
+
     await this.prisma.householdMember.update({
       where: { id: memberId },
       data: {

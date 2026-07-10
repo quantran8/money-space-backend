@@ -14,5 +14,6 @@ export interface CreateMoneyEventDto {
   fromAssetId?: string;
   toAssetId?: string;
   upcomingPaymentId?: string;
+  debtId?: string;
   financialGoalId?: string;
 }

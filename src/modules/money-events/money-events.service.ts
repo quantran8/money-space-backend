@@ -61,6 +61,7 @@ export class MoneyEventsService {
       fromAssetId: payload.fromAssetId,
       toAssetId: payload.toAssetId,
       upcomingPaymentId: payload.upcomingPaymentId,
+      debtId: payload.debtId,
       financialGoalId: payload.financialGoalId,
     };
 

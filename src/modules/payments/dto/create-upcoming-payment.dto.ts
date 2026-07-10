@@ -5,5 +5,6 @@ export interface CreateUpcomingPaymentDto {
   amount: number;
   dueDate: string;
   owner?: string;
+  debtId?: string;
   status: PaymentUiStatus;
 }

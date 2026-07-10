@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AssetsModule } from './assets/assets.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { DebtsModule } from './debts/debts.module';
 import { GoalsModule } from './goals/goals.module';
 import { HouseholdsModule } from './households/households.module';
 import { MarketDataModule } from './market-data/market-data.module';
@@ -13,6 +14,7 @@ import { PaymentsModule } from './payments/payments.module';
     HouseholdsModule,
     DashboardModule,
     AssetsModule,
+    DebtsModule,
     MembersModule,
     MoneyEventsModule,
     GoalsModule,
@@ -23,6 +25,7 @@ import { PaymentsModule } from './payments/payments.module';
     HouseholdsModule,
     DashboardModule,
     AssetsModule,
+    DebtsModule,
     MembersModule,
     MoneyEventsModule,
     GoalsModule,
