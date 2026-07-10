@@ -78,22 +78,42 @@ export class PrismaAssetsRepository
   }
 
   async insertAsset(asset: Asset): Promise<void> {
-    const household = await this.assertHousehold(asset.householdId);
-    await this.prisma.asset.create({
-      data: {
-        id: asset.id,
-        householdId: asset.householdId,
-        name: asset.name,
-        type: asset.type,
-        valuationMode: asset.valuationMode,
-        currentValue: asset.manualValue ?? 0,
-        currency: asset.currency,
-        valueUpdatedAt: new Date(),
-        liquidity: asset.liquidity,
-        note: asset.note,
-        createdById: household.createdBy,
-      } as any,
-    });
+    // Single round-trip: insert the asset while deriving `created_by` from the
+    // household row in one statement. If the household doesn't exist (or is
+    // soft-deleted) the SELECT yields no row, nothing is inserted, and we
+    // surface a 404 — matching the previous assertHousehold behaviour.
+    //
+    // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills it
+    // on ORM writes, but a raw INSERT must set it explicitly (now()).
+    const currentValue = asset.manualValue ?? 0;
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO assets
+        (id, household_id, name, type, valuation_mode, current_value,
+         currency, value_updated_at, liquidity, note, created_by, updated_at)
+      SELECT
+        ${asset.id}::uuid,
+        h.id,
+        ${asset.name},
+        ${asset.type}::"AssetType",
+        ${asset.valuationMode}::"AssetValuationMode",
+        ${currentValue}::numeric,
+        ${asset.currency},
+        now(),
+        ${asset.liquidity}::"AssetLiquidity",
+        ${asset.note},
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${asset.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+
+    if (inserted === 0) {
+      throw new NotFoundException(
+        `Household "${asset.householdId}" was not found`,
+      );
+    }
+
     await this.upsertAssetDetails(asset);
   }
 
@@ -185,14 +205,18 @@ export class PrismaAssetsRepository
   }
 
   async unlinkAssetFromMoneyEvents(assetId: string): Promise<void> {
-    await this.prisma.moneyEvent.updateMany({
-      where: { fromAssetId: assetId },
-      data: { fromAssetId: null },
-    });
-    await this.prisma.moneyEvent.updateMany({
-      where: { toAssetId: assetId },
-      data: { toAssetId: null },
-    });
+    // The two updates touch disjoint columns and don't depend on each other,
+    // so run them concurrently rather than as sequential round-trips.
+    await Promise.all([
+      this.prisma.moneyEvent.updateMany({
+        where: { fromAssetId: assetId },
+        data: { fromAssetId: null },
+      }),
+      this.prisma.moneyEvent.updateMany({
+        where: { toAssetId: assetId },
+        data: { toAssetId: null },
+      }),
+    ]);
   }
 
   async getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]> {
@@ -221,6 +245,17 @@ export class PrismaAssetsRepository
   }
 
   private async upsertAssetDetails(asset: Asset): Promise<void> {
+    // The market-position and calculation-term upserts touch different tables
+    // and don't depend on each other, so run them concurrently. Within each
+    // branch the find-then-write stays sequential (the write depends on the
+    // find's result).
+    await Promise.all([
+      this.upsertAssetMarketPosition(asset),
+      this.upsertAssetCalculationTerm(asset),
+    ]);
+  }
+
+  private async upsertAssetMarketPosition(asset: Asset): Promise<void> {
     if (asset.marketPosition) {
       const row = {
         householdId: asset.householdId,
@@ -251,7 +286,9 @@ export class PrismaAssetsRepository
         data: { deletedAt: new Date() },
       });
     }
+  }
 
+  private async upsertAssetCalculationTerm(asset: Asset): Promise<void> {
     if (asset.calculationTerm) {
       const row = {
         householdId: asset.householdId,

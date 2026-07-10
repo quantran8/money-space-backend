@@ -4,6 +4,7 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 
 interface ErrorBody {
@@ -17,12 +18,14 @@ interface ErrorBody {
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger('HTTP');
+
   catch(exception: unknown, host: ArgumentsHost) {
     const http = host.switchToHttp();
     const response = http.getResponse<{
       status: (statusCode: number) => { json: (body: ErrorBody) => void };
     }>();
-    const request = http.getRequest<{ url: string }>();
+    const request = http.getRequest<{ url: string; method: string }>();
 
     const statusCode =
       exception instanceof HttpException
@@ -43,6 +46,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
       (exception instanceof HttpException
         ? exception.name
         : 'Internal Server Error');
+
+    const logLine = `${request.method} ${request.url} ${statusCode} - ${JSON.stringify(
+      message,
+    )}`;
+
+    // 5xx are unexpected: log with stack. 4xx are client errors: log as warning.
+    if (statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
+      this.logger.error(
+        logLine,
+        exception instanceof Error ? exception.stack : undefined,
+      );
+    } else {
+      this.logger.warn(logLine);
+    }
 
     response.status(statusCode).json({
       success: false,

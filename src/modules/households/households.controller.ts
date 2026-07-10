@@ -1,13 +1,26 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthUser } from '../auth/entities/auth-user.entity';
+import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
+import type { CreateHouseholdDto } from './dto/create-household.dto';
 import { HouseholdsService } from './households.service';
 
 @Controller('api/households')
+@UseGuards(SupabaseAuthGuard)
 export class HouseholdsController {
   constructor(private readonly householdsService: HouseholdsService) {}
 
   @Get()
-  listHouseholds() {
-    return this.householdsService.listHouseholds();
+  listHouseholds(@CurrentUser() user: AuthUser) {
+    return this.householdsService.listMyHouseholds(user);
+  }
+
+  @Post()
+  createHousehold(
+    @CurrentUser() user: AuthUser,
+    @Body() payload: CreateHouseholdDto,
+  ) {
+    return this.householdsService.createHousehold(user, payload);
   }
 
   @Get(':householdId')

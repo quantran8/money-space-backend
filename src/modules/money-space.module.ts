@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AssetsModule } from './assets/assets.module';
+import { AuthModule } from './auth/auth.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DebtsModule } from './debts/debts.module';
 import { GoalsModule } from './goals/goals.module';
@@ -11,6 +12,7 @@ import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
+    AuthModule,
     HouseholdsModule,
     DashboardModule,
     AssetsModule,
@@ -22,6 +24,7 @@ import { PaymentsModule } from './payments/payments.module';
     MarketDataModule,
   ],
   exports: [
+    AuthModule,
     HouseholdsModule,
     DashboardModule,
     AssetsModule,

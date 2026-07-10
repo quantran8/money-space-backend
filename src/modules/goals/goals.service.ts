@@ -32,7 +32,8 @@ export class GoalsService {
     householdId: string,
     payload: CreateFinancialGoalDto,
   ) {
-    await this.goalsRepository.assertHousehold(householdId);
+    // `insertFinancialGoal` asserts the household exists (and needs its row to
+    // resolve `createdById`), so we don't assert it a second time here.
     const goal: FinancialGoal = {
       id: this.goalsRepository.createId('goal'),
       householdId,

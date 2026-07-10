@@ -47,7 +47,8 @@ export class MoneyEventsService {
   }
 
   async createMoneyEvent(householdId: string, payload: CreateMoneyEventDto) {
-    await this.moneyEventsRepository.assertHousehold(householdId);
+    // `insertMoneyEvent` asserts the household exists (and needs its row to
+    // resolve `createdById`), so we don't assert it a second time here.
     const event: MoneyEvent = {
       id: this.moneyEventsRepository.createId('event'),
       householdId,
@@ -104,7 +105,10 @@ export class MoneyEventsService {
   }
 
   private async ensureMoneyEvent(householdId: string, eventId: string) {
-    await this.moneyEventsRepository.assertHousehold(householdId);
+    // Querying by { id, householdId, deletedAt: null } already returns
+    // undefined when the row (or its household) is absent, so a separate
+    // assertHousehold round-trip is redundant — the NotFoundException below
+    // preserves the 404 semantics.
     const event = await this.moneyEventsRepository.findMoneyEventById(
       householdId,
       eventId,

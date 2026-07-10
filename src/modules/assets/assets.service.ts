@@ -102,7 +102,8 @@ export class AssetsService {
   }
 
   async createAsset(householdId: string, payload: CreateAssetDto) {
-    await this.assetsRepository.assertHousehold(householdId);
+    // `insertAsset` asserts the household exists (and needs its row to resolve
+    // `createdById`), so we don't assert it a second time here.
     const asset = this.normalizeAsset({
       id: this.assetsRepository.createId('asset'),
       householdId,
@@ -119,8 +120,8 @@ export class AssetsService {
     });
 
     await this.assetsRepository.insertAsset(asset);
-    await this.upsertCurrentValuation(asset);
-    return this.getAssetDetail(householdId, asset.id);
+    const currentValue = await this.upsertCurrentValuation(asset);
+    return this.toAssetRecord(asset, currentValue);
   }
 
   async updateAsset(householdId: string, assetId: string, payload: UpdateAssetDto) {
@@ -153,15 +154,19 @@ export class AssetsService {
     });
 
     await this.assetsRepository.updateAsset(assetId, next);
-    await this.upsertCurrentValuation(next);
-    return this.getAssetDetail(householdId, assetId);
+    const currentValue = await this.upsertCurrentValuation(next);
+    return this.toAssetRecord(next, currentValue);
   }
 
   async deleteAsset(householdId: string, assetId: string) {
     await this.ensureAsset(householdId, assetId);
-    await this.assetsRepository.deleteAsset(assetId);
-    await this.assetsRepository.deleteAssetValuations(assetId);
-    await this.assetsRepository.unlinkAssetFromMoneyEvents(assetId);
+    // These three writes are independent of one another (all keyed by assetId,
+    // none consumes another's result) so run them concurrently.
+    await Promise.all([
+      this.assetsRepository.deleteAsset(assetId),
+      this.assetsRepository.deleteAssetValuations(assetId),
+      this.assetsRepository.unlinkAssetFromMoneyEvents(assetId),
+    ]);
     return {
       deleted: true,
       assetId,
@@ -223,7 +228,16 @@ export class AssetsService {
     return next;
   }
 
-  private async upsertCurrentValuation(asset: Asset) {
+  private toAssetRecord(asset: Asset, currentValue: number) {
+    return {
+      ...asset,
+      currentValue,
+      currentValueDisplay: formatCompactMillions(currentValue),
+      valueUpdatedAt: AS_OF,
+    };
+  }
+
+  private async upsertCurrentValuation(asset: Asset): Promise<number> {
     const [marketPrices, fxRates] = await Promise.all([
       this.assetsRepository.getMarketPrices(),
       this.assetsRepository.getFxRates(),
@@ -248,7 +262,7 @@ export class AssetsService {
       existing.method = method;
       existing.note = asset.note;
       await this.assetsRepository.insertAssetValuation(existing);
-      return;
+      return value;
     }
 
     await this.assetsRepository.insertAssetValuation({
@@ -261,5 +275,7 @@ export class AssetsService {
       method,
       note: asset.note,
     });
+
+    return value;
   }
 }

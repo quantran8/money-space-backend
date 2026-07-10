@@ -59,20 +59,39 @@ export class PrismaGoalsRepository
   }
 
   async insertFinancialGoal(goal: FinancialGoal): Promise<void> {
-    const household = await this.assertHousehold(goal.householdId);
-    await this.prisma.financialGoal.create({
-      data: {
-        id: goal.id,
-        householdId: goal.householdId,
-        name: goal.name,
-        targetAmount: goal.targetAmount,
-        currentAmount: goal.currentAmount,
-        deadline: this.toDate(nullableDate(goal.deadline)),
-        priority: goal.priority,
-        note: goal.note,
-        createdById: household.createdBy,
-      } as any,
-    });
+    // Single round-trip: insert the goal while deriving `created_by` from the
+    // household row in one statement. If the household doesn't exist (or is
+    // soft-deleted) the SELECT yields no row, nothing is inserted, and we
+    // surface a 404 — matching the previous assertHousehold behaviour.
+    const deadline = this.toDate(nullableDate(goal.deadline));
+
+    // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills it
+    // on ORM writes, but a raw INSERT must set it explicitly.
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO financial_goals
+        (id, household_id, name, target_amount, current_amount,
+         deadline, priority, note, created_by, updated_at)
+      SELECT
+        ${goal.id}::uuid,
+        h.id,
+        ${goal.name},
+        ${goal.targetAmount}::numeric,
+        ${goal.currentAmount}::numeric,
+        ${deadline}::date,
+        ${goal.priority}::"GoalPriority",
+        ${goal.note},
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${goal.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+
+    if (inserted === 0) {
+      throw new NotFoundException(
+        `Household "${goal.householdId}" was not found`,
+      );
+    }
   }
 
   async updateFinancialGoal(goalId: string, goal: FinancialGoal): Promise<void> {

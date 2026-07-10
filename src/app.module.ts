@@ -3,6 +3,7 @@ import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { MoneySpaceModule } from './modules/money-space.module';
@@ -12,6 +13,12 @@ import { MoneySpaceModule } from './modules/money-space.module';
   controllers: [AppController],
   providers: [
     AppService,
+    // Registered first so it wraps ResponseInterceptor: logs the raw request
+    // on the way in and the final response/duration on the way out.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LoggingInterceptor,
+    },
     {
       provide: APP_INTERCEPTOR,
       useClass: ResponseInterceptor,

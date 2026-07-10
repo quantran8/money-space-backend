@@ -39,7 +39,8 @@ export class DebtsService {
   }
 
   async createDebt(householdId: string, payload: CreateDebtDto) {
-    await this.debtsRepository.assertHousehold(householdId);
+    // `insertDebt` asserts the household exists (and needs its row to resolve
+    // `createdById`), so we don't assert it a second time here.
     const debt: Debt = {
       id: this.debtsRepository.createId('debt'),
       householdId,
@@ -65,8 +66,12 @@ export class DebtsService {
     };
 
     await this.debtsRepository.insertDebt(debt);
-    await this.debtsRepository.upsertDebtTerms(debt);
-    await this.debtsRepository.upsertDebtInterestPeriods(debt);
+    // The two upserts touch independent tables (debt_terms / interest periods)
+    // and don't depend on each other, so run them concurrently.
+    await Promise.all([
+      this.debtsRepository.upsertDebtTerms(debt),
+      this.debtsRepository.upsertDebtInterestPeriods(debt),
+    ]);
     return debt;
   }
 
@@ -92,16 +97,24 @@ export class DebtsService {
     };
 
     await this.debtsRepository.updateDebt(debtId, next);
-    await this.debtsRepository.upsertDebtTerms(next);
-    await this.debtsRepository.upsertDebtInterestPeriods(next);
+    // The two upserts touch independent tables (debt_terms / interest periods)
+    // and don't depend on each other, so run them concurrently.
+    await Promise.all([
+      this.debtsRepository.upsertDebtTerms(next),
+      this.debtsRepository.upsertDebtInterestPeriods(next),
+    ]);
     return next;
   }
 
   async deleteDebt(householdId: string, debtId: string) {
     await this.ensureDebt(householdId, debtId);
-    await this.debtsRepository.deleteDebt(debtId);
-    await this.debtsRepository.unlinkDebtFromUpcomingPayments(debtId);
-    await this.debtsRepository.unlinkDebtFromMoneyEvents(debtId);
+    // The soft-delete and the two unlinks touch independent tables and don't
+    // depend on each other, so run them concurrently.
+    await Promise.all([
+      this.debtsRepository.deleteDebt(debtId),
+      this.debtsRepository.unlinkDebtFromUpcomingPayments(debtId),
+      this.debtsRepository.unlinkDebtFromMoneyEvents(debtId),
+    ]);
     return {
       deleted: true,
       debtId,
@@ -109,7 +122,9 @@ export class DebtsService {
   }
 
   private async ensureDebt(householdId: string, debtId: string) {
-    await this.debtsRepository.assertHousehold(householdId);
+    // `findDebtById` filters by { id, householdId, deletedAt: null }, so it
+    // already returns undefined when the debt (or its household) is absent —
+    // the separate assertHousehold before it was a wasted round-trip.
     const debt = await this.debtsRepository.findDebtById(householdId, debtId);
     if (!debt) {
       throw new NotFoundException(`Debt "${debtId}" was not found`);

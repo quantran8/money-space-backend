@@ -32,8 +32,10 @@ export class MembersService {
   }
 
   async createMember(householdId: string, payload: CreateMemberDto) {
-    await this.membersRepository.assertHousehold(householdId);
-
+    // `insertMember` asserts the household exists (it must, so the FK-backed
+    // `household_members` insert surfaces a 404 rather than a 500 FK error) and
+    // runs that check concurrently with the profile upsert, so we don't assert
+    // the household a second time here.
     const member: HouseholdMember = {
       id: this.membersRepository.createId('member'),
       profileId: payload.profileId ?? randomUUID(),
@@ -95,7 +97,9 @@ export class MembersService {
   }
 
   private async ensureMember(householdId: string, memberId: string) {
-    await this.membersRepository.assertHousehold(householdId);
+    // Querying by { id, memberId, householdId } already returns undefined when
+    // the member (or its household) is absent, so a separate assertHousehold
+    // before it would be a wasted round-trip.
     const member = await this.membersRepository.findMemberById(householdId, memberId);
     if (!member) {
       throw new NotFoundException(`Member "${memberId}" was not found`);

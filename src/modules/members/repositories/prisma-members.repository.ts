@@ -58,20 +58,28 @@ export class PrismaMembersRepository
   }
 
   async insertMember(member: HouseholdMember): Promise<void> {
-    await this.prisma.profile.upsert({
-      where: { id: member.profileId },
-      update: {
-        email: member.email,
-        displayName: member.name,
-        fullName: member.name,
-      } as any,
-      create: {
-        id: member.profileId,
-        email: member.email,
-        displayName: member.name,
-        fullName: member.name,
-      } as any,
-    });
+    // The household existence check and the profile upsert are independent, so
+    // run them concurrently (one round-trip instead of two). We still assert the
+    // household explicitly: the `household_members` insert has an FK to the
+    // household, so a missing household would otherwise surface as a 500 FK
+    // error instead of the expected 404.
+    await Promise.all([
+      this.assertHousehold(member.householdId),
+      this.prisma.profile.upsert({
+        where: { id: member.profileId },
+        update: {
+          email: member.email,
+          displayName: member.name,
+          fullName: member.name,
+        } as any,
+        create: {
+          id: member.profileId,
+          email: member.email,
+          displayName: member.name,
+          fullName: member.name,
+        } as any,
+      }),
+    ]);
 
     await this.prisma.householdMember.create({
       data: {
@@ -86,23 +94,27 @@ export class PrismaMembersRepository
   }
 
   async updateMember(memberId: string, member: HouseholdMember): Promise<void> {
-    await this.prisma.profile.updateMany({
-      where: { id: member.profileId },
-      data: {
-        email: member.email,
-        displayName: member.name,
-        fullName: member.name,
-      } as any,
-    });
-
-    await this.prisma.householdMember.update({
-      where: { id: memberId },
-      data: {
-        role: member.role,
-        permissionLevel: member.permission,
-        joinedAt: new Date(member.joinedAt),
-      } as any,
-    });
+    // The profile update and the household-member update are independent writes
+    // (each keyed by a known id, neither depends on the other's result), so run
+    // them concurrently in a single round-trip instead of two sequential awaits.
+    await Promise.all([
+      this.prisma.profile.updateMany({
+        where: { id: member.profileId },
+        data: {
+          email: member.email,
+          displayName: member.name,
+          fullName: member.name,
+        } as any,
+      }),
+      this.prisma.householdMember.update({
+        where: { id: memberId },
+        data: {
+          role: member.role,
+          permissionLevel: member.permission,
+          joinedAt: new Date(member.joinedAt),
+        } as any,
+      }),
+    ]);
   }
 
   async deleteMember(memberId: string): Promise<void> {

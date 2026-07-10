@@ -59,20 +59,44 @@ export class PrismaPaymentsRepository
   }
 
   async insertUpcomingPayment(payment: UpcomingPayment): Promise<void> {
-    const household = await this.assertHousehold(payment.householdId);
-    await this.prisma.upcomingPayment.create({
-      data: {
-        id: payment.id,
-        householdId: payment.householdId,
-        name: payment.name,
-        amount: payment.amount,
-        dueDate: this.toDate(payment.dueDate),
-        debtId: payment.debtId,
-        ...toPaymentStatusFields(payment.status),
-        ownerMemberId: this.asUuid(payment.owner),
-        createdById: household.createdBy,
-      } as any,
-    });
+    // Single round-trip: insert the payment while deriving `created_by` from the
+    // household row in one statement. If the household doesn't exist (or is
+    // soft-deleted) the SELECT yields no row, nothing is inserted, and we
+    // surface a 404 — matching the previous assertHousehold behaviour.
+    const dueDate = this.toDate(payment.dueDate);
+    const ownerMemberId = this.asUuid(payment.owner);
+    const statusFields = toPaymentStatusFields(payment.status);
+
+    // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills it
+    // on ORM writes, but a raw INSERT must set it explicitly.
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO upcoming_payments
+        (id, household_id, name, amount, due_date, debt_id,
+         status, attention_level, is_attention_needed,
+         owner_member_id, created_by, updated_at)
+      SELECT
+        ${payment.id}::uuid,
+        h.id,
+        ${payment.name},
+        ${payment.amount}::numeric,
+        ${dueDate}::date,
+        ${payment.debtId ?? null}::uuid,
+        ${statusFields.status}::"PaymentStatus",
+        ${statusFields.attentionLevel}::"AttentionLevel",
+        ${statusFields.isAttentionNeeded},
+        ${ownerMemberId}::uuid,
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${payment.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+
+    if (inserted === 0) {
+      throw new NotFoundException(
+        `Household "${payment.householdId}" was not found`,
+      );
+    }
   }
 
   async updateUpcomingPayment(

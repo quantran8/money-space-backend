@@ -46,7 +46,6 @@ export class PaymentsService {
     householdId: string,
     payload: CreateUpcomingPaymentDto,
   ) {
-    await this.paymentsRepository.assertHousehold(householdId);
     const payment: UpcomingPayment = {
       id: this.paymentsRepository.createId('payment'),
       householdId,
@@ -87,8 +86,10 @@ export class PaymentsService {
 
   async deleteUpcomingPayment(householdId: string, paymentId: string) {
     await this.ensureUpcomingPayment(householdId, paymentId);
-    await this.paymentsRepository.deleteUpcomingPayment(paymentId);
-    await this.paymentsRepository.unlinkUpcomingPaymentFromMoneyEvents(paymentId);
+    await Promise.all([
+      this.paymentsRepository.deleteUpcomingPayment(paymentId),
+      this.paymentsRepository.unlinkUpcomingPaymentFromMoneyEvents(paymentId),
+    ]);
     return {
       deleted: true,
       paymentId,
@@ -96,7 +97,6 @@ export class PaymentsService {
   }
 
   private async ensureUpcomingPayment(householdId: string, paymentId: string) {
-    await this.paymentsRepository.assertHousehold(householdId);
     const payment = await this.paymentsRepository.findUpcomingPaymentById(
       householdId,
       paymentId,

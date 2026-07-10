@@ -80,29 +80,52 @@ export class PrismaDebtsRepository
   }
 
   async insertDebt(debt: Debt): Promise<void> {
-    const household = await this.assertHousehold(debt.householdId);
-    await this.prisma.debt.create({
-      data: {
-        id: debt.id,
-        householdId: debt.householdId,
-        name: debt.name,
-        debtType: debt.debtType,
-        lenderType: debt.lenderType,
-        lenderName: debt.lenderName,
-        originalAmount: debt.originalAmount,
-        outstandingAmount: debt.outstandingAmount,
-        currency: debt.currency,
-        borrowedAt: debt.borrowedAt ? this.toDate(debt.borrowedAt) : null,
-        expectedFinalDueDate: debt.expectedFinalDueDate
-          ? this.toDate(debt.expectedFinalDueDate)
-          : null,
-        status: debt.status,
-        ownerMemberId: debt.ownerMemberId,
-        receivedToAssetId: debt.receivedToAssetId,
-        note: debt.note,
-        createdById: household.createdBy,
-      } as any,
-    });
+    // Single round-trip: insert the debt while deriving `created_by` from the
+    // household row in one statement. If the household doesn't exist (or is
+    // soft-deleted) the SELECT yields no row, nothing is inserted, and we
+    // surface a 404 — matching the previous assertHousehold behaviour.
+    const borrowedAt = debt.borrowedAt ? this.toDate(debt.borrowedAt) : null;
+    const expectedFinalDueDate = debt.expectedFinalDueDate
+      ? this.toDate(debt.expectedFinalDueDate)
+      : null;
+
+    // Prisma's @updatedAt fills `updated_at` on ORM create/update writes but
+    // does NOT apply to raw SQL, so set it explicitly to now() to mirror the
+    // previous debt.create behaviour.
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO debts
+        (id, household_id, name, debt_type, lender_type, lender_name,
+         original_amount, outstanding_amount, currency, borrowed_at,
+         expected_final_due_date, status, owner_member_id, received_to_asset_id,
+         note, created_by, updated_at)
+      SELECT
+        ${debt.id}::uuid,
+        h.id,
+        ${debt.name},
+        ${debt.debtType}::"DebtType",
+        ${debt.lenderType}::"LenderType",
+        ${debt.lenderName ?? null},
+        ${debt.originalAmount}::numeric,
+        ${debt.outstandingAmount}::numeric,
+        ${debt.currency},
+        ${borrowedAt}::date,
+        ${expectedFinalDueDate}::date,
+        ${debt.status}::"DebtStatus",
+        ${debt.ownerMemberId ?? null}::uuid,
+        ${debt.receivedToAssetId ?? null}::uuid,
+        ${debt.note ?? null},
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${debt.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+
+    if (inserted === 0) {
+      throw new NotFoundException(
+        `Household "${debt.householdId}" was not found`,
+      );
+    }
   }
 
   async updateDebt(debtId: string, debt: Debt): Promise<void> {
