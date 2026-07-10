@@ -1,9 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../database/prisma/prisma.service';
 import { AS_OF } from '../../common/seed/money-space.seed';
-import {
-  Asset,
-  AssetValuationMode,
-} from './entities/asset.entity';
+import { Asset, AssetValuationMode } from './entities/asset.entity';
 import { AssetValuation } from './entities/asset-valuation.entity';
 import {
   computeCurrentValue,
@@ -21,6 +19,7 @@ export class AssetsService {
   constructor(
     @Inject(ASSETS_REPOSITORY)
     private readonly assetsRepository: AssetsRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async listAssets(householdId: string) {
@@ -69,7 +68,8 @@ export class AssetsService {
 
   async getAssetSnapshots(householdId: string) {
     await this.assetsRepository.assertHousehold(householdId);
-    const items = await this.assetsRepository.getSnapshotsByHousehold(householdId);
+    const items =
+      await this.assetsRepository.getSnapshotsByHousehold(householdId);
 
     return {
       householdId,
@@ -91,7 +91,10 @@ export class AssetsService {
 
   async getAssetValuations(householdId: string, assetId: string) {
     await this.ensureAsset(householdId, assetId);
-    const items = await this.assetsRepository.findAssetValuations(householdId, assetId);
+    const items = await this.assetsRepository.findAssetValuations(
+      householdId,
+      assetId,
+    );
 
     return {
       householdId,
@@ -119,12 +122,19 @@ export class AssetsService {
       calculationTerm: payload.calculationTerm,
     });
 
-    await this.assetsRepository.insertAsset(asset);
-    const currentValue = await this.upsertCurrentValuation(asset);
+    // The asset row and its initial valuation must be written atomically.
+    const currentValue = await this.prisma.runInTransaction(async () => {
+      await this.assetsRepository.insertAsset(asset);
+      return this.upsertCurrentValuation(asset);
+    });
     return this.toAssetRecord(asset, currentValue);
   }
 
-  async updateAsset(householdId: string, assetId: string, payload: UpdateAssetDto) {
+  async updateAsset(
+    householdId: string,
+    assetId: string,
+    payload: UpdateAssetDto,
+  ) {
     const current = await this.ensureAsset(householdId, assetId);
     const next = this.normalizeAsset({
       ...current,
@@ -153,20 +163,23 @@ export class AssetsService {
           : current.calculationTerm,
     });
 
-    await this.assetsRepository.updateAsset(assetId, next);
-    const currentValue = await this.upsertCurrentValuation(next);
+    // The asset row and its valuation update atomically.
+    const currentValue = await this.prisma.runInTransaction(async () => {
+      await this.assetsRepository.updateAsset(assetId, next);
+      return this.upsertCurrentValuation(next);
+    });
     return this.toAssetRecord(next, currentValue);
   }
 
   async deleteAsset(householdId: string, assetId: string) {
     await this.ensureAsset(householdId, assetId);
-    // These three writes are independent of one another (all keyed by assetId,
-    // none consumes another's result) so run them concurrently.
-    await Promise.all([
-      this.assetsRepository.deleteAsset(assetId),
-      this.assetsRepository.deleteAssetValuations(assetId),
-      this.assetsRepository.unlinkAssetFromMoneyEvents(assetId),
-    ]);
+    // These three writes must all land or none: run them in one transaction,
+    // sequentially (they share the transaction's single connection).
+    await this.prisma.runInTransaction(async () => {
+      await this.assetsRepository.deleteAsset(assetId);
+      await this.assetsRepository.deleteAssetValuations(assetId);
+      await this.assetsRepository.unlinkAssetFromMoneyEvents(assetId);
+    });
     return {
       deleted: true,
       assetId,
@@ -198,7 +211,10 @@ export class AssetsService {
 
   private async ensureAsset(householdId: string, assetId: string) {
     await this.assetsRepository.assertHousehold(householdId);
-    const asset = await this.assetsRepository.findAssetById(householdId, assetId);
+    const asset = await this.assetsRepository.findAssetById(
+      householdId,
+      assetId,
+    );
     if (!asset) {
       throw new NotFoundException(`Asset "${assetId}" was not found`);
     }
@@ -207,7 +223,7 @@ export class AssetsService {
 
   private normalizeAsset(asset: Asset): Asset {
     const next = { ...asset };
-    const mode = next.valuationMode as AssetValuationMode;
+    const mode = next.valuationMode;
 
     if (mode === 'manual') {
       next.marketPosition = undefined;
@@ -238,17 +254,15 @@ export class AssetsService {
   }
 
   private async upsertCurrentValuation(asset: Asset): Promise<number> {
-    const [marketPrices, fxRates] = await Promise.all([
-      this.assetsRepository.getMarketPrices(),
-      this.assetsRepository.getFxRates(),
-    ]);
-    const value = computeCurrentValue(
-      asset,
-      marketPrices,
-      fxRates,
+    // Called inside the asset create/update transaction (shared connection), so
+    // these reads run sequentially rather than concurrently on the same client.
+    const marketPrices = await this.assetsRepository.getMarketPrices();
+    const fxRates = await this.assetsRepository.getFxRates();
+    const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
+    const existing = await this.assetsRepository.findAssetValuation(
+      asset.id,
       AS_OF,
     );
-    const existing = await this.assetsRepository.findAssetValuation(asset.id, AS_OF);
     const method: AssetValuation['method'] =
       asset.valuationMode === 'manual'
         ? 'manual'

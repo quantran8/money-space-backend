@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../database/prisma/prisma.service';
 import type { CreateDebtDto } from './dto/create-debt.dto';
 import type { ListDebtsQuery } from './dto/list-debts.query';
 import type { UpdateDebtDto } from './dto/update-debt.dto';
@@ -11,6 +12,7 @@ export class DebtsService {
   constructor(
     @Inject(DEBTS_REPOSITORY)
     private readonly debtsRepository: DebtsRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async listDebts(householdId: string, query?: ListDebtsQuery) {
@@ -62,20 +64,27 @@ export class DebtsService {
       interestType: payload.interestType,
       interestCalculation: payload.interestCalculation,
       interestRate: payload.interestRate,
+      interestPeriods: payload.interestPeriods,
       note: payload.note?.trim(),
     };
 
-    await this.debtsRepository.insertDebt(debt);
-    // The two upserts touch independent tables (debt_terms / interest periods)
-    // and don't depend on each other, so run them concurrently.
-    await Promise.all([
-      this.debtsRepository.upsertDebtTerms(debt),
-      this.debtsRepository.upsertDebtInterestPeriods(debt),
-    ]);
+    // All writes for a debt (the debt row + its terms + interest periods) must
+    // succeed or fail together, so run them in one transaction. Statements on a
+    // single transaction run sequentially — one connection, no concurrent
+    // `Promise.all` on the shared `tx`.
+    await this.prisma.runInTransaction(async () => {
+      await this.debtsRepository.insertDebt(debt);
+      await this.debtsRepository.upsertDebtTerms(debt);
+      await this.debtsRepository.upsertDebtInterestPeriods(debt);
+    });
     return debt;
   }
 
-  async updateDebt(householdId: string, debtId: string, payload: UpdateDebtDto) {
+  async updateDebt(
+    householdId: string,
+    debtId: string,
+    payload: UpdateDebtDto,
+  ) {
     const debt = await this.ensureDebt(householdId, debtId);
     const next: Debt = {
       ...debt,
@@ -96,25 +105,25 @@ export class DebtsService {
       status: payload.status ?? debt.status,
     };
 
-    await this.debtsRepository.updateDebt(debtId, next);
-    // The two upserts touch independent tables (debt_terms / interest periods)
-    // and don't depend on each other, so run them concurrently.
-    await Promise.all([
-      this.debtsRepository.upsertDebtTerms(next),
-      this.debtsRepository.upsertDebtInterestPeriods(next),
-    ]);
+    // The debt row and its terms / interest periods update atomically.
+    await this.prisma.runInTransaction(async () => {
+      await this.debtsRepository.updateDebt(debtId, next);
+      await this.debtsRepository.upsertDebtTerms(next);
+      await this.debtsRepository.upsertDebtInterestPeriods(next);
+    });
     return next;
   }
 
   async deleteDebt(householdId: string, debtId: string) {
     await this.ensureDebt(householdId, debtId);
-    // The soft-delete and the two unlinks touch independent tables and don't
-    // depend on each other, so run them concurrently.
-    await Promise.all([
-      this.debtsRepository.deleteDebt(debtId),
-      this.debtsRepository.unlinkDebtFromUpcomingPayments(debtId),
-      this.debtsRepository.unlinkDebtFromMoneyEvents(debtId),
-    ]);
+    // The soft-delete and the two unlinks must all land or none: run them in
+    // one transaction (sequentially, since they share the transaction's
+    // connection).
+    await this.prisma.runInTransaction(async () => {
+      await this.debtsRepository.deleteDebt(debtId);
+      await this.debtsRepository.unlinkDebtFromUpcomingPayments(debtId);
+      await this.debtsRepository.unlinkDebtFromMoneyEvents(debtId);
+    });
     return {
       deleted: true,
       debtId,

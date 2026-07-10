@@ -42,14 +42,9 @@ export class DashboardService {
       this.dashboardRepository.getSnapshotsByHousehold(householdId),
     ]);
     const assets = householdAssets.map((asset) => ({
-        ...asset,
-        currentValue: computeCurrentValue(
-          asset,
-          marketPrices,
-          fxRates,
-          AS_OF,
-        ),
-      }));
+      ...asset,
+      currentValue: computeCurrentValue(asset, marketPrices, fxRates, AS_OF),
+    }));
 
     const totals = computeLiquidityTotals(assets);
     const totalDebt = 18_000_000;

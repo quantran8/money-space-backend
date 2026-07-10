@@ -1,4 +1,5 @@
 import type {
+  DebtInterestPeriod,
   DebtStatus,
   DebtType,
   LenderType,
@@ -23,5 +24,7 @@ export interface CreateDebtDto {
   interestType?: string;
   interestCalculation?: string;
   interestRate?: number;
+  /** Optional per-stage interest schedule; overrides `interestRate` when present. */
+  interestPeriods?: DebtInterestPeriod[];
   note?: string;
 }

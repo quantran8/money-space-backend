@@ -46,14 +46,20 @@ export class PrismaDebtsRepository
         },
         interestPeriods: {
           where: { deletedAt: null },
-          orderBy: { startDate: 'desc' },
-          take: 1,
+          orderBy: { startDate: 'asc' },
         },
       },
       orderBy: [{ status: 'asc' }, { borrowedAt: 'desc' }],
     });
 
-    return debts.map((debt) => mapDebt(debt, debt.terms[0], debt.interestPeriods[0]));
+    return debts.map((debt) =>
+      mapDebt(
+        debt,
+        debt.terms[0],
+        debt.interestPeriods[0],
+        debt.interestPeriods,
+      ),
+    );
   }
 
   async findDebtById(
@@ -70,13 +76,19 @@ export class PrismaDebtsRepository
         },
         interestPeriods: {
           where: { deletedAt: null },
-          orderBy: { startDate: 'desc' },
-          take: 1,
+          orderBy: { startDate: 'asc' },
         },
       },
     });
 
-    return debt ? mapDebt(debt, debt.terms[0], debt.interestPeriods[0]) : undefined;
+    return debt
+      ? mapDebt(
+          debt,
+          debt.terms[0],
+          debt.interestPeriods[0],
+          debt.interestPeriods,
+        )
+      : undefined;
   }
 
   async insertDebt(debt: Debt): Promise<void> {
@@ -167,6 +179,33 @@ export class PrismaDebtsRepository
     });
   }
 
+  private normalizeInterestType(
+    value: string | null | undefined,
+  ): 'none' | 'fixed' | 'floating' | 'staged' {
+    const allowed = ['none', 'fixed', 'floating', 'staged'] as const;
+    if (value && (allowed as readonly string[]).includes(value)) {
+      return value as (typeof allowed)[number];
+    }
+    // Free-form labels (e.g. "9.2%/năm · reducing balance") map to `fixed`
+    // when interest is present, otherwise `none`.
+    return value && value !== 'none' ? 'fixed' : 'none';
+  }
+
+  private normalizeInterestCalculation(
+    value: string | null | undefined,
+  ): 'simple_interest' | 'reducing_balance' | 'flat_rate' | 'custom' | null {
+    const allowed = [
+      'simple_interest',
+      'reducing_balance',
+      'flat_rate',
+      'custom',
+    ] as const;
+    if (value && (allowed as readonly string[]).includes(value)) {
+      return value as (typeof allowed)[number];
+    }
+    return null;
+  }
+
   async upsertDebtTerms(debt: Debt): Promise<void> {
     const existing = await this.prisma.debtTerm.findFirst({
       where: { debtId: debt.id, deletedAt: null },
@@ -192,8 +231,10 @@ export class PrismaDebtsRepository
         ? this.toDate(debt.expectedFinalDueDate)
         : null,
       hasInterest: !!debt.interestType && debt.interestType !== 'none',
-      interestType: (debt.interestType as any) ?? 'none',
-      interestCalculation: (debt.interestCalculation as any) ?? null,
+      interestType: this.normalizeInterestType(debt.interestType),
+      interestCalculation: this.normalizeInterestCalculation(
+        debt.interestCalculation,
+      ),
       gracePeriodMonths: null,
     };
 
@@ -208,37 +249,102 @@ export class PrismaDebtsRepository
     await this.prisma.debtTerm.create({ data: data as any });
   }
 
+  /** Encode a stage length (months) so it round-trips via the row's `note`. */
+  private encodePeriodNote(months?: number): string | null {
+    return months && months > 0 ? `months:${months}` : null;
+  }
+
+  /** Add `months` calendar months to an ISO date, returning a Date. */
+  private addMonths(isoDate: string, months: number): Date {
+    const base = new Date(`${isoDate}T00:00:00.000Z`);
+    base.setUTCMonth(base.getUTCMonth() + months);
+    return base;
+  }
+
+  /**
+   * Replace a debt's interest schedule. Prefers the full `interestPeriods`
+   * array (each stage becomes its own `debt_interest_periods` row); falls back
+   * to a single row derived from `interestRate` for backward compatibility.
+   *
+   * Existing rows are soft-deleted first so editing the number/order of stages
+   * never leaves stale rows behind.
+   */
   async upsertDebtInterestPeriods(debt: Debt): Promise<void> {
-    if (debt.interestRate === undefined || debt.interestRate === null) {
+    const hasStages =
+      Array.isArray(debt.interestPeriods) && debt.interestPeriods.length > 0;
+    const hasLegacyRate =
+      debt.interestRate !== undefined && debt.interestRate !== null;
+    if (!hasStages && !hasLegacyRate) {
       return;
     }
 
-    const existing = await this.prisma.debtInterestPeriod.findFirst({
-      where: { debtId: debt.id, deletedAt: null },
-      orderBy: { startDate: 'desc' },
-    });
+    const start = debt.borrowedAt ?? new Date().toISOString().slice(0, 10);
 
-    const data = {
-      householdId: debt.householdId,
-      debtId: debt.id,
-      startDate: this.toDate(debt.borrowedAt ?? new Date().toISOString().slice(0, 10)),
-      endDate: debt.expectedFinalDueDate
-        ? this.toDate(debt.expectedFinalDueDate)
-        : null,
-      interestRate: debt.interestRate,
-      rateType: 'fixed',
-      note: debt.interestType ?? null,
-    };
+    // Build the rows to insert.
+    let rows: Array<{
+      startDate: Date | null;
+      endDate: Date | null;
+      interestRate: number;
+      note: string | null;
+    }>;
 
-    if (existing) {
-      await this.prisma.debtInterestPeriod.update({
-        where: { id: existing.id },
-        data: data as any,
+    if (hasStages) {
+      let cursorIso = start;
+      rows = debt.interestPeriods!.map((period, index) => {
+        const isLast = index === debt.interestPeriods!.length - 1;
+        const startDate = this.toDate(cursorIso);
+        let endDate: Date | null;
+        if (period.months && period.months > 0) {
+          const next = this.addMonths(cursorIso, period.months);
+          endDate = next;
+          cursorIso = next.toISOString().slice(0, 10);
+        } else {
+          // Open-ended stage (usually the last): run to the loan's due date.
+          endDate = debt.expectedFinalDueDate
+            ? this.toDate(debt.expectedFinalDueDate)
+            : null;
+        }
+        // The very last stage always extends to the due date if known.
+        if (isLast && debt.expectedFinalDueDate) {
+          endDate = this.toDate(debt.expectedFinalDueDate);
+        }
+        return {
+          startDate,
+          endDate,
+          interestRate: period.interestRate,
+          note: this.encodePeriodNote(period.months),
+        };
       });
-      return;
+    } else {
+      rows = [
+        {
+          startDate: this.toDate(start),
+          endDate: debt.expectedFinalDueDate
+            ? this.toDate(debt.expectedFinalDueDate)
+            : null,
+          interestRate: debt.interestRate!,
+          note: null,
+        },
+      ];
     }
 
-    await this.prisma.debtInterestPeriod.create({ data: data as any });
+    await this.runInTransaction(async (tx) => {
+      await tx.debtInterestPeriod.updateMany({
+        where: { debtId: debt.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      await tx.debtInterestPeriod.createMany({
+        data: rows.map((row) => ({
+          householdId: debt.householdId,
+          debtId: debt.id,
+          startDate: row.startDate,
+          endDate: row.endDate,
+          interestRate: row.interestRate,
+          rateType: 'fixed',
+          note: row.note,
+        })) as any,
+      });
+    });
   }
 
   async unlinkDebtFromUpcomingPayments(debtId: string): Promise<void> {

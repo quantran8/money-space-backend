@@ -148,13 +148,20 @@ describe('AppModule integration', () => {
 
     expect(created.name).toBe('Quy tien mat moi');
 
-    const updated = await assetsService.updateAsset('household-minh', created.id, {
-      manualValue: 4_500_000,
-    });
+    const updated = await assetsService.updateAsset(
+      'household-minh',
+      created.id,
+      {
+        manualValue: 4_500_000,
+      },
+    );
 
     expect(updated.currentValue).toBe(4_500_000);
 
-    const deleted = await assetsService.deleteAsset('household-minh', created.id);
+    const deleted = await assetsService.deleteAsset(
+      'household-minh',
+      created.id,
+    );
     expect(deleted).toEqual({ deleted: true, assetId: created.id });
   });
 

@@ -1,9 +1,5 @@
-import type {
-  Asset,
-} from '../../assets/entities/asset.entity';
-import type {
-  AttentionItem,
-} from '../entities/attention-item.entity';
+import type { Asset } from '../../assets/entities/asset.entity';
+import type { AttentionItem } from '../entities/attention-item.entity';
 import type { SnapshotPoint } from '../entities/snapshot-point.entity';
 import type { FinancialGoal } from '../../goals/entities/financial-goal.entity';
 import type { Household } from '../../households/entities/household.entity';
@@ -20,7 +16,9 @@ export interface DashboardRepository {
   getMarketPrices(): Promise<MarketPrice[]>;
   getFxRates(): Promise<FxRate[]>;
   getAttentionItems(householdId?: string): Promise<AttentionItem[]>;
-  findUpcomingPaymentsByHousehold(householdId: string): Promise<UpcomingPayment[]>;
+  findUpcomingPaymentsByHousehold(
+    householdId: string,
+  ): Promise<UpcomingPayment[]>;
   findFinancialGoalsByHousehold(householdId: string): Promise<FinancialGoal[]>;
   findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]>;
   getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]>;

@@ -1,6 +1,9 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { MoneyEvent } from './entities/money-event.entity';
-import { deriveDirection, toMoneyEventCard } from '../../common/utils/money-space.utils';
+import {
+  deriveDirection,
+  toMoneyEventCard,
+} from '../../common/utils/money-space.utils';
 import type { CreateMoneyEventDto } from './dto/create-money-event.dto';
 import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
@@ -16,7 +19,8 @@ export class MoneyEventsService {
 
   async listMoneyEvents(householdId: string, query?: ListMoneyEventsQuery) {
     await this.moneyEventsRepository.assertHousehold(householdId);
-    let items = await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
+    let items =
+      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
 
     if (query?.month) {
       const month = query.month;
@@ -85,7 +89,10 @@ export class MoneyEventsService {
       title: payload.title?.trim() ?? event.title,
       note: payload.note?.trim() ?? event.note,
       type: nextType,
-      direction: deriveDirection(nextType, payload.direction ?? event.direction),
+      direction: deriveDirection(
+        nextType,
+        payload.direction ?? event.direction,
+      ),
       category: payload.category ?? event.category,
       isoDate: payload.isoDate ?? event.isoDate,
       amount: payload.amount ?? event.amount,

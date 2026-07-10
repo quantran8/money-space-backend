@@ -38,21 +38,34 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? (exceptionResponse as Record<string, unknown>)
         : {};
 
-    const message =
+    // Unexpected 5xx (non-HttpException — e.g. a raw Prisma/DB error) must never
+    // leak internal details to the client in production. In dev we surface the
+    // real message to make debugging easier; on prod we return a generic one.
+    // The full message + stack are always written to the server log below.
+    const isServerError = statusCode >= HttpStatus.INTERNAL_SERVER_ERROR;
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    const rawMessage =
       payload.message ??
-      (exception instanceof Error ? exception.message : 'Internal server error');
+      (exception instanceof Error
+        ? exception.message
+        : 'Internal server error');
+    const message =
+      isServerError && isProduction ? 'Internal server error' : rawMessage;
     const error =
       payload.error ??
       (exception instanceof HttpException
         ? exception.name
         : 'Internal Server Error');
 
+    // Log the raw message (not the client-sanitized one) so prod logs keep the
+    // real cause even when the client only sees "Internal server error".
     const logLine = `${request.method} ${request.url} ${statusCode} - ${JSON.stringify(
-      message,
+      rawMessage,
     )}`;
 
     // 5xx are unexpected: log with stack. 4xx are client errors: log as warning.
-    if (statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
+    if (isServerError) {
       this.logger.error(
         logLine,
         exception instanceof Error ? exception.stack : undefined,

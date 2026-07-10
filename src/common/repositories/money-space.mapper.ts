@@ -1,13 +1,12 @@
-import type {
-  Asset,
-} from '../../modules/assets/entities/asset.entity';
+import type { Asset } from '../../modules/assets/entities/asset.entity';
 import type { AssetValuation } from '../../modules/assets/entities/asset-valuation.entity';
 import type { AttentionItem } from '../../modules/dashboard/entities/attention-item.entity';
 import type { SnapshotPoint } from '../../modules/dashboard/entities/snapshot-point.entity';
-import type { Debt } from '../../modules/debts/entities/debt.entity';
 import type {
-  FinancialGoal,
-} from '../../modules/goals/entities/financial-goal.entity';
+  Debt,
+  DebtInterestPeriod,
+} from '../../modules/debts/entities/debt.entity';
+import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.entity';
 import type { Household } from '../../modules/households/entities/household.entity';
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
@@ -131,11 +130,13 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
     calculationTerm: term
       ? {
           calculationType: term.calculationType ?? term.calculation_type,
-          principalAmount: numberFromDb(term.principalAmount ?? term.principal_amount),
+          principalAmount: numberFromDb(
+            term.principalAmount ?? term.principal_amount,
+          ),
           interestRate: numberFromDb(term.interestRate ?? term.interest_rate),
           startDate: dateOnly(term.startDate ?? term.start_date),
           maturityDate:
-            term.maturityDate ?? term.maturity_date
+            (term.maturityDate ?? term.maturity_date)
               ? dateOnly(term.maturityDate ?? term.maturity_date)
               : null,
         }
@@ -163,7 +164,9 @@ export function mapSnapshot(row: DbRow): SnapshotPoint {
     date: dateOnly(row.snapshotDate ?? row.snapshot_date),
     usableNow: numberFromDb(row.totalLiquid ?? row.total_liquid),
     notImmediatelyUsable: numberFromDb(row.totalSavings ?? row.total_savings),
-    longTerm: numberFromDb(row.totalLongTermAssets ?? row.total_long_term_assets),
+    longTerm: numberFromDb(
+      row.totalLongTermAssets ?? row.total_long_term_assets,
+    ),
     totalDebt: numberFromDb(row.totalDebt ?? row.total_debt),
     attentionCount: numberFromDb(row.attentionCount ?? row.attention_count),
   };
@@ -214,7 +217,30 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
   };
 }
 
-export function mapDebt(row: DbRow, term?: DbRow, period?: DbRow): Debt {
+/** Decode the "months:N" hint stored in a period row's note, if present. */
+function monthsFromPeriodNote(note: unknown): number | undefined {
+  if (typeof note !== 'string') return undefined;
+  const match = note.match(/^months:(\d+)$/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function mapInterestPeriod(period: DbRow): DebtInterestPeriod {
+  const startRaw = period.startDate ?? period.start_date;
+  const endRaw = period.endDate ?? period.end_date;
+  return {
+    interestRate: numberFromDb(period.interestRate ?? period.interest_rate),
+    startDate: startRaw ? dateOnly(startRaw) : undefined,
+    endDate: endRaw ? dateOnly(endRaw) : undefined,
+    months: monthsFromPeriodNote(period.note),
+  };
+}
+
+export function mapDebt(
+  row: DbRow,
+  term?: DbRow,
+  period?: DbRow,
+  periods?: DbRow[],
+): Debt {
   return {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
@@ -228,11 +254,11 @@ export function mapDebt(row: DbRow, term?: DbRow, period?: DbRow): Debt {
     ),
     currency: row.currency ?? 'VND',
     borrowedAt:
-      row.borrowedAt ?? row.borrowed_at
+      (row.borrowedAt ?? row.borrowed_at)
         ? dateOnly(row.borrowedAt ?? row.borrowed_at)
         : undefined,
     expectedFinalDueDate:
-      row.expectedFinalDueDate ?? row.expected_final_due_date
+      (row.expectedFinalDueDate ?? row.expected_final_due_date)
         ? dateOnly(row.expectedFinalDueDate ?? row.expected_final_due_date)
         : undefined,
     status: row.status,
@@ -253,6 +279,10 @@ export function mapDebt(row: DbRow, term?: DbRow, period?: DbRow): Debt {
     interestRate: period
       ? numberFromDb(period.interestRate ?? period.interest_rate)
       : undefined,
+    interestPeriods:
+      periods && periods.length > 0
+        ? periods.map(mapInterestPeriod)
+        : undefined,
     note: row.note ?? undefined,
   };
 }
@@ -270,7 +300,8 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     direction: row.direction,
     fromAssetId: row.fromAssetId ?? row.from_asset_id ?? undefined,
     toAssetId: row.toAssetId ?? row.to_asset_id ?? undefined,
-    upcomingPaymentId: row.upcomingPaymentId ?? row.upcoming_payment_id ?? undefined,
+    upcomingPaymentId:
+      row.upcomingPaymentId ?? row.upcoming_payment_id ?? undefined,
     debtId: row.debtId ?? row.debt_id ?? undefined,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? undefined,
   };
@@ -285,7 +316,10 @@ export function mapUpcomingPayment(row: DbRow): UpcomingPayment {
     dueDate: dateOnly(row.dueDate ?? row.due_date),
     owner: row.ownerMemberId ?? row.owner_member_id ?? 'Chua phan cong',
     debtId: row.debtId ?? row.debt_id ?? undefined,
-    status: toUiPaymentStatus(row.status, row.attentionLevel ?? row.attention_level),
+    status: toUiPaymentStatus(
+      row.status,
+      row.attentionLevel ?? row.attention_level,
+    ),
   };
 }
 

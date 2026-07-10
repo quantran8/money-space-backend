@@ -67,7 +67,7 @@ export class TokenVerifierService {
         // Supabase access tokens use `aud: "authenticated"`.
         audience: 'authenticated',
       });
-      payload = result.payload as SupabaseJwtPayload;
+      payload = result.payload;
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'unknown';
       throw new UnauthorizedException(`Invalid or expired session (${reason})`);

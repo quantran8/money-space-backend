@@ -5,10 +5,6 @@ export interface AssetValuation {
   valuationDate: string;
   value: number;
   currency: string;
-  method:
-    | 'manual'
-    | 'market_price_api'
-    | 'formula_calculated'
-    | 'statement';
+  method: 'manual' | 'market_price_api' | 'formula_calculated' | 'statement';
   note?: string;
 }

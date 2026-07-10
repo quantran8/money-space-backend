@@ -1,4 +1,9 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { HouseholdMember } from './entities/member.entity';
 import {
@@ -19,7 +24,8 @@ export class MembersService {
 
   async listMembers(householdId: string) {
     const household = await this.membersRepository.assertHousehold(householdId);
-    const items = await this.membersRepository.findMembersByHousehold(householdId);
+    const items =
+      await this.membersRepository.findMembersByHousehold(householdId);
     return {
       household,
       items,
@@ -42,7 +48,8 @@ export class MembersService {
       householdId,
       name: payload.name.trim(),
       email: payload.email.trim(),
-      initials: payload.initials?.trim() || makeInitials(payload.name || payload.email),
+      initials:
+        payload.initials?.trim() || makeInitials(payload.name || payload.email),
       role: payload.role,
       permission: payload.permission ?? defaultPermissionForRole(payload.role),
       joinedAt: payload.joinedAt ?? new Date().toISOString(),
@@ -100,7 +107,10 @@ export class MembersService {
     // Querying by { id, memberId, householdId } already returns undefined when
     // the member (or its household) is absent, so a separate assertHousehold
     // before it would be a wasted round-trip.
-    const member = await this.membersRepository.findMemberById(householdId, memberId);
+    const member = await this.membersRepository.findMemberById(
+      householdId,
+      memberId,
+    );
     if (!member) {
       throw new NotFoundException(`Member "${memberId}" was not found`);
     }

@@ -118,7 +118,10 @@ export function makeInitials(nameOrEmail: string) {
   const source = nameOrEmail.includes('@')
     ? nameOrEmail.split('@')[0]
     : nameOrEmail;
-  const parts = source.trim().split(/[\s._-]+/).filter(Boolean);
+  const parts = source
+    .trim()
+    .split(/[\s._-]+/)
+    .filter(Boolean);
   const letters = parts.slice(0, 2).map((part) => part[0] ?? '');
   return (letters.join('') || source.slice(0, 2)).toUpperCase();
 }

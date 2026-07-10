@@ -94,7 +94,10 @@ export class PrismaGoalsRepository
     }
   }
 
-  async updateFinancialGoal(goalId: string, goal: FinancialGoal): Promise<void> {
+  async updateFinancialGoal(
+    goalId: string,
+    goal: FinancialGoal,
+  ): Promise<void> {
     await this.prisma.financialGoal.updateMany({
       where: { id: goalId, householdId: goal.householdId, deletedAt: null },
       data: {

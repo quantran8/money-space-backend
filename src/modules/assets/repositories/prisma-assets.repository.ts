@@ -8,11 +8,12 @@ import {
   mapMarketPrice,
   mapSnapshot,
 } from '../../../common/repositories/money-space.mapper';
-import { DbRow, PrismaRepository } from '../../../common/repositories/prisma.repository';
-import { PrismaService } from '../../../database/prisma/prisma.service';
 import {
-  Asset,
-} from '../entities/asset.entity';
+  DbRow,
+  PrismaRepository,
+} from '../../../common/repositories/prisma.repository';
+import { PrismaService } from '../../../database/prisma/prisma.service';
+import { Asset } from '../entities/asset.entity';
 import { AssetValuation } from '../entities/asset-valuation.entity';
 import { SnapshotPoint } from '../../dashboard/entities/snapshot-point.entity';
 import { Household } from '../../households/entities/household.entity';
@@ -205,18 +206,16 @@ export class PrismaAssetsRepository
   }
 
   async unlinkAssetFromMoneyEvents(assetId: string): Promise<void> {
-    // The two updates touch disjoint columns and don't depend on each other,
-    // so run them concurrently rather than as sequential round-trips.
-    await Promise.all([
-      this.prisma.moneyEvent.updateMany({
-        where: { fromAssetId: assetId },
-        data: { fromAssetId: null },
-      }),
-      this.prisma.moneyEvent.updateMany({
-        where: { toAssetId: assetId },
-        data: { toAssetId: null },
-      }),
-    ]);
+    // Runs inside the asset delete transaction (shared connection), so the two
+    // updates run sequentially rather than concurrently on the same client.
+    await this.prisma.moneyEvent.updateMany({
+      where: { fromAssetId: assetId },
+      data: { fromAssetId: null },
+    });
+    await this.prisma.moneyEvent.updateMany({
+      where: { toAssetId: assetId },
+      data: { toAssetId: null },
+    });
   }
 
   async getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]> {
@@ -245,14 +244,12 @@ export class PrismaAssetsRepository
   }
 
   private async upsertAssetDetails(asset: Asset): Promise<void> {
-    // The market-position and calculation-term upserts touch different tables
-    // and don't depend on each other, so run them concurrently. Within each
-    // branch the find-then-write stays sequential (the write depends on the
-    // find's result).
-    await Promise.all([
-      this.upsertAssetMarketPosition(asset),
-      this.upsertAssetCalculationTerm(asset),
-    ]);
+    // The market-position and calculation-term upserts touch different tables,
+    // but this runs inside the asset create/update transaction whose statements
+    // share one connection — so run them sequentially rather than concurrently
+    // on the same transaction client.
+    await this.upsertAssetMarketPosition(asset);
+    await this.upsertAssetCalculationTerm(asset);
   }
 
   private async upsertAssetMarketPosition(asset: Asset): Promise<void> {

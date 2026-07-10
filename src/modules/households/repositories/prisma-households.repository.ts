@@ -57,7 +57,7 @@ export class PrismaHouseholdsRepository
     const householdId = randomUUID();
     const now = new Date();
 
-    const household = await this.prisma.$transaction(async (tx) => {
+    const household = await this.runInTransaction(async (tx) => {
       // Ensure a profile row exists for the owner (auth user).
       await tx.profile.upsert({
         where: { id: input.ownerId },

@@ -1,11 +1,7 @@
 export type HouseholdRole = 'owner' | 'partner' | 'viewer';
 
 export type PermissionLevel =
-  | 'view_summary'
-  | 'view_grouped'
-  | 'view_detail'
-  | 'edit_content'
-  | 'admin';
+  'view_summary' | 'view_grouped' | 'view_detail' | 'edit_content' | 'admin';
 
 export interface HouseholdMember {
   id: string;

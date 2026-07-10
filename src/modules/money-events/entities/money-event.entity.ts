@@ -1,9 +1,5 @@
 export type MoneyEventType =
-  | 'expense'
-  | 'income'
-  | 'transfer'
-  | 'goal_contribution'
-  | 'debt_update';
+  'expense' | 'income' | 'transfer' | 'goal_contribution' | 'debt_update';
 
 export type MoneyDirection = 'inflow' | 'outflow' | 'neutral';
 

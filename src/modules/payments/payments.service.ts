@@ -1,6 +1,10 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../database/prisma/prisma.service';
 import { UpcomingPayment } from './entities/upcoming-payment.entity';
-import { normalizePaymentStatus, toPaymentCard } from '../../common/utils/money-space.utils';
+import {
+  normalizePaymentStatus,
+  toPaymentCard,
+} from '../../common/utils/money-space.utils';
 import type { CreateUpcomingPaymentDto } from './dto/create-upcoming-payment.dto';
 import type { ListUpcomingPaymentsQuery } from './dto/list-upcoming-payments.query';
 import type { UpdateUpcomingPaymentDto } from './dto/update-upcoming-payment.dto';
@@ -12,6 +16,7 @@ export class PaymentsService {
   constructor(
     @Inject(PAYMENTS_REPOSITORY)
     private readonly paymentsRepository: PaymentsRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async listUpcomingPayments(
@@ -19,7 +24,10 @@ export class PaymentsService {
     query?: ListUpcomingPaymentsQuery,
   ) {
     await this.paymentsRepository.assertHousehold(householdId);
-    let items = await this.paymentsRepository.findUpcomingPaymentsByHousehold(householdId);
+    let items =
+      await this.paymentsRepository.findUpcomingPaymentsByHousehold(
+        householdId,
+      );
 
     if (query?.status) {
       items = items.filter((payment) => payment.status === query.status);
@@ -39,7 +47,9 @@ export class PaymentsService {
   }
 
   async getUpcomingPayment(householdId: string, paymentId: string) {
-    return toPaymentCard(await this.ensureUpcomingPayment(householdId, paymentId));
+    return toPaymentCard(
+      await this.ensureUpcomingPayment(householdId, paymentId),
+    );
   }
 
   async createUpcomingPayment(
@@ -86,10 +96,13 @@ export class PaymentsService {
 
   async deleteUpcomingPayment(householdId: string, paymentId: string) {
     await this.ensureUpcomingPayment(householdId, paymentId);
-    await Promise.all([
-      this.paymentsRepository.deleteUpcomingPayment(paymentId),
-      this.paymentsRepository.unlinkUpcomingPaymentFromMoneyEvents(paymentId),
-    ]);
+    // The soft-delete and the money-event unlink must land together.
+    await this.prisma.runInTransaction(async () => {
+      await this.paymentsRepository.deleteUpcomingPayment(paymentId);
+      await this.paymentsRepository.unlinkUpcomingPaymentFromMoneyEvents(
+        paymentId,
+      );
+    });
     return {
       deleted: true,
       paymentId,
@@ -102,7 +115,9 @@ export class PaymentsService {
       paymentId,
     );
     if (!payment) {
-      throw new NotFoundException(`Upcoming payment "${paymentId}" was not found`);
+      throw new NotFoundException(
+        `Upcoming payment "${paymentId}" was not found`,
+      );
     }
     return payment;
   }

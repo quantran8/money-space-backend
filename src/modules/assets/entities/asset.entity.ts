@@ -19,21 +19,13 @@ export type AssetType =
   | 'other';
 
 export type AssetValuationMode =
-  | 'manual'
-  | 'market_priced'
-  | 'formula_calculated';
+  'manual' | 'market_priced' | 'formula_calculated';
 
 export type AssetLiquidity =
-  | 'usable_now'
-  | 'not_immediately_usable'
-  | 'long_term';
+  'usable_now' | 'not_immediately_usable' | 'long_term';
 
 export type AssetClass =
-  | 'gold'
-  | 'crypto'
-  | 'stock'
-  | 'fund'
-  | 'foreign_currency';
+  'gold' | 'crypto' | 'stock' | 'fund' | 'foreign_currency';
 
 export interface Asset {
   id: string;

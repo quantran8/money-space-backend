@@ -23,7 +23,8 @@ export class HouseholdsService {
   }
 
   async getHousehold(householdId: string) {
-    const household = await this.householdsRepository.assertHousehold(householdId);
+    const household =
+      await this.householdsRepository.assertHousehold(householdId);
 
     return {
       ...household,

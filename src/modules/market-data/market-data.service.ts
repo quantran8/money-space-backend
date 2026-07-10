@@ -41,7 +41,8 @@ export class MarketDataService {
     if (query.quoteCurrency) {
       items = items.filter(
         (rate) =>
-          rate.quoteCurrency.toUpperCase() === query.quoteCurrency?.toUpperCase(),
+          rate.quoteCurrency.toUpperCase() ===
+          query.quoteCurrency?.toUpperCase(),
       );
     }
 

@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../../database/prisma/prisma.service';
 import { FinancialGoal } from './entities/financial-goal.entity';
 import { toGoalCard } from '../../common/utils/money-space.utils';
 import type { CreateFinancialGoalDto } from './dto/create-financial-goal.dto';
@@ -11,11 +12,13 @@ export class GoalsService {
   constructor(
     @Inject(GOALS_REPOSITORY)
     private readonly goalsRepository: GoalsRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   async listFinancialGoals(householdId: string) {
     await this.goalsRepository.assertHousehold(householdId);
-    const goals = await this.goalsRepository.findFinancialGoalsByHousehold(householdId);
+    const goals =
+      await this.goalsRepository.findFinancialGoalsByHousehold(householdId);
     const items = goals.map((goal) => toGoalCard(goal));
     return {
       householdId,
@@ -74,8 +77,11 @@ export class GoalsService {
 
   async deleteFinancialGoal(householdId: string, goalId: string) {
     await this.ensureFinancialGoal(householdId, goalId);
-    await this.goalsRepository.deleteFinancialGoal(goalId);
-    await this.goalsRepository.unlinkFinancialGoalFromMoneyEvents(goalId);
+    // The soft-delete and the money-event unlink must land together.
+    await this.prisma.runInTransaction(async () => {
+      await this.goalsRepository.deleteFinancialGoal(goalId);
+      await this.goalsRepository.unlinkFinancialGoalFromMoneyEvents(goalId);
+    });
     return {
       deleted: true,
       goalId,
@@ -84,7 +90,10 @@ export class GoalsService {
 
   private async ensureFinancialGoal(householdId: string, goalId: string) {
     await this.goalsRepository.assertHousehold(householdId);
-    const goal = await this.goalsRepository.findFinancialGoalById(householdId, goalId);
+    const goal = await this.goalsRepository.findFinancialGoalById(
+      householdId,
+      goalId,
+    );
     if (!goal) {
       throw new NotFoundException(`Financial goal "${goalId}" was not found`);
     }

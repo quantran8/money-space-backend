@@ -1,7 +1,4 @@
-import type {
-  HouseholdRole,
-  PermissionLevel,
-} from '../entities/member.entity';
+import type { HouseholdRole, PermissionLevel } from '../entities/member.entity';
 
 export interface CreateMemberDto {
   profileId?: string;

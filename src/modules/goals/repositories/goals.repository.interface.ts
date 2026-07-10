@@ -7,7 +7,10 @@ export interface GoalsRepository {
   assertHousehold(householdId: string): Promise<Household>;
   createId(prefix: string): string;
   findFinancialGoalsByHousehold(householdId: string): Promise<FinancialGoal[]>;
-  findFinancialGoalById(householdId: string, goalId: string): Promise<FinancialGoal | undefined>;
+  findFinancialGoalById(
+    householdId: string,
+    goalId: string,
+  ): Promise<FinancialGoal | undefined>;
   insertFinancialGoal(goal: FinancialGoal): Promise<void>;
   updateFinancialGoal(goalId: string, goal: FinancialGoal): Promise<void>;
   deleteFinancialGoal(goalId: string): Promise<void>;

@@ -12,12 +12,8 @@ import {
 } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
-import {
-  Asset,
-} from '../../assets/entities/asset.entity';
-import {
-  AttentionItem,
-} from '../entities/attention-item.entity';
+import { Asset } from '../../assets/entities/asset.entity';
+import { AttentionItem } from '../entities/attention-item.entity';
 import { SnapshotPoint } from '../entities/snapshot-point.entity';
 import { FinancialGoal } from '../../goals/entities/financial-goal.entity';
 import { Household } from '../../households/entities/household.entity';

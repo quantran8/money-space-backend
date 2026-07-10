@@ -104,7 +104,11 @@ export class PrismaPaymentsRepository
     payment: UpcomingPayment,
   ): Promise<void> {
     await this.prisma.upcomingPayment.updateMany({
-      where: { id: paymentId, householdId: payment.householdId, deletedAt: null },
+      where: {
+        id: paymentId,
+        householdId: payment.householdId,
+        deletedAt: null,
+      },
       data: {
         name: payment.name,
         amount: payment.amount,
