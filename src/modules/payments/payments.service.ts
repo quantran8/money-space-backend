@@ -71,6 +71,28 @@ export class PaymentsService {
     return toPaymentCard(payment);
   }
 
+  async createUpcomingPayments(
+    householdId: string,
+    payloads: CreateUpcomingPaymentDto[],
+  ) {
+    // Bulk create (one round-trip) for callers that generate many payments at
+    // once — e.g. a debt's repayment schedule. Avoids a per-item round-trip
+    // that would blow an interactive transaction's timeout on a pooled DB.
+    const payments: UpcomingPayment[] = payloads.map((payload) => ({
+      id: this.paymentsRepository.createId('payment'),
+      householdId,
+      name: payload.name.trim(),
+      amount: payload.amount,
+      dueDate: payload.dueDate,
+      owner: payload.owner ?? 'Chua phan cong',
+      debtId: payload.debtId,
+      status: normalizePaymentStatus(payload.status),
+    }));
+
+    await this.paymentsRepository.insertUpcomingPayments(payments);
+    return payments.map((payment) => toPaymentCard(payment));
+  }
+
   async updateUpcomingPayment(
     householdId: string,
     paymentId: string,
@@ -107,6 +129,26 @@ export class PaymentsService {
       deleted: true,
       paymentId,
     };
+  }
+
+  /**
+   * Effective-from-now repayment-amount change for a debt: set `amount` on the
+   * still-open reminders due on/after `fromDate`. Passthrough so `DebtsService`
+   * (which injects this service, not the repo) can reach it inside its own
+   * transaction. See memory/debts.md.
+   */
+  async updateUnpaidUpcomingPaymentAmounts(
+    householdId: string,
+    debtId: string,
+    fromDate: string,
+    newAmount: number,
+  ) {
+    await this.paymentsRepository.updateUnpaidUpcomingPaymentAmountsByDebt(
+      householdId,
+      debtId,
+      fromDate,
+      newAmount,
+    );
   }
 
   private async ensureUpcomingPayment(householdId: string, paymentId: string) {

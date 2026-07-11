@@ -35,6 +35,22 @@ Two cross-cutting rules for any create/update/delete flow:
   - Inside a repository, use the inherited `this.runInTransaction(...)` helper
     instead of `this.prisma.$transaction(...)` (the resolved `this.prisma` may
     already be a transaction client, which has no `$transaction`).
+  - **Keep transactions short.** Each statement is a DB round-trip; too many
+    sequential round-trips can exceed the interactive-transaction timeout
+    (Prisma default 5s) and abort with *"Transaction not found"*. Prefer a
+    single bulk write (`createMany`) over N single-row inserts, and pass a
+    larger `{ timeout }` to `runInTransaction` for legitimately heavy units.
+  - **Interactive transactions run on the direct connection.** `DATABASE_URL`
+    is Supabase's transaction-mode pooler (pgbouncer, :6543), where Prisma
+    interactive transactions are unsupported (statements may hop connections →
+    *"Transaction not found"*). `PrismaService` therefore opens a second client
+    on `DIRECT_URL` (session-mode, :5432) and routes every `$transaction`
+    through it, while single-statement queries stay on the pooler. Set
+    `DIRECT_URL` in any environment that uses a transaction-mode pooler.
+  - **`PrismaService.client()` is a method, not a getter.** Read through a
+    getter, `this` binds to the raw `PrismaClient` target (no model delegates)
+    → `this.prisma.household` is `undefined`. As a method, `this` is the Proxy
+    and the delegates resolve. Repos call `this.prismaService.client()`.
 
 - **Never leak a raw 500.** The global `HttpExceptionFilter` (registered via
   `APP_FILTER`) catches every exception **thrown inside a request** — including
@@ -49,6 +65,27 @@ Two cross-cutting rules for any create/update/delete flow:
   fire-and-forget promises (a forgotten `await`), timers, background tasks. They
   log the full stack but do **not** exit the process. (Still: always `await`
   repository calls — a missing `await` bypasses the request filter entirely.)
+
+## Soft-delete convention
+
+- **Which tables soft-delete**: most domain tables carry `deletedAt` and every
+  read filters `deletedAt: null`. Exceptions by design: `profiles` and
+  `audit_logs` (identity / append-only — never soft-deleted);
+  `snapshot_asset_values` (child of an immutable snapshot); `attention_items`
+  (its `status = dismissed` IS the "gone" state — do NOT add `deletedAt`).
+- **One disappearance mechanism per row**: use `deletedAt` OR a terminal
+  `status`, never both.
+- **Filtering is still manual** (`where: { deletedAt: null }`) — a follow-up is
+  to add a Prisma Client Extension to auto-filter soft-deleted rows so a
+  forgotten filter can't leak deleted data. Until then, always include it.
+
+## Authorization
+
+Enforced **app-layer** (NestJS guards/interceptors + repository query filters),
+**not** Postgres RLS — the project stays DB-portable. Permission model is 2-axis:
+role/capability (`HouseholdRole`, with `permissionLevel` as a nullable override →
+NULL derives from role) + record sensitivity (`VisibilityLevel`). Do not add
+`CREATE POLICY` / RLS.
 
 ## Business logic memory
 

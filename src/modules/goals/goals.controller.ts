@@ -10,6 +10,7 @@ import {
 import { GoalsService } from './goals.service';
 import type { CreateFinancialGoalDto } from './dto/create-financial-goal.dto';
 import type { UpdateFinancialGoalDto } from './dto/update-financial-goal.dto';
+import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 @Controller('api/households/:householdId/financial-goals')
 export class GoalsController {
@@ -28,6 +29,7 @@ export class GoalsController {
     return this.goalsService.getFinancialGoal(householdId, goalId);
   }
 
+  @RequireCapability('edit')
   @Post()
   createFinancialGoal(
     @Param('householdId') householdId: string,
@@ -36,6 +38,7 @@ export class GoalsController {
     return this.goalsService.createFinancialGoal(householdId, payload);
   }
 
+  @RequireCapability('edit')
   @Patch(':goalId')
   updateFinancialGoal(
     @Param('householdId') householdId: string,
@@ -45,6 +48,7 @@ export class GoalsController {
     return this.goalsService.updateFinancialGoal(householdId, goalId, payload);
   }
 
+  @RequireCapability('edit')
   @Delete(':goalId')
   deleteFinancialGoal(
     @Param('householdId') householdId: string,

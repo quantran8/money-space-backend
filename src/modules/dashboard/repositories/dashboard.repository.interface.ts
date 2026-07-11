@@ -22,4 +22,6 @@ export interface DashboardRepository {
   findFinancialGoalsByHousehold(householdId: string): Promise<FinancialGoal[]>;
   findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]>;
   getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]>;
+  /** SUM(debts.outstanding_amount) for active, non-deleted debts. */
+  getOutstandingDebtTotal(householdId: string): Promise<number>;
 }

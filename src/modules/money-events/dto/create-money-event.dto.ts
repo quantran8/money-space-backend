@@ -6,6 +6,11 @@ import type {
 export interface CreateMoneyEventDto {
   title: string;
   amount: number;
+  /** Sale/purchase fee. Defaults to 0. See asset-sale.md. */
+  feeAmount?: number;
+  /** For an asset_sale: resolved sold quantity (market) / value (manual). */
+  soldQuantity?: number;
+  soldValue?: number;
   note?: string;
   isoDate: string;
   type: MoneyEventType;

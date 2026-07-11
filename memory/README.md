@@ -43,6 +43,7 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [domain-overview.md](domain-overview.md) — product framing, global invariants, feature index (**start here**)
 - [asset-valuation.md](asset-valuation.md) — core valuation engine (type → mode → value)
 - [assets.md](assets.md) — assets feature (CRUD, liquidity buckets)
+- [asset-sale.md](asset-sale.md) — selling an asset (asset_sale money event, position reduction, status)
 - [debts.md](debts.md) — debts / liabilities & interest maths
 - [money-events.md](money-events.md) — money events + upcoming payments (unified events)
 - [goals.md](goals.md) — financial goals & progress
@@ -51,5 +52,6 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [dashboard.md](dashboard.md) — overview / status buckets
 - [snapshots-and-networth.md](snapshots-and-networth.md) — net-worth history & attention items
 - [market-data.md](market-data.md) — market prices & FX reference data
+- [money-formatting.md](money-formatting.md) — API returns raw numbers; client formats money
 - [settings-and-sharing.md](settings-and-sharing.md) — household config, reminders, sharing
 - [auth.md](auth.md) — authentication & session gating

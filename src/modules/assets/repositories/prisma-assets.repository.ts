@@ -6,6 +6,7 @@ import {
   mapFxRate,
   mapHousehold,
   mapMarketPrice,
+  mapMoneyEvent,
   mapSnapshot,
 } from '../../../common/repositories/money-space.mapper';
 import {
@@ -19,6 +20,7 @@ import { SnapshotPoint } from '../../dashboard/entities/snapshot-point.entity';
 import { Household } from '../../households/entities/household.entity';
 import { FxRate } from '../../market-data/entities/fx-rate.entity';
 import { MarketPrice } from '../../market-data/entities/market-price.entity';
+import { MoneyEvent } from '../../money-events/entities/money-event.entity';
 import { AssetsRepository } from './assets.repository.interface';
 
 @Injectable()
@@ -130,9 +132,25 @@ export class PrismaAssetsRepository
         valueUpdatedAt: new Date(),
         liquidity: asset.liquidity,
         note: asset.note,
+        status: asset.status,
+        soldAt: asset.soldAt ? new Date(asset.soldAt) : null,
       } as any,
     });
     await this.upsertAssetDetails(asset);
+  }
+
+  /**
+   * Write back the derived current value so `assets.current_value` is a true
+   * cache (dashboards / view_summary can read it without recomputing). Called
+   * by `upsertCurrentValuation` after it computes the value for ANY mode — the
+   * plain create/update path only knew `manualValue`, so the column went stale
+   * for market_priced / formula assets.
+   */
+  async updateAssetCurrentValue(assetId: string, value: number): Promise<void> {
+    await this.prisma.asset.updateMany({
+      where: { id: assetId, deletedAt: null },
+      data: { currentValue: value, valueUpdatedAt: new Date() } as any,
+    });
   }
 
   async deleteAsset(assetId: string): Promise<void> {
@@ -182,6 +200,12 @@ export class PrismaAssetsRepository
       valuationDate: this.toDate(valuation.valuationDate),
       valuationMethod: valuation.method,
       note: valuation.note,
+      // Lineage — provenance of the number (nullable until a source exists).
+      source: valuation.source ?? null,
+      confidenceLevel: valuation.confidenceLevel ?? null,
+      marketPriceId: valuation.marketPriceId ?? null,
+      fxRateId: valuation.fxRateId ?? null,
+      calculationTermId: valuation.calculationTermId ?? null,
       deletedAt: null,
     } as any;
 
@@ -218,6 +242,22 @@ export class PrismaAssetsRepository
     });
   }
 
+  async findMoneyEventsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<MoneyEvent[]> {
+    const events = await this.prisma.moneyEvent.findMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        OR: [{ fromAssetId: assetId }, { toAssetId: assetId }],
+      },
+      orderBy: { eventDate: 'asc' },
+    });
+
+    return events.map((event) => mapMoneyEvent(event));
+  }
+
   async getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]> {
     const snapshots = await this.prisma.snapshot.findMany({
       where: { householdId, deletedAt: null },
@@ -228,18 +268,12 @@ export class PrismaAssetsRepository
   }
 
   async getMarketPrices(): Promise<MarketPrice[]> {
-    const prices = await this.prisma.marketPrice.findMany({
-      orderBy: { priceTime: 'desc' },
-    });
-
+    const prices = await this.findLatestMarketPrices();
     return prices.map((price) => mapMarketPrice(price));
   }
 
   async getFxRates(): Promise<FxRate[]> {
-    const rates = await this.prisma.fxRate.findMany({
-      orderBy: { rateTime: 'desc' },
-    });
-
+    const rates = await this.findLatestFxRates();
     return rates.map((rate) => mapFxRate(rate));
   }
 
@@ -262,6 +296,7 @@ export class PrismaAssetsRepository
         quantity: asset.marketPosition.quantity,
         unit: asset.marketPosition.unit,
         quoteCurrency: asset.marketPosition.quoteCurrency,
+        unitPrice: asset.marketPosition.unitPrice ?? null,
         deletedAt: null,
       } as any;
       const existing = await this.findActiveAssetDetail(
@@ -296,6 +331,14 @@ export class PrismaAssetsRepository
         startDate: this.toDate(asset.calculationTerm.startDate),
         maturityDate: this.toDate(asset.calculationTerm.maturityDate),
         interestRate: asset.calculationTerm.interestRate,
+        // Interest payout schedule persists in `payoutFrequency`.
+        payoutFrequency:
+          asset.calculationTerm.interestPayment === 'monthly'
+            ? 'monthly'
+            : 'at_maturity',
+        nonTermRate: asset.calculationTerm.nonTermRate,
+        interestDestination: asset.calculationTerm.interestDestination,
+        receivingWalletId: asset.calculationTerm.receivingWalletId,
         deletedAt: null,
       } as any;
       const existing = await this.findActiveAssetDetail(

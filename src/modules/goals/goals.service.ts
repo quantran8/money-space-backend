@@ -41,7 +41,8 @@ export class GoalsService {
       id: this.goalsRepository.createId('goal'),
       householdId,
       name: payload.name.trim(),
-      currentAmount: payload.currentAmount ?? 0,
+      // Derived from goal_contribution events; a brand-new goal has none yet.
+      currentAmount: 0,
       targetAmount: payload.targetAmount,
       priority: payload.priority,
       note: payload.note?.trim() ?? '',
@@ -64,7 +65,8 @@ export class GoalsService {
       id: goal.id,
       householdId: goal.householdId,
       name: payload.name?.trim() ?? goal.name,
-      currentAmount: payload.currentAmount ?? goal.currentAmount,
+      // Derived; keep the value read from the DB, never take it from the payload.
+      currentAmount: goal.currentAmount,
       targetAmount: payload.targetAmount ?? goal.targetAmount,
       note: payload.note?.trim() ?? goal.note,
       deadline: payload.deadline ?? goal.deadline,

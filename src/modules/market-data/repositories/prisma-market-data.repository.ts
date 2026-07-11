@@ -18,19 +18,16 @@ export class PrismaMarketDataRepository
     super(prisma);
   }
 
+  // The `/market-data/prices` + `/fx-rates` endpoints show the CURRENT rate
+  // board (one row per instrument), not the full tick history — so they read
+  // the latest row per key, which also keeps the query bounded as history grows.
   async getMarketPrices(): Promise<MarketPrice[]> {
-    const prices = await this.prisma.marketPrice.findMany({
-      orderBy: { priceTime: 'desc' },
-    });
-
+    const prices = await this.findLatestMarketPrices();
     return prices.map((price) => mapMarketPrice(price));
   }
 
   async getFxRates(): Promise<FxRate[]> {
-    const rates = await this.prisma.fxRate.findMany({
-      orderBy: { rateTime: 'desc' },
-    });
-
+    const rates = await this.findLatestFxRates();
     return rates.map((rate) => mapFxRate(rate));
   }
 }

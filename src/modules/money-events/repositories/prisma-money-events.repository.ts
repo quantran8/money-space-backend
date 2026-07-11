@@ -45,6 +45,18 @@ export class PrismaMoneyEventsRepository
     return events.map((event) => mapMoneyEvent(event));
   }
 
+  async findMoneyEventsByDebt(
+    householdId: string,
+    debtId: string,
+  ): Promise<MoneyEvent[]> {
+    const events = await this.prisma.moneyEvent.findMany({
+      where: { householdId, debtId, deletedAt: null },
+      orderBy: { eventDate: 'desc' },
+    });
+
+    return events.map((event) => mapMoneyEvent(event));
+  }
+
   async findMoneyEventById(
     householdId: string,
     eventId: string,
@@ -69,7 +81,8 @@ export class PrismaMoneyEventsRepository
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO money_events
         (id, household_id, title, description, event_type, category, amount,
-         currency, event_date, direction, from_asset_id, to_asset_id,
+         fee_amount, sold_quantity, sold_value, currency, event_date, direction,
+         from_asset_id, to_asset_id,
          upcoming_payment_id, debt_id, financial_goal_id, created_by, updated_at)
       SELECT
         ${event.id}::uuid,
@@ -77,8 +90,11 @@ export class PrismaMoneyEventsRepository
         ${event.title},
         ${event.note},
         ${event.type}::"MoneyEventType",
-        ${category}::"MoneyEventCategory",
+        ${category},
         ${event.amount}::numeric,
+        ${event.feeAmount ?? 0}::numeric,
+        ${event.soldQuantity ?? null}::numeric,
+        ${event.soldValue ?? null}::numeric,
         'VND',
         ${eventDate}::date,
         ${event.direction}::"MoneyDirection",
@@ -110,6 +126,9 @@ export class PrismaMoneyEventsRepository
         eventType: event.type,
         category: normalizeMoneyEventCategory(event.category),
         amount: event.amount,
+        feeAmount: event.feeAmount ?? 0,
+        soldQuantity: event.soldQuantity ?? null,
+        soldValue: event.soldValue ?? null,
         eventDate: this.toDate(event.isoDate),
         direction: event.direction,
         fromAssetId: event.fromAssetId,
@@ -126,5 +145,23 @@ export class PrismaMoneyEventsRepository
       where: { id: eventId },
       data: { deletedAt: new Date() },
     });
+  }
+
+  async reduceDebtOutstanding(
+    householdId: string,
+    debtId: string,
+    amount: number,
+  ): Promise<void> {
+    // Floor at 0 in the same statement (GREATEST) so a payment larger than the
+    // remaining balance settles the debt rather than pushing it negative. Scoped
+    // to the household and skips soft-deleted debts.
+    await this.prisma.$executeRaw`
+      UPDATE debts
+      SET outstanding_amount = GREATEST(0, outstanding_amount - ${amount}::numeric),
+          updated_at = now()
+      WHERE id = ${debtId}::uuid
+        AND household_id = ${householdId}::uuid
+        AND deleted_at IS NULL
+    `;
   }
 }

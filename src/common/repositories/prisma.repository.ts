@@ -17,7 +17,10 @@ export abstract class PrismaRepository {
    * participation is transparent, no per-method `tx` argument needed.
    */
   protected get prisma(): PrismaTransactionClient | PrismaService {
-    return this.prismaService.client;
+    // `client()` is a method (not a getter) on purpose: read through Prisma's
+    // per-instance Proxy, a getter's `this` binds to the raw target that lacks
+    // the model delegates. See `PrismaService.client`.
+    return this.prismaService.client();
   }
 
   /**
@@ -51,7 +54,9 @@ export abstract class PrismaRepository {
       return null;
     }
 
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    // Version nibble is [1-8]: the app mints uuid v7 (time-ordered) for its own
+    // rows, so a v1–v5-only pattern would reject every id it generates.
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       value,
     )
       ? value
@@ -65,5 +70,34 @@ export abstract class PrismaRepository {
       .slice(0, 2)
       .map((part) => part[0]?.toUpperCase() ?? '')
       .join('');
+  }
+
+  /**
+   * Latest market price per (asset_class, symbol, market, quote_currency).
+   *
+   * The valuation engine only ever needs the newest price per instrument, not
+   * the full history. `DISTINCT ON (...) ORDER BY ..., price_time DESC` returns
+   * exactly one row per key — served by the `market_prices_latest_idx` index —
+   * so we never load the whole price history into memory (the old
+   * `findMany({ orderBy })` + JS `.find()` did, which does not scale as the
+   * time-series grows). Rows come back snake-cased; `mapMarketPrice` accepts that.
+   */
+  protected findLatestMarketPrices(): Promise<DbRow[]> {
+    return this.prisma.$queryRaw<DbRow[]>`
+      SELECT DISTINCT ON (asset_class, symbol, market, quote_currency)
+        asset_class, symbol, market, quote_currency, price, price_time, source
+      FROM market_prices
+      ORDER BY asset_class, symbol, market, quote_currency, price_time DESC
+    `;
+  }
+
+  /** Latest FX rate per (base_currency, quote_currency). See findLatestMarketPrices. */
+  protected findLatestFxRates(): Promise<DbRow[]> {
+    return this.prisma.$queryRaw<DbRow[]>`
+      SELECT DISTINCT ON (base_currency, quote_currency)
+        base_currency, quote_currency, rate, rate_time, source
+      FROM fx_rates
+      ORDER BY base_currency, quote_currency, rate_time DESC
+    `;
   }
 }

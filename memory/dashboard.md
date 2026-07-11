@@ -41,4 +41,4 @@ Backend dashboard `totalDebt` is currently hard-coded to `18,000,000` — not a 
 
 ## Enums
 
-`StatusVariant = stable | attention | tense` (frontend); backend `SnapshotStatus = good | attention | tight | insufficient_data`.
+`StatusVariant = stable | attention | tense` (frontend); backend snapshot status `good | attention | tight | insufficient_data` is **derived at read time** (`deriveSnapshotStatus`), not a stored enum/column — see [[snapshots-and-networth]].

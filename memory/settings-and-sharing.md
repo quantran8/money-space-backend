@@ -9,7 +9,12 @@ Household config plus the sharing controls that let the money-holder avoid feeli
 ## Household config
 
 - Household name (≤ 60 chars).
-- `currency = VND | USD | EUR`. (Note: onboarding uses `VND | USD | THB` — a currency-set inconsistency to reconcile across features.)
+- `currency` is an ISO-4217 3-letter code validated against the **`currencies`
+  reference table** (seeded: VND, USD, EUR, THB, JPY, GBP, AUD, SGD, CNY, KRW;
+  extend by inserting a row). Every `currency`/`baseCurrency`/`quoteCurrency`
+  column has a DB FK to `currencies(code)`. This replaced the three conflicting
+  hardcoded enum sets across onboarding/settings. Snapshot totals are in
+  `household.currency`.
 - `updateFrequency = weekly | biweekly | monthly`.
 - App language.
 

@@ -27,6 +27,8 @@ export type AssetLiquidity =
 export type AssetClass =
   'gold' | 'crypto' | 'stock' | 'fund' | 'foreign_currency';
 
+export type AssetStatus = 'active' | 'sold' | 'closed';
+
 export interface Asset {
   id: string;
   householdId: string;
@@ -36,6 +38,8 @@ export interface Asset {
   liquidity: AssetLiquidity;
   currency: string;
   note: string;
+  status: AssetStatus;
+  soldAt?: string;
   manualValue?: number;
   marketPosition?: MarketPosition;
   calculationTerm?: CalculationTerm;

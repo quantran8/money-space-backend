@@ -39,11 +39,6 @@ export class PrismaDebtsRepository
     const debts = await this.prisma.debt.findMany({
       where: { householdId, deletedAt: null },
       include: {
-        terms: {
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
         interestPeriods: {
           where: { deletedAt: null },
           orderBy: { startDate: 'asc' },
@@ -53,12 +48,7 @@ export class PrismaDebtsRepository
     });
 
     return debts.map((debt) =>
-      mapDebt(
-        debt,
-        debt.terms[0],
-        debt.interestPeriods[0],
-        debt.interestPeriods,
-      ),
+      mapDebt(debt, debt.interestPeriods[0], debt.interestPeriods),
     );
   }
 
@@ -69,11 +59,6 @@ export class PrismaDebtsRepository
     const debt = await this.prisma.debt.findFirst({
       where: { id: debtId, householdId, deletedAt: null },
       include: {
-        terms: {
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
         interestPeriods: {
           where: { deletedAt: null },
           orderBy: { startDate: 'asc' },
@@ -82,12 +67,7 @@ export class PrismaDebtsRepository
     });
 
     return debt
-      ? mapDebt(
-          debt,
-          debt.terms[0],
-          debt.interestPeriods[0],
-          debt.interestPeriods,
-        )
+      ? mapDebt(debt, debt.interestPeriods[0], debt.interestPeriods)
       : undefined;
   }
 
@@ -109,7 +89,8 @@ export class PrismaDebtsRepository
         (id, household_id, name, debt_type, lender_type, lender_name,
          original_amount, outstanding_amount, currency, borrowed_at,
          expected_final_due_date, status, owner_member_id, received_to_asset_id,
-         note, created_by, updated_at)
+         note, payment_frequency, fixed_payment_amount, minimum_payment_amount,
+         interest_type, interest_calculation, created_by, updated_at)
       SELECT
         ${debt.id}::uuid,
         h.id,
@@ -126,6 +107,11 @@ export class PrismaDebtsRepository
         ${debt.ownerMemberId ?? null}::uuid,
         ${debt.receivedToAssetId ?? null}::uuid,
         ${debt.note ?? null},
+        ${debt.paymentFrequency ?? null},
+        ${debt.fixedPaymentAmount ?? null}::numeric,
+        ${debt.minimumPaymentAmount ?? null}::numeric,
+        ${this.normalizeInterestType(debt.interestType)}::"DebtInterestType",
+        ${this.normalizeInterestCalculation(debt.interestCalculation)}::"DebtInterestCalculation",
         h.created_by,
         now()
       FROM households h
@@ -159,6 +145,13 @@ export class PrismaDebtsRepository
         ownerMemberId: debt.ownerMemberId,
         receivedToAssetId: debt.receivedToAssetId,
         note: debt.note,
+        paymentFrequency: debt.paymentFrequency ?? null,
+        fixedPaymentAmount: debt.fixedPaymentAmount ?? null,
+        minimumPaymentAmount: debt.minimumPaymentAmount ?? null,
+        interestType: this.normalizeInterestType(debt.interestType),
+        interestCalculation: this.normalizeInterestCalculation(
+          debt.interestCalculation,
+        ),
       } as any,
     });
   }
@@ -167,10 +160,6 @@ export class PrismaDebtsRepository
     const now = new Date();
     await this.prisma.debt.updateMany({
       where: { id: debtId },
-      data: { deletedAt: now },
-    });
-    await this.prisma.debtTerm.updateMany({
-      where: { debtId },
       data: { deletedAt: now },
     });
     await this.prisma.debtInterestPeriod.updateMany({
@@ -206,53 +195,8 @@ export class PrismaDebtsRepository
     return null;
   }
 
-  async upsertDebtTerms(debt: Debt): Promise<void> {
-    const existing = await this.prisma.debtTerm.findFirst({
-      where: { debtId: debt.id, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    const data = {
-      householdId: debt.householdId,
-      debtId: debt.id,
-      repaymentType:
-        debt.paymentFrequency && debt.paymentFrequency !== 'none'
-          ? 'fixed_schedule'
-          : 'flexible',
-      principalPaymentType:
-        debt.paymentFrequency && debt.paymentFrequency !== 'none'
-          ? 'equal_payment'
-          : 'flexible',
-      paymentFrequency: debt.paymentFrequency ?? null,
-      fixedPaymentAmount: debt.fixedPaymentAmount ?? null,
-      minimumPaymentAmount: debt.minimumPaymentAmount ?? null,
-      startDate: debt.borrowedAt ? this.toDate(debt.borrowedAt) : null,
-      endDate: debt.expectedFinalDueDate
-        ? this.toDate(debt.expectedFinalDueDate)
-        : null,
-      hasInterest: !!debt.interestType && debt.interestType !== 'none',
-      interestType: this.normalizeInterestType(debt.interestType),
-      interestCalculation: this.normalizeInterestCalculation(
-        debt.interestCalculation,
-      ),
-      gracePeriodMonths: null,
-    };
-
-    if (existing) {
-      await this.prisma.debtTerm.update({
-        where: { id: existing.id },
-        data: data as any,
-      });
-      return;
-    }
-
-    await this.prisma.debtTerm.create({ data: data as any });
-  }
-
-  /** Encode a stage length (months) so it round-trips via the row's `note`. */
-  private encodePeriodNote(months?: number): string | null {
-    return months && months > 0 ? `months:${months}` : null;
-  }
+  // Repayment terms were folded into the debts row (former debt_terms table);
+  // insertDebt/updateDebt persist them directly, so there is no separate upsert.
 
   /** Add `months` calendar months to an ISO date, returning a Date. */
   private addMonths(isoDate: string, months: number): Date {
@@ -285,7 +229,7 @@ export class PrismaDebtsRepository
       startDate: Date | null;
       endDate: Date | null;
       interestRate: number;
-      note: string | null;
+      termMonths: number | null;
     }>;
 
     if (hasStages) {
@@ -312,7 +256,7 @@ export class PrismaDebtsRepository
           startDate,
           endDate,
           interestRate: period.interestRate,
-          note: this.encodePeriodNote(period.months),
+          termMonths: period.months && period.months > 0 ? period.months : null,
         };
       });
     } else {
@@ -323,7 +267,7 @@ export class PrismaDebtsRepository
             ? this.toDate(debt.expectedFinalDueDate)
             : null,
           interestRate: debt.interestRate!,
-          note: null,
+          termMonths: null,
         },
       ];
     }
@@ -341,23 +285,94 @@ export class PrismaDebtsRepository
           endDate: row.endDate,
           interestRate: row.interestRate,
           rateType: 'fixed',
-          note: row.note,
+          termMonths: row.termMonths,
         })) as any,
       });
     });
   }
 
-  async unlinkDebtFromUpcomingPayments(debtId: string): Promise<void> {
+  async deleteUpcomingPaymentsByDebt(debtId: string): Promise<void> {
+    // Deleting a debt removes the repayment records it generated. Soft-delete
+    // (set `deleted_at`) to match every other delete in the app; only rows not
+    // already deleted are touched.
     await this.prisma.upcomingPayment.updateMany({
-      where: { debtId },
-      data: { debtId: null },
+      where: { debtId, deletedAt: null },
+      data: { deletedAt: new Date() },
     });
   }
 
-  async unlinkDebtFromMoneyEvents(debtId: string): Promise<void> {
-    await this.prisma.moneyEvent.updateMany({
-      where: { debtId },
-      data: { debtId: null },
+  async closeLatestInterestPeriodAt(
+    debtId: string,
+    effectiveDate: string,
+  ): Promise<void> {
+    // Cap the currently-open latest stage at `effectiveDate` so a newly
+    // appended stage begins there — the historical stages are left intact.
+    const latest = await this.prisma.debtInterestPeriod.findFirst({
+      where: { debtId, deletedAt: null },
+      orderBy: { startDate: 'desc' },
     });
+    if (!latest) {
+      return;
+    }
+    await this.prisma.debtInterestPeriod.update({
+      where: { id: latest.id },
+      data: { endDate: this.toDate(effectiveDate) },
+    });
+  }
+
+  async appendInterestPeriod(
+    householdId: string,
+    debtId: string,
+    row: {
+      startDate: string;
+      endDate: string | null;
+      interestRate: number;
+      months?: number;
+    },
+  ): Promise<void> {
+    await this.prisma.debtInterestPeriod.create({
+      data: {
+        id: randomUUID(),
+        householdId,
+        debtId,
+        startDate: this.toDate(row.startDate),
+        endDate: row.endDate ? this.toDate(row.endDate) : null,
+        interestRate: row.interestRate,
+        rateType: 'fixed',
+        termMonths: row.months && row.months > 0 ? row.months : null,
+      } as any,
+    });
+  }
+
+  async writeAuditLog(
+    householdId: string,
+    entry: {
+      action: string;
+      entityType: string;
+      entityId: string;
+      metadata: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    // Resolve the actor from the household owner in one statement — debt
+    // endpoints have no request user, mirroring how `insertDebt` derives
+    // `created_by`. If the household is missing/soft-deleted the SELECT yields
+    // no row and nothing is written (the debt update would already have 404'd).
+    const metadataJson = JSON.stringify(entry.metadata);
+    await this.prisma.$executeRaw`
+      INSERT INTO audit_logs
+        (id, household_id, actor_id, action, entity_type, entity_id, metadata, created_at)
+      SELECT
+        ${randomUUID()}::uuid,
+        h.id,
+        h.created_by,
+        ${entry.action},
+        ${entry.entityType},
+        ${entry.entityId}::uuid,
+        ${metadataJson}::jsonb,
+        now()
+      FROM households h
+      WHERE h.id = ${householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
   }
 }

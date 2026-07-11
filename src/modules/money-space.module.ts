@@ -9,6 +9,7 @@ import { MarketDataModule } from './market-data/market-data.module';
 import { MembersModule } from './members/members.module';
 import { MoneyEventsModule } from './money-events/money-events.module';
 import { PaymentsModule } from './payments/payments.module';
+import { SnapshotsModule } from './snapshots/snapshots.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PaymentsModule } from './payments/payments.module';
     GoalsModule,
     PaymentsModule,
     MarketDataModule,
+    SnapshotsModule,
   ],
   exports: [
     AuthModule,
@@ -34,6 +36,7 @@ import { PaymentsModule } from './payments/payments.module';
     GoalsModule,
     PaymentsModule,
     MarketDataModule,
+    SnapshotsModule,
   ],
 })
 export class MoneySpaceModule {}

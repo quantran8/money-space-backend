@@ -11,8 +11,39 @@ export interface DebtsRepository {
   insertDebt(debt: Debt): Promise<void>;
   updateDebt(debtId: string, debt: Debt): Promise<void>;
   deleteDebt(debtId: string): Promise<void>;
-  upsertDebtTerms(debt: Debt): Promise<void>;
   upsertDebtInterestPeriods(debt: Debt): Promise<void>;
-  unlinkDebtFromUpcomingPayments(debtId: string): Promise<void>;
-  unlinkDebtFromMoneyEvents(debtId: string): Promise<void>;
+  deleteUpcomingPaymentsByDebt(debtId: string): Promise<void>;
+  /**
+   * Close the latest open interest period at `effectiveDate` — used to append a
+   * new rate stage from that date without wiping the historical stages.
+   */
+  closeLatestInterestPeriodAt(
+    debtId: string,
+    effectiveDate: string,
+  ): Promise<void>;
+  /** Append one interest-rate stage (does not touch existing stages). */
+  appendInterestPeriod(
+    householdId: string,
+    debtId: string,
+    row: {
+      startDate: string;
+      endDate: string | null;
+      interestRate: number;
+      months?: number;
+    },
+  ): Promise<void>;
+  /**
+   * Write an audit-log row for a debt change. The actor is resolved from the
+   * household owner (`households.created_by`) since debt endpoints carry no
+   * request user.
+   */
+  writeAuditLog(
+    householdId: string,
+    entry: {
+      action: string;
+      entityType: string;
+      entityId: string;
+      metadata: Record<string, unknown>;
+    },
+  ): Promise<void>;
 }

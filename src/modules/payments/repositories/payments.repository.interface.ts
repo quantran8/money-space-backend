@@ -14,10 +14,21 @@ export interface PaymentsRepository {
     paymentId: string,
   ): Promise<UpcomingPayment | undefined>;
   insertUpcomingPayment(payment: UpcomingPayment): Promise<void>;
+  insertUpcomingPayments(payments: UpcomingPayment[]): Promise<void>;
   updateUpcomingPayment(
     paymentId: string,
     payment: UpcomingPayment,
   ): Promise<void>;
   deleteUpcomingPayment(paymentId: string): Promise<void>;
   unlinkUpcomingPaymentFromMoneyEvents(paymentId: string): Promise<void>;
+  /**
+   * Set `amount` on the still-open reminders for a debt due on/after `fromDate`
+   * (an effective-from-now repayment-amount change). Past + recorded ones stay.
+   */
+  updateUnpaidUpcomingPaymentAmountsByDebt(
+    householdId: string,
+    debtId: string,
+    fromDate: string,
+    newAmount: number,
+  ): Promise<void>;
 }

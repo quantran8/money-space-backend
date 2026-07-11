@@ -39,7 +39,7 @@ export class PrismaMembersRepository
     householdId: string,
   ): Promise<HouseholdMember[]> {
     const members = await this.prisma.householdMember.findMany({
-      where: { householdId },
+      where: { householdId, deletedAt: null },
       include: { user: true },
       orderBy: { joinedAt: 'asc' },
     });
@@ -54,7 +54,7 @@ export class PrismaMembersRepository
     memberId: string,
   ): Promise<HouseholdMember | undefined> {
     const member = await this.prisma.householdMember.findFirst({
-      where: { id: memberId, householdId },
+      where: { id: memberId, householdId, deletedAt: null },
       include: { user: true },
     });
 
@@ -94,6 +94,7 @@ export class PrismaMembersRepository
           userId: member.profileId,
           role: member.role,
           permissionLevel: member.permission,
+          status: member.status ?? 'active',
           joinedAt: new Date(member.joinedAt),
         } as any,
       });
@@ -118,6 +119,7 @@ export class PrismaMembersRepository
         data: {
           role: member.role,
           permissionLevel: member.permission,
+          status: member.status ?? undefined,
           joinedAt: new Date(member.joinedAt),
         } as any,
       });
@@ -125,8 +127,10 @@ export class PrismaMembersRepository
   }
 
   async deleteMember(memberId: string): Promise<void> {
-    await this.prisma.householdMember.delete({
-      where: { id: memberId },
+    // Soft-delete to keep FK references (audit, owned assets/debts) intact.
+    await this.prisma.householdMember.updateMany({
+      where: { id: memberId, deletedAt: null },
+      data: { deletedAt: new Date() } as any,
     });
   }
 }

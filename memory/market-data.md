@@ -12,8 +12,19 @@ Two reference tables, both currently used as stand-ins for a future pricing/FX A
 ## Rules
 
 - Market price matched by `(assetClass, symbol)`, case-insensitive.
-- `fxRateToVnd(base)` finds a base→VND rate and **defaults to 1** if missing.
-- **Currently stubbed**: frontend `latestPrice() → null` and `fxToVnd() → 1` (`assets.repository.ts`); backend FX defaults to 1. When a real pricing API is wired, this is the integration point.
+- `fxRateToVnd(base)`: VND→VND = 1; otherwise finds a base→VND rate and returns
+  its value, or **`null` when the rate is unknown** (currency ≠ VND). Callers
+  MUST treat `null` as "value undefined" — `computeCurrentValue` returns `0`
+  rather than mis-pricing. (Was previously `?? 1`, which silently priced 1 USD =
+  1 VND when a rate was missing — a ~25,000× understatement; fixed.)
+- **Latest-per-key lookup**: the valuation reads go through
+  `PrismaRepository.findLatestMarketPrices()` / `findLatestFxRates()` —
+  `DISTINCT ON (...) ORDER BY ..., <time> DESC`, one row per instrument, served
+  by the `*_latest_idx` indexes. This replaced the old "load the whole table +
+  JS `.find()`" pattern so it scales as the price history grows. The
+  `/market-data/prices` + `/fx-rates` endpoints also use it (they show the
+  current rate board, not the full tick history).
+- **Currently stubbed**: frontend `latestPrice() → null` and `fxToVnd() → 1` (`assets.repository.ts`). When a real pricing API is wired, this is the integration point (a writer for `market_prices` / `fx_rates`).
 
 ## Where it lives in code
 

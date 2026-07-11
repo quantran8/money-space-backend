@@ -60,24 +60,20 @@ export class PrismaDashboardRepository
   }
 
   async getMarketPrices(): Promise<MarketPrice[]> {
-    const prices = await this.prisma.marketPrice.findMany({
-      orderBy: { priceTime: 'desc' },
-    });
-
+    const prices = await this.findLatestMarketPrices();
     return prices.map((price) => mapMarketPrice(price));
   }
 
   async getFxRates(): Promise<FxRate[]> {
-    const rates = await this.prisma.fxRate.findMany({
-      orderBy: { rateTime: 'desc' },
-    });
-
+    const rates = await this.findLatestFxRates();
     return rates.map((rate) => mapFxRate(rate));
   }
 
   async getAttentionItems(householdId?: string): Promise<AttentionItem[]> {
+    // No soft-delete on attention items: `status = dismissed` IS the "gone"
+    // state. Exclude dismissed instead of a deletedAt filter.
     const items = await this.prisma.attentionItem.findMany({
-      where: { householdId, deletedAt: null },
+      where: { householdId, status: { not: 'dismissed' } },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -122,5 +118,13 @@ export class PrismaDashboardRepository
     });
 
     return snapshots.map((snapshot) => mapSnapshot(snapshot));
+  }
+
+  async getOutstandingDebtTotal(householdId: string): Promise<number> {
+    const agg = await this.prisma.debt.aggregate({
+      where: { householdId, deletedAt: null, status: 'active' },
+      _sum: { outstandingAmount: true },
+    });
+    return Number(agg._sum.outstandingAmount ?? 0);
   }
 }

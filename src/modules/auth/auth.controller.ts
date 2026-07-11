@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { Public } from './decorators/public.decorator';
 import type { AuthUser } from './entities/auth-user.entity';
 import type {
   GoogleCallbackDto,
@@ -29,6 +30,7 @@ import type { AuthenticatedRequest } from './guards/supabase-auth.guard';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Public()
   @Post('signup')
   signup(@Body() payload: SignupDto) {
     if (!payload?.email || !payload?.password) {
@@ -37,6 +39,7 @@ export class AuthController {
     return this.authService.signup(payload);
   }
 
+  @Public()
   @Post('login')
   login(@Body() payload: LoginDto) {
     if (!payload?.email || !payload?.password) {
@@ -45,11 +48,13 @@ export class AuthController {
     return this.authService.login(payload);
   }
 
+  @Public()
   @Get('google')
   googleAuthUrl(@Query() query: GoogleAuthUrlQuery) {
     return this.authService.getGoogleAuthUrl(query?.redirectTo);
   }
 
+  @Public()
   @Post('google/callback')
   googleCallback(@Body() payload: GoogleCallbackDto) {
     if (!payload?.code) {
@@ -58,6 +63,7 @@ export class AuthController {
     return this.authService.googleCallback(payload);
   }
 
+  @Public()
   @Post('refresh')
   refresh(@Body() payload: RefreshTokenDto) {
     if (!payload?.refreshToken) {
@@ -76,7 +82,6 @@ export class AuthController {
   }
 
   @Get('me')
-  @UseGuards(SupabaseAuthGuard)
   me(@CurrentUser() user: AuthUser) {
     return user;
   }

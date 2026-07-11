@@ -53,6 +53,11 @@ When real-time is wired, replace these constants — they affect interest accrua
 
 ## Source-of-truth docs
 
-- `# Product Spec v1.md` and `# Backend Tables & Relationships — Money.md` (frontend-web repo root) are the authoritative domain-rules references.
-- Canonical SQL + RLS: `frontend-web/supabase/migrations/20260705223000_init_money_space.sql`.
-- Backend enums mirror these deliberately.
+- **The backend Prisma schema (`backend/prisma/schema.prisma`) is the source of
+  truth for the DB.** The old `frontend-web/supabase/migrations/*.sql` file is
+  legacy/reference only — do NOT treat it as canonical.
+- `# Product Spec v1.md` and `# Backend Tables & Relationships — Money.md`
+  (frontend-web repo root) are the authoritative DOMAIN-RULES references, kept in
+  sync with the Prisma schema.
+- **Authorization is app-layer** (NestJS guards), NOT Postgres RLS — the project
+  stays DB-portable. See [[members-and-permissions]].

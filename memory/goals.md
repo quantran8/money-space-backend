@@ -4,10 +4,16 @@ Shared savings goals with progress. Related: [[money-events]] (goal_contribution
 
 ## Overview
 
-CRUD over `FinancialGoal` (name, category, targetAmount, currentAmount, deadline, priority, status, optional `linkedAssetId`). Every response is a card including a computed **progress %**.
+CRUD over `FinancialGoal` (name, category, targetAmount, deadline, priority, status, optional `linkedAssetId`). Every response is a card including a computed **progress %**.
 
 ## Rules
 
+- **`currentAmount` is DERIVED, not stored.** It is the live `Σ amount` of the
+  goal's `goal_contribution` money events (`deletedAt IS NULL`), computed on read
+  in `PrismaGoalsRepository` (`groupBy` for lists, `aggregate` for one goal). The
+  DB column was dropped (migration `..._drop_dead_columns`) — it was a cache
+  nothing maintained (no increment on contribution, no reverse on delete). Create/
+  update never write it; a new goal starts at 0. See [[money-events]].
 - **Progress** (`computeProgress` / `computeGoalProgress`): `round(min(100, current / target × 100))`; `0` if `target ≤ 0`.
 - **Invariant** (`buildGoalSchema.refine`): `current ≤ target`.
 - **Suggested pace** (`suggestedPace`): remaining amount spread over ~4 months, floored at 1,000,000 VND when short.

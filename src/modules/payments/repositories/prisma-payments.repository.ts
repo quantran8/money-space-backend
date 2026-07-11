@@ -72,7 +72,7 @@ export class PrismaPaymentsRepository
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO upcoming_payments
         (id, household_id, name, amount, due_date, debt_id,
-         status, attention_level, is_attention_needed,
+         status, attention_level,
          owner_member_id, created_by, updated_at)
       SELECT
         ${payment.id}::uuid,
@@ -83,7 +83,6 @@ export class PrismaPaymentsRepository
         ${payment.debtId ?? null}::uuid,
         ${statusFields.status}::"PaymentStatus",
         ${statusFields.attentionLevel}::"AttentionLevel",
-        ${statusFields.isAttentionNeeded},
         ${ownerMemberId}::uuid,
         h.created_by,
         now()
@@ -97,6 +96,46 @@ export class PrismaPaymentsRepository
         `Household "${payment.householdId}" was not found`,
       );
     }
+  }
+
+  async insertUpcomingPayments(payments: UpcomingPayment[]): Promise<void> {
+    // Bulk insert in a single round-trip (`createMany`), so generating a debt's
+    // whole repayment schedule doesn't fire one query per installment — that
+    // many sequential round-trips inside an interactive transaction blows its
+    // timeout on a remote/pooled connection.
+    if (payments.length === 0) {
+      return;
+    }
+
+    // Every payment in one call belongs to the same household; resolve its
+    // `created_by` once. Missing/soft-deleted household → 404, matching the
+    // single-insert path.
+    const householdId = payments[0].householdId;
+    const household = await this.prisma.household.findFirst({
+      where: { id: householdId, deletedAt: null },
+      select: { createdById: true },
+    });
+    if (!household) {
+      throw new NotFoundException(`Household "${householdId}" was not found`);
+    }
+
+    await this.prisma.upcomingPayment.createMany({
+      data: payments.map((payment) => {
+        const statusFields = toPaymentStatusFields(payment.status);
+        return {
+          id: payment.id,
+          householdId: payment.householdId,
+          name: payment.name,
+          amount: payment.amount,
+          dueDate: this.toDate(payment.dueDate),
+          debtId: payment.debtId ?? null,
+          status: statusFields.status,
+          attentionLevel: statusFields.attentionLevel,
+          ownerMemberId: this.asUuid(payment.owner),
+          createdById: household.createdById,
+        };
+      }) as any,
+    });
   }
 
   async updateUpcomingPayment(
@@ -131,6 +170,26 @@ export class PrismaPaymentsRepository
     await this.prisma.moneyEvent.updateMany({
       where: { upcomingPaymentId: paymentId },
       data: { upcomingPaymentId: null },
+    });
+  }
+
+  async updateUnpaidUpcomingPaymentAmountsByDebt(
+    householdId: string,
+    debtId: string,
+    fromDate: string,
+    newAmount: number,
+  ): Promise<void> {
+    // An "effective-from-now" repayment-amount change touches only the future
+    // reminders (dueDate >= fromDate) that are still open. Recorded repayments
+    // are money events, not upcoming rows, so they are inherently untouched.
+    await this.prisma.upcomingPayment.updateMany({
+      where: {
+        householdId,
+        debtId,
+        deletedAt: null,
+        dueDate: { gte: this.toDate(fromDate) ?? undefined },
+      },
+      data: { amount: newAmount },
     });
   }
 }

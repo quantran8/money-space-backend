@@ -12,6 +12,7 @@ import { PaymentsService } from './payments.service';
 import type { CreateUpcomingPaymentDto } from './dto/create-upcoming-payment.dto';
 import type { ListUpcomingPaymentsQuery } from './dto/list-upcoming-payments.query';
 import type { UpdateUpcomingPaymentDto } from './dto/update-upcoming-payment.dto';
+import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 @Controller('api/households/:householdId/upcoming-payments')
 export class PaymentsController {
@@ -33,6 +34,7 @@ export class PaymentsController {
     return this.paymentsService.getUpcomingPayment(householdId, paymentId);
   }
 
+  @RequireCapability('edit')
   @Post()
   createUpcomingPayment(
     @Param('householdId') householdId: string,
@@ -41,6 +43,7 @@ export class PaymentsController {
     return this.paymentsService.createUpcomingPayment(householdId, payload);
   }
 
+  @RequireCapability('edit')
   @Patch(':paymentId')
   updateUpcomingPayment(
     @Param('householdId') householdId: string,
@@ -54,6 +57,7 @@ export class PaymentsController {
     );
   }
 
+  @RequireCapability('edit')
   @Delete(':paymentId')
   deleteUpcomingPayment(
     @Param('householdId') householdId: string,
