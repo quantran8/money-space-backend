@@ -1,5 +1,5 @@
 import type { Asset } from '../../modules/assets/entities/asset.entity';
-import type { AssetValuation } from '../../modules/assets/entities/asset-valuation.entity';
+import type { AssetValueHistory } from '../../modules/assets/entities/asset-value-history.entity';
 import type { AttentionItem } from '../../modules/dashboard/entities/attention-item.entity';
 import type { SnapshotPoint } from '../../modules/dashboard/entities/snapshot-point.entity';
 import type {
@@ -194,7 +194,7 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
   };
 }
 
-export function mapAssetValuation(row: DbRow): AssetValuation {
+export function mapAssetValueHistory(row: DbRow): AssetValueHistory {
   return {
     id: row.id,
     assetId: row.assetId ?? row.asset_id,
@@ -210,6 +210,7 @@ export function mapAssetValuation(row: DbRow): AssetValuation {
     fxRateId: row.fxRateId ?? row.fx_rate_id ?? undefined,
     calculationTermId:
       row.calculationTermId ?? row.calculation_term_id ?? undefined,
+    moneyEventId: row.moneyEventId ?? row.money_event_id ?? undefined,
   };
 }
 

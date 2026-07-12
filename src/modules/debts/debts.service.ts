@@ -8,6 +8,7 @@ import { PrismaService } from '../../database/prisma/prisma.service';
 import { AS_OF } from '../../common/seed/money-space.seed';
 import { MoneyEventsService } from '../money-events/money-events.service';
 import { PaymentsService } from '../payments/payments.service';
+import { SnapshotsService } from '../snapshots/snapshots.service';
 import type { CreateUpcomingPaymentDto } from '../payments/dto/create-upcoming-payment.dto';
 import type { CreateDebtDto } from './dto/create-debt.dto';
 import type { ListDebtsQuery } from './dto/list-debts.query';
@@ -46,7 +47,26 @@ export class DebtsService {
     private readonly prisma: PrismaService,
     private readonly moneyEventsService: MoneyEventsService,
     private readonly paymentsService: PaymentsService,
+    private readonly snapshots: SnapshotsService,
   ) {}
+
+  /**
+   * Auto-snapshot after a debt write commits: recompute totals (total_debt
+   * changed) and refresh the received-to wallet's line if the debt credited one.
+   * A `onHouseholdChanged`/`onAssetChanged` here also covers the wallet moves
+   * done by the nested `createMoneyEvent` calls, whose own hooks skipped because
+   * they ran inside this debt transaction (isInTransaction).
+   */
+  private async snapshotAfterDebt(
+    householdId: string,
+    receivedToAssetId?: string | null,
+  ): Promise<void> {
+    if (receivedToAssetId) {
+      await this.snapshots.onAssetChanged(householdId, receivedToAssetId);
+    } else {
+      await this.snapshots.onHouseholdChanged(householdId);
+    }
+  }
 
   async listDebts(householdId: string, query?: ListDebtsQuery) {
     await this.debtsRepository.assertHousehold(householdId);
@@ -142,6 +162,7 @@ export class DebtsService {
       },
       { timeout: 15000, maxWait: 10000 },
     );
+    await this.snapshotAfterDebt(householdId, debt.receivedToAssetId);
     return debt;
   }
 
@@ -236,6 +257,7 @@ export class DebtsService {
         await this.debtsRepository.updateDebt(debtId, next);
         await this.debtsRepository.upsertDebtInterestPeriods(next);
       });
+      await this.snapshotAfterDebt(householdId, next.receivedToAssetId);
       return next;
     }
 
@@ -248,23 +270,32 @@ export class DebtsService {
       );
     }
 
+    let result: Debt;
     if (mode.kind === 'correction') {
-      return this.applyCorrection(householdId, debt, next, payload, events);
-    }
-
-    if (!mode.effectiveDate) {
-      throw new BadRequestException(
-        'effectiveDate is required for an effective-from-now update',
+      result = await this.applyCorrection(
+        householdId,
+        debt,
+        next,
+        payload,
+        events,
+      );
+    } else {
+      if (!mode.effectiveDate) {
+        throw new BadRequestException(
+          'effectiveDate is required for an effective-from-now update',
+        );
+      }
+      result = await this.applyEffective(
+        householdId,
+        debt,
+        next,
+        payload,
+        mode.effectiveDate,
+        mode.balanceIntent,
       );
     }
-    return this.applyEffective(
-      householdId,
-      debt,
-      next,
-      payload,
-      mode.effectiveDate,
-      mode.balanceIntent,
-    );
+    await this.snapshotAfterDebt(householdId, next.receivedToAssetId);
+    return result;
   }
 
   /** Sum of recorded repayments = the debt's outflow money events. */
@@ -495,7 +526,7 @@ export class DebtsService {
 
   async deleteDebt(householdId: string, debtId: string) {
     // 404s when the debt (or its household) is absent before we mutate anything.
-    await this.ensureDebt(householdId, debtId);
+    const debt = await this.ensureDebt(householdId, debtId);
     // Deleting a debt removes everything the debt created, all in one
     // transaction so they land (or roll back) together, sequentially since they
     // share the transaction's connection:
@@ -505,14 +536,21 @@ export class DebtsService {
     //     each of which reverses its own wallet effect as it is deleted (so the
     //     credit the borrow put into the receiving wallet is undone) — keeping
     //     net worth consistent.
-    await this.prisma.runInTransaction(async () => {
-      await this.debtsRepository.deleteDebt(debtId);
-      await this.debtsRepository.deleteUpcomingPaymentsByDebt(debtId);
-      await this.moneyEventsService.deleteMoneyEventsByDebt(
-        householdId,
-        debtId,
-      );
-    });
+    await this.prisma.runInTransaction(
+      async () => {
+        await this.debtsRepository.deleteDebt(debtId);
+        await this.debtsRepository.deleteUpcomingPaymentsByDebt(debtId);
+        await this.moneyEventsService.deleteMoneyEventsByDebt(
+          householdId,
+          debtId,
+        );
+      },
+      // deleteMoneyEventsByDebt reverses each linked event's wallet effects, so
+      // this fans out with the number of events. Raise the timeout above the 5s
+      // default to avoid aborting mid-write and stranding the connection.
+      { timeout: 30000, maxWait: 10000 },
+    );
+    await this.snapshotAfterDebt(householdId, debt.receivedToAssetId);
     return {
       deleted: true,
       debtId,

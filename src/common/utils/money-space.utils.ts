@@ -13,11 +13,7 @@ import type {
   PermissionLevel,
 } from '../../modules/members/entities/member.entity';
 
-export type VisibilityLevel =
-  | 'summary_only'
-  | 'grouped'
-  | 'detail'
-  | 'private';
+export type VisibilityLevel = 'summary_only' | 'grouped' | 'detail' | 'private';
 import type {
   MoneyDirection,
   MoneyEvent,
@@ -296,7 +292,7 @@ export function computeCurrentValue(
 // Saving-deposit withdrawal projections (display-only, §savings)
 //
 // Derived on demand from the calculation term — these are NOT persisted into
-// `AssetValuation` / `currentValue`; `computeCurrentValue` above stays the
+// `asset_value_history` / `currentValue`; `computeCurrentValue` above stays the
 // single source of a saving asset's stored value.
 // ---------------------------------------------------------------------------
 
@@ -510,6 +506,10 @@ export function toMoneyEventCard(event: MoneyEvent) {
     title: event.title,
     amount: event.amount,
     feeAmount: event.feeAmount ?? 0,
+    // Sale specifics, so an edit can prefill/preserve them (undefined for
+    // non-sale events).
+    soldQuantity: event.soldQuantity,
+    soldValue: event.soldValue,
     note: event.note,
     date: formatDateLabel(event.isoDate),
     isoDate: event.isoDate,

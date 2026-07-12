@@ -1,4 +1,9 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
 import { AS_OF } from '../../common/seed/money-space.seed';
 import { AssetsService } from '../assets/assets.service';
@@ -13,6 +18,7 @@ import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
 import { MONEY_EVENTS_REPOSITORY } from './repositories/money-events.repository.interface';
 import type { MoneyEventsRepository } from './repositories/money-events.repository.interface';
+import { SnapshotsService } from '../snapshots/snapshots.service';
 
 @Injectable()
 export class MoneyEventsService {
@@ -21,7 +27,28 @@ export class MoneyEventsService {
     private readonly moneyEventsRepository: MoneyEventsRepository,
     private readonly prisma: PrismaService,
     private readonly assetsService: AssetsService,
+    private readonly snapshots: SnapshotsService,
   ) {}
+
+  /**
+   * Auto-snapshot after a money-event write commits. Refreshes each linked
+   * wallet's line (they may have changed value), or falls back to a totals-only
+   * recompute when no asset is linked. No-op when called inside a transaction
+   * (nested under debt/payment) — the outermost caller fires it.
+   */
+  private async snapshotAfterEvent(
+    householdId: string,
+    assetIds: Array<string | undefined | null>,
+  ): Promise<void> {
+    const linked = [...new Set(assetIds.filter((id): id is string => !!id))];
+    if (linked.length === 0) {
+      await this.snapshots.onHouseholdChanged(householdId);
+      return;
+    }
+    for (const assetId of linked) {
+      await this.snapshots.onAssetChanged(householdId, assetId);
+    }
+  }
 
   async listMoneyEvents(householdId: string, query?: ListMoneyEventsQuery) {
     await this.moneyEventsRepository.assertHousehold(householdId);
@@ -92,21 +119,32 @@ export class MoneyEventsService {
     // roll back) together, so they run in one transaction — sequentially, since
     // they share the transaction's single connection.
     const repaysDebt = Boolean(event.debtId) && event.direction === 'outflow';
-    await this.prisma.runInTransaction(async () => {
-      await this.moneyEventsRepository.insertMoneyEvent(event);
-      await this.applyWalletEffects(event, 'apply');
-      // An asset_sale also reduces the sold asset's position (and closes it on a
-      // full sale). The wallet credit above already used the net amount
-      // (amount - fee), so only the source-asset reduction remains.
-      await this.applySaleEffects(event);
-      if (repaysDebt) {
-        await this.moneyEventsRepository.reduceDebtOutstanding(
-          householdId,
-          event.debtId as string,
-          event.amount,
-        );
-      }
-    });
+    // The wallet/sale effects fan out into ~15-20 sequential round-trips
+    // (credit/debit → upsertCurrentValuation), so raise the timeout well above
+    // the 5s default to keep the interactive transaction from aborting mid-write
+    // ("Transaction not found") and stranding its connection on the pooler.
+    await this.prisma.runInTransaction(
+      async () => {
+        await this.moneyEventsRepository.insertMoneyEvent(event);
+        await this.applyWalletEffects(event, 'apply');
+        // An asset_sale also reduces the sold asset's position (and closes it on
+        // a full sale). The wallet credit above already used the net amount
+        // (amount - fee), so only the source-asset reduction remains.
+        await this.applySaleEffects(event);
+        if (repaysDebt) {
+          await this.moneyEventsRepository.reduceDebtOutstanding(
+            householdId,
+            event.debtId as string,
+            event.amount,
+          );
+        }
+      },
+      { timeout: 30000, maxWait: 10000 },
+    );
+    await this.snapshotAfterEvent(householdId, [
+      event.fromAssetId,
+      event.toAssetId,
+    ]);
     return toMoneyEventCard(event);
   }
 
@@ -194,39 +232,59 @@ export class MoneyEventsService {
       }
       const valuationAt = depositValue;
 
-      // One period = one money event (+ valuation), all-or-nothing.
-      await this.prisma.runInTransaction(async () => {
-        await this.createMoneyEvent(householdId, {
-          title: `Lãi tiết kiệm: ${asset.name}`,
-          amount: period.amount,
-          isoDate: period.periodEnd,
-          type: 'income',
-          category: 'interest',
-          // Wallet destination moves cash into the wallet (inflow); capitalizing
-          // into principal is a bookkeeping entry that must not move a wallet.
-          direction: toWallet ? 'inflow' : 'neutral',
-          fromAssetId: assetId,
-          toAssetId: toWallet
-            ? (term.receivingWalletId ?? undefined)
-            : undefined,
-        });
+      // One period = one money event (+ valuation), all-or-nothing. The nested
+      // createMoneyEvent runs a full wallet-effect chain, so raise the timeout
+      // above the 5s default to avoid aborting the transaction mid-write and
+      // stranding its connection.
+      await this.prisma.runInTransaction(
+        async () => {
+          await this.createMoneyEvent(householdId, {
+            title: `Lãi tiết kiệm: ${asset.name}`,
+            amount: period.amount,
+            isoDate: period.periodEnd,
+            type: 'income',
+            category: 'interest',
+            // Wallet destination moves cash into the wallet (inflow);
+            // capitalizing into principal is a bookkeeping entry that must not
+            // move a wallet.
+            direction: toWallet ? 'inflow' : 'neutral',
+            fromAssetId: assetId,
+            toAssetId: toWallet
+              ? (term.receivingWalletId ?? undefined)
+              : undefined,
+          });
 
-        if (!toWallet) {
-          await this.assetsService.capitalizeSavingInterest(
-            householdId,
-            assetId,
-            period.amount,
+          if (!toWallet) {
+            await this.assetsService.capitalizeSavingInterest(
+              householdId,
+              assetId,
+              period.amount,
+            );
+          }
+
+          // Record the deposit's own valuation at the payout date.
+          await this.assetsService.writeSavingValuationAt(
+            asset,
+            period.periodEnd,
+            valuationAt,
           );
-        }
-
-        // Record the deposit's own valuation at the payout date.
-        await this.assetsService.writeSavingValuationAt(
-          asset,
-          period.periodEnd,
-          valuationAt,
-        );
-      });
+        },
+        { timeout: 30000, maxWait: 10000 },
+      );
       credited += 1;
+    }
+
+    // The nested createMoneyEvent calls ran inside per-period transactions, so
+    // their snapshot hooks skipped (isInTransaction). Fire once here, after all
+    // commits: the deposit changed value, and a wallet destination was credited.
+    if (credited > 0) {
+      await this.snapshots.onAssetChanged(householdId, assetId);
+      if (toWallet && term.receivingWalletId) {
+        await this.snapshots.onAssetChanged(
+          householdId,
+          term.receivingWalletId,
+        );
+      }
     }
 
     return credited;
@@ -264,13 +322,88 @@ export class MoneyEventsService {
     // row update, in one transaction so they can't diverge. For an asset_sale
     // the sold asset's position must also be reversed then re-applied, so the
     // asset ends up reflecting only the edited sale.
-    await this.prisma.runInTransaction(async () => {
-      await this.applyWalletEffects(event, 'reverse');
-      await this.reverseSaleEffects(event);
-      await this.moneyEventsRepository.updateMoneyEvent(eventId, next);
-      await this.applyWalletEffects(next, 'apply');
-      await this.applySaleEffects(next);
-    });
+    // Reverse + re-apply is roughly double the wallet-effect round-trips of a
+    // create, so raise the timeout above the 5s default to avoid aborting the
+    // transaction mid-write and stranding its connection.
+    // A revaluation (`asset_update`) edit is special: its `amount` is the NEW
+    // absolute asset value (not a wallet move). Editing it must re-price the
+    // asset and update the linked `asset_value_history` point + `current_value`
+    // cache — a two-way sync back to the asset. `next.amount` (the value the user
+    // entered) drives it; we store the event's `amount` as the delta from the
+    // asset's value before this event (currentValue − old event amount) so the
+    // ledger stays consistent with the create path.
+    if (event.type === 'asset_update' && next.type === 'asset_update') {
+      const assetId = event.toAssetId;
+      if (!assetId) {
+        throw new BadRequestException(
+          'Revaluation event has no linked asset to update',
+        );
+      }
+      const newValue = next.amount;
+      await this.prisma.runInTransaction(
+        async () => {
+          // Value the asset held just before this event applied: its current
+          // stored value minus the delta this event had recorded. Manual assets
+          // store it in `manualValue`; for derived assets there's no free value,
+          // so fall back to the old delta (best effort — revaluation is a manual
+          // concern).
+          const asset = await this.assetsService.getAssetEntity(
+            householdId,
+            assetId,
+          );
+          const currentStored =
+            asset.valuationMode === 'manual' ? (asset.manualValue ?? 0) : newValue;
+          const valueBeforeEvent = currentStored - event.amount;
+          const delta = newValue - valueBeforeEvent;
+          // Persist the event with amount = new delta, keeping date/title/note.
+          await this.moneyEventsRepository.updateMoneyEvent(eventId, {
+            ...next,
+            amount: delta,
+          });
+          // Re-price the asset + refresh the linked history point at newValue.
+          await this.assetsService.applyRevaluationEdit(
+            householdId,
+            assetId,
+            newValue,
+            { moneyEventId: eventId, valuationDate: next.isoDate },
+          );
+        },
+        { timeout: 30000, maxWait: 10000 },
+      );
+      await this.snapshotAfterEvent(householdId, [assetId]);
+      return toMoneyEventCard(next);
+    }
+
+    // Editing an event can change its amount or its linked wallets, so reverse
+    // the old event's wallet moves and apply the new one's — together with the
+    // row update, in one transaction so they can't diverge. For an asset_sale
+    // the sold asset's position must also be reversed then re-applied, so the
+    // asset ends up reflecting only the edited sale.
+    // Reverse + re-apply is roughly double the wallet-effect round-trips of a
+    // create, so raise the timeout above the 5s default to avoid aborting the
+    // transaction mid-write and stranding its connection.
+    await this.prisma.runInTransaction(
+      async () => {
+        await this.applyWalletEffects(event, 'reverse');
+        await this.reverseSaleEffects(event);
+        // Clear this event's old history points before re-applying: the edit may
+        // have moved it to a different asset set, and `apply` only writes points
+        // for the NEW assets — so any point on a dropped asset would otherwise be
+        // stranded. `apply` below re-creates fresh points for the current assets.
+        await this.assetsService.removeValuationsForEvent(eventId);
+        await this.moneyEventsRepository.updateMoneyEvent(eventId, next);
+        await this.applyWalletEffects(next, 'apply');
+        await this.applySaleEffects(next);
+      },
+      { timeout: 30000, maxWait: 10000 },
+    );
+    // Union of old + new linked wallets — an edit can move the event between them.
+    await this.snapshotAfterEvent(householdId, [
+      event.fromAssetId,
+      event.toAssetId,
+      next.fromAssetId,
+      next.toAssetId,
+    ]);
     return toMoneyEventCard(next);
   }
 
@@ -279,11 +412,25 @@ export class MoneyEventsService {
     // Removing an event undoes the money it moved: reverse its wallet effects in
     // the same transaction as the soft-delete. For an asset_sale, also restore
     // the sold asset's position (and reopen it if the sale had closed it).
-    await this.prisma.runInTransaction(async () => {
-      await this.moneyEventsRepository.deleteMoneyEvent(eventId);
-      await this.applyWalletEffects(event, 'reverse');
-      await this.reverseSaleEffects(event);
-    });
+    // The wallet/sale reversal fans out into many sequential round-trips, so
+    // raise the timeout above the 5s default to avoid aborting the transaction
+    // mid-write and stranding its connection.
+    await this.prisma.runInTransaction(
+      async () => {
+        await this.moneyEventsRepository.deleteMoneyEvent(eventId);
+        await this.applyWalletEffects(event, 'reverse');
+        await this.reverseSaleEffects(event);
+        // The reversal above re-touched this event's linked valuation points
+        // (same event id). Removing the event should remove those points from
+        // history entirely, so soft-delete them last.
+        await this.assetsService.removeValuationsForEvent(eventId);
+      },
+      { timeout: 30000, maxWait: 10000 },
+    );
+    await this.snapshotAfterEvent(householdId, [
+      event.fromAssetId,
+      event.toAssetId,
+    ]);
     return {
       deleted: true,
       eventId,
@@ -317,8 +464,17 @@ export class MoneyEventsService {
       householdId,
       debtId,
     );
+    if (events.length === 0) {
+      return;
+    }
+    // Soft-delete all the linked event rows in one bulk statement instead of N
+    // per-row updates, then reverse each event's wallet effects (these can't be
+    // bulked — every event moves different wallets).
+    await this.moneyEventsRepository.deleteMoneyEventsByDebt(
+      householdId,
+      debtId,
+    );
     for (const event of events) {
-      await this.moneyEventsRepository.deleteMoneyEvent(event.id);
       await this.applyWalletEffects(event, 'reverse');
     }
   }
@@ -349,11 +505,21 @@ export class MoneyEventsService {
     // `apply`: from → out (debit), to → in (credit). `reverse` swaps the two.
     const debitId = mode === 'apply' ? fromAssetId : toAssetId;
     const creditId = mode === 'apply' ? toAssetId : fromAssetId;
+    // Only `apply` writes a history point linked to this event (dated at the
+    // event's date). `reverse` is a balance-only undo — it must NOT write a
+    // point, otherwise an edit that moves the event to a different wallet would
+    // strand a stale reversed point on the old wallet. Update/delete instead
+    // soft-delete this event's linked points explicitly (see those callers).
+    const context =
+      mode === 'apply'
+        ? { moneyEventId: event.id, valuationDate: event.isoDate }
+        : undefined;
     if (debitId) {
       await this.assetsService.debitManualAsset(
         householdId,
         debitId,
         netAmount,
+        context,
       );
     }
     if (creditId) {
@@ -361,6 +527,7 @@ export class MoneyEventsService {
         householdId,
         creditId,
         netAmount,
+        context,
       );
     }
   }
@@ -383,6 +550,7 @@ export class MoneyEventsService {
         sellAll: false,
         soldOn: event.isoDate,
       },
+      { moneyEventId: event.id, valuationDate: event.isoDate },
     );
   }
 
@@ -395,6 +563,8 @@ export class MoneyEventsService {
     if (event.type !== 'asset_sale' || !event.fromAssetId) {
       return;
     }
+    // Balance-only undo — no valuation context, so it writes no history point.
+    // Update/delete soft-delete this event's linked points explicitly.
     await this.assetsService.reverseSalePosition(
       event.householdId,
       event.fromAssetId,

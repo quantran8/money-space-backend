@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapDebt,
   mapHousehold,
@@ -20,7 +20,7 @@ export class PrismaDebtsRepository
   }
 
   createId(_prefix: string): string {
-    return randomUUID();
+    return uuidv7();
   }
 
   async assertHousehold(householdId: string): Promise<Household> {
@@ -332,7 +332,7 @@ export class PrismaDebtsRepository
   ): Promise<void> {
     await this.prisma.debtInterestPeriod.create({
       data: {
-        id: randomUUID(),
+        id: uuidv7(),
         householdId,
         debtId,
         startDate: this.toDate(row.startDate),
@@ -362,7 +362,7 @@ export class PrismaDebtsRepository
       INSERT INTO audit_logs
         (id, household_id, actor_id, action, entity_type, entity_id, metadata, created_at)
       SELECT
-        ${randomUUID()}::uuid,
+        ${uuidv7()}::uuid,
         h.id,
         h.created_by,
         ${entry.action},

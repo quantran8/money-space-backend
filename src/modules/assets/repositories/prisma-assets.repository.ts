@@ -1,8 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapAsset,
-  mapAssetValuation,
+  mapAssetValueHistory,
   mapFxRate,
   mapHousehold,
   mapMarketPrice,
@@ -15,7 +15,7 @@ import {
 } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import { Asset } from '../entities/asset.entity';
-import { AssetValuation } from '../entities/asset-valuation.entity';
+import { AssetValueHistory } from '../entities/asset-value-history.entity';
 import { SnapshotPoint } from '../../dashboard/entities/snapshot-point.entity';
 import { Household } from '../../households/entities/household.entity';
 import { FxRate } from '../../market-data/entities/fx-rate.entity';
@@ -33,7 +33,7 @@ export class PrismaAssetsRepository
   }
 
   createId(_prefix: string): string {
-    return randomUUID();
+    return uuidv7();
   }
 
   async assertHousehold(householdId: string): Promise<Household> {
@@ -120,6 +120,46 @@ export class PrismaAssetsRepository
     await this.upsertAssetDetails(asset);
   }
 
+  async insertRevaluationEvent(event: {
+    id: string;
+    householdId: string;
+    assetId: string;
+    title: string;
+    amount: number;
+    isoDate: string;
+    note?: string;
+  }): Promise<void> {
+    // A revaluation is a neutral `asset_update` money event linked to the asset
+    // it re-prices (via `to_asset_id`, so `findMoneyEventsByAsset` surfaces it).
+    // It moves no wallet and is excluded from income/expense reports. `amount`
+    // carries the signed value delta (new − old). Derives `created_by` from the
+    // household in one round-trip, like `insertAsset`/`insertMoneyEvent`.
+    await this.prisma.$executeRaw`
+      INSERT INTO money_events
+        (id, household_id, title, description, event_type, category, amount,
+         fee_amount, currency, event_date, direction, to_asset_id,
+         created_by, updated_at)
+      SELECT
+        ${event.id}::uuid,
+        h.id,
+        ${event.title},
+        ${event.note ?? ''},
+        'asset_update'::"MoneyEventType",
+        'other',
+        ${event.amount}::numeric,
+        0::numeric,
+        'VND',
+        ${this.toDate(event.isoDate)}::date,
+        'neutral'::"MoneyDirection",
+        ${event.assetId}::uuid,
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${event.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+  }
+
   async updateAsset(assetId: string, asset: Asset): Promise<void> {
     await this.prisma.asset.updateMany({
       where: { id: assetId, householdId: asset.householdId, deletedAt: null },
@@ -160,38 +200,56 @@ export class PrismaAssetsRepository
     });
   }
 
-  async findAssetValuations(
+  async findAssetValueHistoryByAsset(
     householdId: string,
     assetId: string,
-  ): Promise<AssetValuation[]> {
-    const valuations = await this.prisma.assetValuation.findMany({
+  ): Promise<AssetValueHistory[]> {
+    const valuations = await this.prisma.assetValueHistory.findMany({
       where: { householdId, assetId, deletedAt: null },
       orderBy: { valuationDate: 'desc' },
     });
 
-    return valuations.map((valuation) => mapAssetValuation(valuation));
+    return valuations.map((valuation) => mapAssetValueHistory(valuation));
   }
 
-  async findAssetValuation(
+  async findAssetValueHistory(
     assetId: string,
     valuationDate: string,
-  ): Promise<AssetValuation | undefined> {
-    const valuation = await this.prisma.assetValuation.findFirst({
+  ): Promise<AssetValueHistory | undefined> {
+    // The by-date lookup targets ONLY the unlinked "value now" / dated cache row
+    // (`money_event_id IS NULL`). Without this filter, `findFirst` could return
+    // an event-linked point that happens to share the date (e.g. today's wallet
+    // credit), and the caller would then overwrite that event's point — nulling
+    // its `money_event_id` and clobbering its value. Matches the partial-unique
+    // index `asset_value_history_asset_date_cache_unique`.
+    const valuation = await this.prisma.assetValueHistory.findFirst({
       where: {
         assetId,
         valuationDate: this.toDate(valuationDate) ?? undefined,
+        moneyEventId: null,
         deletedAt: null,
       },
     });
 
-    return valuation ? mapAssetValuation(valuation) : undefined;
+    return valuation ? mapAssetValueHistory(valuation) : undefined;
   }
 
-  async insertAssetValuation(valuation: AssetValuation): Promise<void> {
-    const existing = await this.findAssetValuation(
-      valuation.assetId,
-      valuation.valuationDate,
-    );
+  async insertAssetValueHistory(valuation: AssetValueHistory): Promise<void> {
+    // A valuation record is identified by the money event that produced it (one
+    // record per asset that event touched). When a `moneyEventId` is set we
+    // upsert on `(moneyEventId, assetId)` — so two same-day revaluations of one
+    // asset each keep their own point, and editing an event updates exactly its
+    // record. Without an event id (legacy / AS_OF cache row) fall back to the
+    // one-row-per-`(assetId, valuationDate)` behaviour.
+    const existing = valuation.moneyEventId
+      ? await this.findAssetValueHistoryByMoneyEvent(
+          valuation.moneyEventId,
+          valuation.assetId,
+        )
+      : await this.findAssetValueHistory(
+          valuation.assetId,
+          valuation.valuationDate,
+        );
     const data = {
       householdId: valuation.householdId,
       assetId: valuation.assetId,
@@ -200,6 +258,7 @@ export class PrismaAssetsRepository
       valuationDate: this.toDate(valuation.valuationDate),
       valuationMethod: valuation.method,
       note: valuation.note,
+      moneyEventId: valuation.moneyEventId ?? null,
       // Lineage — provenance of the number (nullable until a source exists).
       source: valuation.source ?? null,
       confidenceLevel: valuation.confidenceLevel ?? null,
@@ -210,20 +269,40 @@ export class PrismaAssetsRepository
     } as any;
 
     if (existing) {
-      await this.prisma.assetValuation.update({
+      await this.prisma.assetValueHistory.update({
         where: { id: existing.id },
         data,
       });
       return;
     }
 
-    await this.prisma.assetValuation.create({
+    await this.prisma.assetValueHistory.create({
       data: { id: valuation.id, ...data },
     });
   }
 
-  async deleteAssetValuations(assetId: string): Promise<void> {
-    await this.prisma.assetValuation.updateMany({
+  async findAssetValueHistoryByMoneyEvent(
+    moneyEventId: string,
+    assetId: string,
+  ): Promise<AssetValueHistory | undefined> {
+    const valuation = await this.prisma.assetValueHistory.findFirst({
+      where: { moneyEventId, assetId, deletedAt: null },
+    });
+
+    return valuation ? mapAssetValueHistory(valuation) : undefined;
+  }
+
+  async deleteAssetValueHistoryByMoneyEvent(
+    moneyEventId: string,
+  ): Promise<void> {
+    await this.prisma.assetValueHistory.updateMany({
+      where: { moneyEventId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async deleteAssetValueHistory(assetId: string): Promise<void> {
+    await this.prisma.assetValueHistory.updateMany({
       where: { assetId, deletedAt: null },
       data: { deletedAt: new Date() },
     });

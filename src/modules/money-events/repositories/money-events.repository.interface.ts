@@ -19,6 +19,11 @@ export interface MoneyEventsRepository {
   updateMoneyEvent(eventId: string, event: MoneyEvent): Promise<void>;
   deleteMoneyEvent(eventId: string): Promise<void>;
   /**
+   * Bulk soft-delete every non-deleted money event linked to a debt in one
+   * statement. The caller still reverses each event's wallet effects separately.
+   */
+  deleteMoneyEventsByDebt(householdId: string, debtId: string): Promise<void>;
+  /**
    * Decrement a debt's `outstandingAmount` by `amount`, floored at 0, scoped to
    * the household. Used when a repayment event is recorded against a debt so the
    * remaining balance reflects the payment.

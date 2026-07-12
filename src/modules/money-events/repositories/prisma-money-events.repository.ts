@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapHousehold,
   mapMoneyEvent,
@@ -21,7 +21,7 @@ export class PrismaMoneyEventsRepository
   }
 
   createId(_prefix: string): string {
-    return randomUUID();
+    return uuidv7();
   }
 
   async assertHousehold(householdId: string): Promise<Household> {
@@ -143,6 +143,21 @@ export class PrismaMoneyEventsRepository
   async deleteMoneyEvent(eventId: string): Promise<void> {
     await this.prisma.moneyEvent.updateMany({
       where: { id: eventId },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  /**
+   * Soft-delete every non-deleted money event linked to a debt in one bulk
+   * statement (instead of N per-row updates). The caller still reverses each
+   * event's wallet effects separately — only the row deletes are bulked here.
+   */
+  async deleteMoneyEventsByDebt(
+    householdId: string,
+    debtId: string,
+  ): Promise<void> {
+    await this.prisma.moneyEvent.updateMany({
+      where: { householdId, debtId, deletedAt: null },
       data: { deletedAt: new Date() },
     });
   }

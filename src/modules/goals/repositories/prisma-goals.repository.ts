@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapFinancialGoal,
   mapHousehold,
@@ -21,7 +21,7 @@ export class PrismaGoalsRepository
   }
 
   createId(_prefix: string): string {
-    return randomUUID();
+    return uuidv7();
   }
 
   async assertHousehold(householdId: string): Promise<Household> {

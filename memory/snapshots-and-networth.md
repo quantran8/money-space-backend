@@ -18,33 +18,76 @@ A `Snapshot` is a periodic (weekly/monthly) net-worth snapshot of a household. I
 
 Denormalizes **each asset's value/type/liquidity/visibility at snapshot time** (unique per `[snapshotId, assetId]`). This is what the dashboard's `assetTrend` reads.
 
-## Creation flow (spec §26)
+## Auto-snapshot (system-written, per-day, granular)
 
-`SnapshotsService.createSnapshot(householdId, dto)` (`src/modules/snapshots/`):
-1. Reads OUTSIDE the transaction (keep it short): active assets with computed
-   `currentValue` via `AssetsService.getActiveAssetRecords` (SAME valuation
-   engine as the live dashboard → totals can't diverge); `getOutstandingDebtTotal`
-   (Σ active debts), `getUpcomingDueTotal` (Σ unpaid payments), open attention count.
-2. Builds a frozen line per asset, each referencing the asset's current
-   `AssetValuation` via `valuationId` (lineage back-pointer; null if none — the
-   line still freezes the value).
-3. Totals via `computeLiquidityTotals`.
-4. In ONE transaction: insert the `snapshots` row (`created_by` resolved from
-   household owner, no request user) → bulk `createMany` of `snapshot_asset_values`
-   → `snapshot.created` audit log.
+Snapshots are written **automatically by the system** whenever net worth changes
+— there is NO manual create endpoint (POST removed; only GET list/detail remain).
+`SnapshotsService` exposes three hooks, called AFTER the triggering write's
+transaction commits:
+- `onAssetChanged(householdId, assetId)` — asset create/update/sale: upsert that
+  asset's snapshot line (or remove it if it's no longer active, e.g. fully sold).
+- `onAssetRemoved(householdId, assetId)` — asset delete: drop its line.
+- `onHouseholdChanged(householdId)` — debt / non-asset money-event: totals only.
+
+**Per-day upsert**: each hook calls `ensureTodaySnapshot(householdId, today)` —
+"today" in the household timezone (default `Asia/Ho_Chi_Minh`; a `timezone`
+column can come later). One live snapshot per household per day, enforced by the
+partial unique index `snapshots (household_id, snapshot_date) WHERE deleted_at IS
+NULL` (migration `..._snapshot_one_per_day`). First change of the day CREATES the
+parent + **seeds a FULL child set** for every active asset; later changes are
+**granular** (upsert/remove just the affected asset's line).
+
+**Totals = SUM of children, always.** `recomputeSnapshotTotals` sets the parent
+`total_liquid/savings/long_term` from `SELECT liquidity, SUM(value) … GROUP BY
+liquidity` over the CURRENT child rows (+ household-level debt/upcoming/attention),
+so the parent can never diverge from its children regardless of granular edits.
+
+**Reads materialized `currentValue`**: the snapshot repository values assets via
+its OWN reader (`getActiveAssetLines` + the pure `computeCurrentValue` util), NOT
+`AssetsService` — so `SnapshotsModule` imports only `CommonModule` and the
+asset/money-event/debt modules import IT one-way (no dependency cycle). Safe
+because every write-flow already refreshed `assets.current_value` via
+`upsertCurrentValuation` in the just-committed transaction.
+
+**Round-trip budget (latency-sensitive)**: the hot path (a same-day, non-seed
+write) is tuned to ~5 sequential DB round-trips, which matters when the DB is
+far (e.g. Supabase Tokyo ≈ 540ms/round-trip from a distant dev machine):
+- The hooks do NOT wrap their steps in `runInTransaction` — every step is an
+  idempotent upsert/recompute, self-healing on the next write, so a tx would
+  only add an open+commit round-trip on the session pooler.
+- `ensureTodaySnapshot` has a non-transactional fast-path SELECT; it opens a tx
+  (to seed parent+children atomically) ONLY on the first write of the day.
+- `toLine` skips `loadPricing` (2 queries) for `manual`/`formula_calculated`
+  assets — only `market_priced` needs market prices / fx rates — and runs
+  pricing (when needed) concurrently with the valuation-lineage lookup.
+- `recomputeSnapshotTotals` is ONE `$executeRaw` UPDATE with correlated
+  subqueries (child SUM-per-liquidity + debt/upcoming/attention), not groupBy +
+  3 aggregates + update.
+
+**Safety rails**: hooks run OUTSIDE the primary transaction and are `try/catch`ed
+— an auto-snapshot failure logs and is swallowed, never breaking (already
+committed) the asset/debt/event write. `isInTransaction()` guard: when a service
+calls another's write inside its own tx (e.g. `createDebt` → `createMoneyEvent`),
+the inner hook skips and the outermost caller fires the snapshot once (avoids
+double-fire + reading uncommitted state). Money-event hooks refresh each linked
+wallet's line (wallets change value via `applyWalletEffects`); accrual fires one
+hook per deposit/wallet after its per-period transactions. Audit action
+`snapshot.auto_created`, actor NULL (system). No debounce v1 — per-day upsert is
+idempotent; repeated same-day writes just rewrite the same values.
 
 **Live vs. historical**: the dashboard header net worth is computed on the fly
 (`DashboardService`, using `getOutstandingDebtTotal` — the old hardcoded
-`totalDebt = 18_000_000` is gone), NOT read from the latest snapshot, so it
-reflects today's prices. The `assetTrend` reads the frozen `snapshots` rows.
-
-**Worker seam**: `POST /api/households/:id/snapshots` is the trigger (manual now).
-No cron in-app — an external worker calls it on a schedule; `createSnapshot` is
-free of HTTP/schedule concerns so a future batch endpoint can reuse it.
+`totalDebt = 18_000_000` is gone), NOT read from the latest snapshot. The
+`assetTrend` reads the frozen `snapshots` rows.
 
 ## Immutability invariant
 
-**Snapshots are immutable.** Editing an old valuation must NOT silently rewrite past snapshots — history is frozen at snapshot time. See [[domain-overview]]. Enforced by omission: the snapshots module exposes NO update/delete of snapshot rows or line items.
+**Snapshots before today are immutable.** Only TODAY's snapshot is mutated
+(granular upsert / recompute) until the day rolls over; days `< today` are never
+touched (`ensureTodaySnapshot` keys strictly on `snapshot_date = today`). Editing
+an old valuation therefore can't rewrite past snapshots. Enforced by omission:
+no update/delete endpoints on snapshot rows/lines; `snapshot_asset_values` are
+hard-deleted only within today's snapshot during granular removal.
 
 ## AttentionItem
 

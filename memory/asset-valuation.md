@@ -60,7 +60,7 @@ Single dispatch entry point. Returns VND, or `null`/`0` when a price is unknown.
 - `computeSavingEarly(term, N)` — trước hạn ở tháng N:
   `actualInterest = principal × nonTermRate × N/12`; end_of_term `total = principal + actualInterest`;
   monthly claws back `principal × rate × N/12 − actualInterest` → `total = principal − clawback`.
-- Display-only; never written to `asset_valuations`. Worked example (100tr, 6%, 12mo, non-term 0,2%):
+- Display-only; never written to `asset_value_history`. Worked example (100tr, 6%, 12mo, non-term 0,2%):
   đúng hạn 106tr; @6mo → end_of_term 100,1tr, monthly 97,1tr (clawback 2,9tr).
 
 **Auto-crediting interest** (idempotent, per-asset — the scalable shape, NO cron):
@@ -69,7 +69,7 @@ Single dispatch entry point. Returns VND, or `null`/`0` when a price is unknown.
   only once `asOf ≥ maturity`.
 - `MoneyEventsService.accrueSavingInterestForAsset(householdId, assetId)` — for each not-yet-credited
   period, inside one `runInTransaction`: create a `money_event` (`type income`, `category 'interest'`,
-  `fromAssetId = deposit`) + a dated `AssetValuation` via `AssetsService.writeSavingValuationAt`.
+  `fromAssetId = deposit`) + a dated `AssetValueHistory` point via `AssetsService.writeSavingValuationAt`.
   `wallet` dest → `inflow` crediting `receivingWalletId` (normal wallet effect); `principal` dest →
   `neutral` event + `AssetsService.capitalizeSavingInterest` bumps the deposit's principal (compounds,
   running valuation tracked). Idempotency key: `(deposit, 'interest', periodEnd)` — existing dates
@@ -96,46 +96,89 @@ Exactly one valuation source per asset — changing mode clears the others:
 - `market_priced` → clears manualValue + calculationTerm.
 - `formula_calculated` → clears manualValue + marketPosition.
 
-## Valuation persistence
+## Valuation persistence (`asset_value_history`)
 
-`upsertCurrentValuation` (backend) recomputes via `computeCurrentValue` and writes/updates an `AssetValuation` row dated `AS_OF`, mapping mode → method:
-`manual → manual`, `market_priced → market_price_api`, `formula_calculated → formula_calculated`. It also writes **lineage** (`source`: user/market_price_api/formula; `confidenceLevel`: high for manual, else medium; `marketPriceId`/`fxRateId`/`calculationTermId` stay null until a pricing-API writer + term-id-on-entity land) and — crucially — **writes the derived value back to `assets.current_value`** (`updateAssetCurrentValue`) so the cache is true for EVERY mode. Previously the plain create/update path only wrote `manualValue`, leaving `current_value` stale for market_priced/formula assets.
+The table is named **`asset_value_history`** (model `AssetValueHistory`, entity
+`asset-value-history.entity.ts`) — renamed from `asset_valuations` to reflect
+that it is a **time series** of an asset's value: one row per value-changing
+action, not a single current valuation. Each row keeps the value, how it was
+produced (`valuationMethod` / `source` / `confidenceLevel` / lineage ids) and —
+new — a **`money_event_id`** linking it to the money event whose effect produced
+it (`AssetValueHistory[] @relation("MoneyEventValueHistory")` on `MoneyEvent`).
+Fields `valuationMode` (on the asset), `valuationDate`, `valuationMethod` keep
+their names — the *concept* of a valuation point is unchanged.
+
+`upsertCurrentValuation(asset, context?)` (backend) recomputes via
+`computeCurrentValue`, then:
+1. **Always** keeps the `AS_OF` "value now" row current (unlinked) — the point
+   the dashboard reads — mapping mode → method (`manual → manual`,
+   `market_priced → market_price_api`, `formula_calculated → formula_calculated`)
+   and writing lineage (`source` user/market_price_api/formula; `confidenceLevel`
+   high for manual else medium; `marketPriceId`/`fxRateId`/`calculationTermId`
+   null until wired).
+2. **Always** writes the derived value back to `assets.current_value`
+   (`updateAssetCurrentValue`) so the cache is true for EVERY mode.
+3. **When given a `ValuationContext`** (`{ moneyEventId, valuationDate }` — i.e.
+   the change came from a money event) also appends/updates a **history point
+   linked to that event**, keyed on `(moneyEventId, assetId)`, dated at the
+   event's date. Two same-day events on one asset keep two distinct points;
+   re-running the same event updates its own point in place.
+
+**Actions that change an asset's value record a history point; most also record
+a money event:**
+- Money-event effects (income/expense/transfer credit/debit, `asset_sale`): the
+  wallet/sale effect carries `context = { moneyEventId: event.id, valuationDate:
+  event.isoDate }` (only on `apply` — see below).
+- **Asset creation** (`createAsset`): logs **NO money event** — creating an asset
+  moves no money through the ledger, it just establishes the starting value.
+  `writeInitialValuation` writes ONE **unlinked** history point (dated AS_OF, no
+  `moneyEventId`) plus the `current_value` cache. (`valuationLineage(asset)`
+  derives method/source/confidence from the mode, shared with the linked-write
+  path.)
+- **Direct re-pricing on update** (user edits `manualValue`/`unitPrice`/
+  `quantity`/term via *update* asset): `AssetsService.logRevaluation` writes a
+  **neutral `asset_update` money event** (via
+  `assetsRepository.insertRevaluationEvent`, `to_asset_id = asset`,
+  `amount = new − old`) that moves no wallet and is excluded from
+  income/expense, then the appended point links to it. Only fires when the value
+  actually moved. AssetsService writes `money_events` directly (its repo) to
+  avoid the Assets↔MoneyEvents module cycle. (Create used to do this too — it no
+  longer does.)
+- Saving-deposit interest: unchanged (`writeSavingValuationAt`, one dated point
+  per credited period).
+
+**Edit / delete of a money event keeps history consistent:**
+- `reverse` (undo of old effect) carries **no** context — it is balance-only and
+  writes no point (otherwise moving an event to a different wallet would strand a
+  stale reversed point).
+- **Update**: soft-delete this event's linked points up front, then reverse +
+  re-apply — `apply` re-creates fresh points for the *new* asset set, so an
+  asset-set change leaves no orphans.
+- **Delete**: reverse balances, then
+  `assetsService.removeValuationsForEvent(eventId)` soft-deletes the event's
+  linked points so they disappear from history.
 
 ## Value history over time (asset detail page)
 
-There is **no historical valuation series** — `upsertCurrentValuation` only ever
-writes/updates a single `AssetValuation` row dated `AS_OF`, so `asset_valuations`
-holds at most one point per asset. The asset detail page's "value over time"
-chart (biến động theo thời gian) therefore **reconstructs** the series from the
-money events that moved value in/out of the asset.
+`AssetsService.getAssetValueHistory(householdId, assetId)` reads the persisted
+series straight from `asset_value_history` (`findAssetValueHistoryByAsset`),
+collapsing duplicate dates (keep last), oldest → newest.
 
-`AssetsService.getAssetValueHistory(householdId, assetId)` (backend) takes the
-asset's current value and unwinds its money events (`findMoneyEventsByAsset` —
-those where `fromAssetId` **or** `toAssetId` = the asset; no direct `assetId`
-column on money events, linkage is from/to only), oldest → newest.
-**How a value is recovered depends on the valuation mode:**
+**Fallback** for an asset created before the series existed (no persisted
+points): reconstruct from money events (`findMoneyEventsByAsset` — those where
+`fromAssetId` **or** `toAssetId` = the asset), as before:
+- **market_priced** (`buildMarketValueHistory`) — price the **position**:
+  `quantity × current unit price`; a sale = `+soldQuantity` going back; quantity
+  0 → single flat point.
+- **manual / formula** (`buildCashValueHistory`) — unwind each event's signed
+  cash contribution (in `toAsset` +, out `fromAsset` −), floored at 0.
 
-- **market_priced** (`buildMarketValueHistory`) — the value is
-  `quantity × unit price` from `asset_market_positions`, so we price the
-  **position**, not the cash the events moved. Rebuild the quantity held at each
-  point (a sale = `+soldQuantity` going back; purchases set quantity directly on
-  the asset, not via an event) and value every point at the current unit price
-  (`currentValue / currentQuantity`). So a sale drops the line by
-  `quantitySold × today's price`, **not** by the (possibly stale) cash the sale
-  fetched. Quantity 0 → single flat current-value point.
-- **manual / formula** (`buildCashValueHistory`) — no position, so unwind each
-  event's signed cash contribution (in via `toAsset` = +, out via `fromAsset`
-  = −), floored at 0.
-
-Returns `{ currentValue, items: [{ date, value }], total }`, oldest → newest;
-the last item is the current value. Duplicate dates collapsed (keep last).
-
+Returns `{ currentValue, items: [{ date, value }], total }`, oldest → newest.
 Endpoint: `GET /api/households/:householdId/assets/:assetId/value-history`.
-When an asset has no value-moving events, the series is a single current-value
-point (the frontend chart shows an empty state below 2 points).
-
-This is an MVP approximation; when a real snapshot/valuation history lands, swap
-the derivation for a query over `asset_valuations` / `snapshot_asset_values`.
+Repo methods: `findAssetValueHistory` (by date, the AS_OF point),
+`findAssetValueHistoryByAsset` (list), `findAssetValueHistoryByMoneyEvent`,
+`insertAssetValueHistory`, `deleteAssetValueHistory`,
+`deleteAssetValueHistoryByMoneyEvent`.
 
 ## Where it lives in code
 

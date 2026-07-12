@@ -311,8 +311,8 @@ model Profile {
   snapshotsCreated         Snapshot[]        @relation("SnapshotCreatedBy")
   assetsCreated            Asset[]           @relation("AssetCreatedBy")
   assetsUpdated            Asset[]           @relation("AssetUpdatedBy")
-  assetValuationsCreated   AssetValuation[]  @relation("AssetValuationCreatedBy")
-  assetValuationsUpdated   AssetValuation[]  @relation("AssetValuationUpdatedBy")
+  assetValueHistoryCreated AssetValueHistory[] @relation("AssetValueHistoryCreatedBy")
+  assetValueHistoryUpdated AssetValueHistory[] @relation("AssetValueHistoryUpdatedBy")
   upcomingPaymentsCreated  UpcomingPayment[] @relation("UpcomingPaymentCreatedBy")
   upcomingPaymentsUpdated  UpcomingPayment[] @relation("UpcomingPaymentUpdatedBy")
   upcomingPaymentsPaidBy   UpcomingPayment[] @relation("UpcomingPaymentPaidBy")
@@ -346,7 +346,7 @@ model Household {
   assets                Asset[]
   assetMarketPositions  AssetMarketPosition[]
   assetCalculationTerms AssetCalculationTerm[]
-  assetValuations       AssetValuation[]
+  valueHistory          AssetValueHistory[]
   snapshotAssetValues   SnapshotAssetValue[]
   debts                 Debt[]
   debtInterestPeriods   DebtInterestPeriod[]
@@ -470,7 +470,7 @@ model Asset {
   updatedBy            Profile?               @relation("AssetUpdatedBy", fields: [updatedById], references: [id])
   marketPositions      AssetMarketPosition[]
   calculationTerms     AssetCalculationTerm[]
-  valuations           AssetValuation[]
+  valueHistory         AssetValueHistory[]
   snapshotValues       SnapshotAssetValue[]
   fromMoneyEvents      MoneyEvent[]           @relation("MoneyEventFromAsset")
   toMoneyEvents        MoneyEvent[]           @relation("MoneyEventToAsset")
@@ -519,7 +519,7 @@ model MarketPrice {
   source            String
   sourcePayloadHash String?          @map("source_payload_hash")
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  assetValuations   AssetValuation[]
+  valueHistory      AssetValueHistory[]
 
   @@unique([assetClass, symbol, market, quoteCurrency, source, priceTime], map: "market_prices_dedup_unique")
   @@index([assetClass, symbol, market, quoteCurrency, priceTime(sort: Desc)])
@@ -534,7 +534,7 @@ model FxRate {
   rateTime        DateTime         @map("rate_time") @db.Timestamptz(6)
   source          String
   createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  assetValuations AssetValuation[]
+  valueHistory    AssetValueHistory[]
 
   @@unique([baseCurrency, quoteCurrency, source, rateTime], map: "fx_rates_dedup_unique")
   @@index([baseCurrency, quoteCurrency, rateTime(sort: Desc)])
@@ -566,14 +566,18 @@ model AssetCalculationTerm {
   deletedAt            DateTime?              @map("deleted_at") @db.Timestamptz(6)
   household            Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
   asset                Asset                  @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  assetValuations      AssetValuation[]
+  valueHistory         AssetValueHistory[]
 
   @@index([householdId, assetId])
   @@index([calculationType, status])
   @@map("asset_calculation_terms")
 }
 
-model AssetValuation {
+// A time series of an asset's value: one row per value-changing action (money
+// event effect or a direct revaluation), each carrying the valuation method,
+// confidence and lineage. Formerly `asset_valuations` — renamed to reflect that
+// it is the asset's value HISTORY, not a single current valuation.
+model AssetValueHistory {
   id                  String                @id @default(uuid(7)) @db.Uuid
   householdId         String                @map("household_id") @db.Uuid
   assetId             String                @map("asset_id") @db.Uuid
@@ -586,6 +590,12 @@ model AssetValuation {
   marketPriceId       String?               @map("market_price_id") @db.Uuid
   fxRateId            String?               @map("fx_rate_id") @db.Uuid
   calculationTermId   String?               @map("calculation_term_id") @db.Uuid
+  // The money event whose effect produced this valuation point — the linkage
+  // that lets us update/soft-delete exactly the record an event created when
+  // that event is edited/deleted. NULL for legacy/AS_OF rows written before an
+  // event was attached. A single event can produce one record per asset it
+  // touches (a transfer values both wallets), so this is many-to-one.
+  moneyEventId        String?               @map("money_event_id") @db.Uuid
   note                String?
   createdById         String?               @map("created_by") @db.Uuid
   createdAt           DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -597,13 +607,24 @@ model AssetValuation {
   marketPrice         MarketPrice?          @relation(fields: [marketPriceId], references: [id])
   fxRate              FxRate?               @relation(fields: [fxRateId], references: [id])
   calculationTerm     AssetCalculationTerm? @relation(fields: [calculationTermId], references: [id])
-  createdBy           Profile?              @relation("AssetValuationCreatedBy", fields: [createdById], references: [id])
-  updatedBy           Profile?              @relation("AssetValuationUpdatedBy", fields: [updatedById], references: [id])
+  moneyEvent          MoneyEvent?           @relation("MoneyEventValueHistory", fields: [moneyEventId], references: [id], onDelete: SetNull)
+  createdBy           Profile?              @relation("AssetValueHistoryCreatedBy", fields: [createdById], references: [id])
+  updatedBy           Profile?              @relation("AssetValueHistoryUpdatedBy", fields: [updatedById], references: [id])
   snapshotAssetValues SnapshotAssetValue[]
 
   @@index([assetId, valuationDate(sort: Desc)])
   @@index([householdId, assetId, valuationDate(sort: Desc)])
-  @@map("asset_valuations")
+  @@index([moneyEventId])
+  // Two PARTIAL unique indexes enforce the "one point per source" rule and live
+  // in migration SQL (Prisma can't express partial `WHERE` uniques):
+  //   asset_value_history_asset_money_event_unique  (asset_id, money_event_id)
+  //     WHERE money_event_id IS NOT NULL AND deleted_at IS NULL  — one point per
+  //     event per asset (the event-linked upsert key).
+  //   asset_value_history_asset_date_cache_unique   (asset_id, valuation_date)
+  //     WHERE money_event_id IS NULL AND deleted_at IS NULL      — one unlinked
+  //     "value now" / dated cache row per asset per date.
+  // See migration 20260712130000_asset_value_history_multipoint_unique.
+  @@map("asset_value_history")
 }
 
 model SnapshotAssetValue {
@@ -624,7 +645,7 @@ model SnapshotAssetValue {
   household       Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
   snapshot        Snapshot              @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
   asset           Asset                 @relation(fields: [assetId], references: [id])
-  valuation       AssetValuation?       @relation(fields: [valuationId], references: [id])
+  valuation       AssetValueHistory?    @relation(fields: [valuationId], references: [id])
 
   @@unique([snapshotId, assetId], map: "snapshot_asset_values_unique")
   @@index([householdId, snapshotId])
@@ -807,6 +828,7 @@ model MoneyEvent {
   snapshot          Snapshot?        @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
   createdBy         Profile          @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
   updatedBy         Profile?         @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
+  valueHistory      AssetValueHistory[] @relation("MoneyEventValueHistory")
 
   @@index([householdId, eventDate(sort: Desc)])
   @@index([fromAssetId])

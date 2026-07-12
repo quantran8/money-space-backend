@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import { uuidv7 } from '../../../common/utils/uuid';
 import { mapHousehold } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
@@ -54,7 +55,7 @@ export class PrismaHouseholdsRepository
   }
 
   async createHousehold(input: CreateHouseholdInput): Promise<Household> {
-    const householdId = randomUUID();
+    const householdId = uuidv7();
     const now = new Date();
 
     const household = await this.runInTransaction(async (tx) => {
@@ -83,7 +84,7 @@ export class PrismaHouseholdsRepository
       // Creator becomes owner + admin.
       await tx.householdMember.create({
         data: {
-          id: randomUUID(),
+          id: uuidv7(),
           householdId,
           userId: input.ownerId,
           role: 'owner',
@@ -95,7 +96,7 @@ export class PrismaHouseholdsRepository
       if (input.inviteEmail) {
         await tx.householdInvite.create({
           data: {
-            id: randomUUID(),
+            id: uuidv7(),
             householdId,
             invitedById: input.ownerId,
             inviteeEmail: input.inviteEmail,
@@ -110,7 +111,7 @@ export class PrismaHouseholdsRepository
 
       await tx.auditLog.create({
         data: {
-          id: randomUUID(),
+          id: uuidv7(),
           householdId,
           actorId: input.ownerId,
           action: 'household.created',

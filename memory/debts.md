@@ -78,10 +78,10 @@ Outstanding total, active count, overdue count, monthly-planned repayment.
 
 ## Delete
 
-Deleting a debt removes **everything the debt created**, in one transaction. Soft-delete (`deletedAt`) the debt row + its interest periods, then:
+Deleting a debt removes **everything the debt created**, in one transaction (raised `timeout: 30000` — the money-event reversal below fans out with the number of linked events, so it must not abort under the 5s default and strand the connection). Soft-delete (`deletedAt`) the debt row + its interest periods, then:
 
 - **Soft-delete the generated upcoming payments** (`deleteUpcomingPaymentsByDebt` — rows where `debtId` matches and `deletedAt IS NULL`).
-- **Soft-delete the linked money events and reverse their wallet moves** — `MoneyEventsService.deleteMoneyEventsByDebt(householdId, debtId)` soft-deletes every event linked to the debt (the borrow inflow and any repayments) and reverses each one's wallet effect (so the borrow credit into the received-to wallet is undone). This replaces the earlier repo `deleteMoneyEventsByDebt` + a manual `AssetsService.debitManualAsset` — the wallet reversal now lives in the events layer. Net worth returns to where it was before the debt existed; a debit floors the wallet at 0.
+- **Soft-delete the linked money events and reverse their wallet moves** — `MoneyEventsService.deleteMoneyEventsByDebt(householdId, debtId)` soft-deletes every event linked to the debt (the borrow inflow and any repayments) and reverses each one's wallet effect (so the borrow credit into the received-to wallet is undone). It **bulk soft-deletes all the event rows in one `updateMany`** (repo `deleteMoneyEventsByDebt` — `where: { householdId, debtId, deletedAt: null }`), then loops the fetched events to reverse each one's wallet effect (that part can't be bulked — every event moves different wallets). This replaces the earlier per-row delete + a manual `AssetsService.debitManualAsset` — the wallet reversal now lives in the events layer. Net worth returns to where it was before the debt existed; a debit floors the wallet at 0.
 
 (The delete repo methods replaced the earlier `unlinkDebtFrom*` methods, which only set `debtId = null` — related records are now deleted, not just unlinked.)
 

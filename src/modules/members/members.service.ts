@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { uuidv7 } from '../../common/utils/uuid';
 import { HouseholdMember } from './entities/member.entity';
 import {
   defaultPermissionForRole,
@@ -44,7 +44,7 @@ export class MembersService {
     // the household a second time here.
     const member: HouseholdMember = {
       id: this.membersRepository.createId('member'),
-      profileId: payload.profileId ?? randomUUID(),
+      profileId: payload.profileId ?? uuidv7(),
       householdId,
       name: payload.name.trim(),
       email: payload.email.trim(),

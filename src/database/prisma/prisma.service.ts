@@ -107,6 +107,18 @@ export class PrismaService
   }
 
   /**
+   * True when the caller is currently inside a `runInTransaction` block. Used by
+   * the auto-snapshot hooks: a hook must only fire AFTER the outermost
+   * transaction has committed, so when a service calls another service's write
+   * inside its own transaction (e.g. `createDebt` → `createMoneyEvent`), the
+   * inner hook sees `isInTransaction() === true` and skips — the outermost
+   * caller runs the snapshot once after its transaction commits.
+   */
+  isInTransaction(): boolean {
+    return this.transactionContext.getStore() !== undefined;
+  }
+
+  /**
    * Run `work` inside a single database transaction. Every repository call made
    * (directly or transitively) within `work` runs against the same transaction
    * client, so the whole unit either commits together or rolls back together.

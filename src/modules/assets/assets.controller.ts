@@ -40,11 +40,11 @@ export class AssetsController {
   }
 
   @Get(':assetId/valuations')
-  getAssetValuations(
+  getAssetValueHistoryPoints(
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
   ) {
-    return this.assetsService.getAssetValuations(householdId, assetId);
+    return this.assetsService.getAssetValueHistoryPoints(householdId, assetId);
   }
 
   @Get(':assetId/value-history')

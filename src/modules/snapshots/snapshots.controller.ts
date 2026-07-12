@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
-import type { CreateSnapshotDto } from './dto/create-snapshot.dto';
+import { Controller, Get, Param } from '@nestjs/common';
 import { SnapshotsService } from './snapshots.service';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
+// Snapshots are written automatically by the system (see SnapshotsService auto
+// hooks) — there is no manual create endpoint. Read-only here.
 @Controller('api/households/:householdId/snapshots')
 export class SnapshotsController {
   constructor(private readonly snapshotsService: SnapshotsService) {}
@@ -18,15 +18,5 @@ export class SnapshotsController {
     @Param('snapshotId') snapshotId: string,
   ) {
     return this.snapshotsService.getSnapshot(householdId, snapshotId);
-  }
-
-  // Manual trigger now; a scheduled worker can call the same endpoint later.
-  @RequireCapability('edit')
-  @Post()
-  create(
-    @Param('householdId') householdId: string,
-    @Body() dto: CreateSnapshotDto,
-  ) {
-    return this.snapshotsService.createSnapshot(householdId, dto);
   }
 }
