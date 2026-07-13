@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapHousehold,
@@ -43,6 +44,99 @@ export class PrismaMoneyEventsRepository
     });
 
     return events.map((event) => mapMoneyEvent(event));
+  }
+
+  /**
+   * `YYYY-MM` → the half-open date range [firstOfMonth, firstOfNextMonth). Since
+   * `event_date` is a pure DATE column, this range is exactly equivalent to the
+   * old `isoDate.startsWith('YYYY-MM')` in-memory filter, but indexable.
+   */
+  private monthRange(month: string): { gte: Date; lt: Date } {
+    const gte = new Date(`${month}-01T00:00:00.000Z`);
+    const lt = new Date(gte);
+    lt.setUTCMonth(lt.getUTCMonth() + 1);
+    return { gte, lt };
+  }
+
+  private buildEventFilter(
+    householdId: string,
+    filter: { month?: string; type?: string; category?: string },
+  ): Prisma.MoneyEventWhereInput {
+    const where: Prisma.MoneyEventWhereInput = {
+      householdId,
+      deletedAt: null,
+    };
+    if (filter.month) {
+      where.eventDate = this.monthRange(filter.month);
+    }
+    if (filter.type) {
+      where.eventType =
+        filter.type as Prisma.EnumMoneyEventTypeFilter['equals'];
+    }
+    if (filter.category) {
+      where.category = filter.category;
+    }
+    return where;
+  }
+
+  async findMoneyEventsPage(
+    householdId: string,
+    filter: {
+      month?: string;
+      type?: string;
+      category?: string;
+      limit?: number;
+    },
+  ): Promise<{ items: MoneyEvent[]; total: number }> {
+    const where = this.buildEventFilter(householdId, filter);
+    const take = filter.limit && filter.limit > 0 ? filter.limit : undefined;
+    const [rows, total] = await Promise.all([
+      this.prisma.moneyEvent.findMany({
+        where,
+        orderBy: { eventDate: 'desc' },
+        ...(take ? { take } : {}),
+      }),
+      this.prisma.moneyEvent.count({ where }),
+    ]);
+    return { items: rows.map((event) => mapMoneyEvent(event)), total };
+  }
+
+  async summarizeMonth(
+    householdId: string,
+    month: string,
+  ): Promise<{
+    recordedCount: number;
+    totalIncome: number;
+    totalOutcome: number;
+  }> {
+    const eventDate = this.monthRange(month);
+    const [grouped, recordedCount] = await Promise.all([
+      this.prisma.moneyEvent.groupBy({
+        by: ['direction'],
+        where: {
+          householdId,
+          deletedAt: null,
+          eventDate,
+          direction: { in: ['inflow', 'outflow'] },
+        },
+        _sum: { amount: true },
+      }),
+      this.prisma.moneyEvent.count({
+        where: { householdId, deletedAt: null, eventDate },
+      }),
+    ]);
+
+    let totalIncome = 0;
+    let totalOutcome = 0;
+    for (const row of grouped) {
+      const sum = Math.abs(Number(row._sum.amount ?? 0));
+      if (row.direction === 'inflow') {
+        totalIncome = sum;
+      } else if (row.direction === 'outflow') {
+        totalOutcome = sum;
+      }
+    }
+    return { recordedCount, totalIncome, totalOutcome };
   }
 
   async findMoneyEventsByDebt(

@@ -478,6 +478,14 @@ model Asset {
   receivedDebts        Debt[]                 @relation("DebtReceivedToAsset")
 
   @@index([holderMemberId])
+  // Backs the canonical `WHERE household_id = ? AND deleted_at IS NULL
+  // ORDER BY created_at DESC` list query (findAssetsByHousehold — the hottest
+  // read path, powering the dashboard + every assets read). Without a
+  // household_id-leading index Postgres seq-scans the whole assets table on
+  // each call. Declared here (not only in migration SQL) so a future Prisma
+  // re-init squash can't silently drop it again — which is exactly how the
+  // original partial `assets_household_live_idx` was lost.
+  @@index([householdId, createdAt(sort: Desc)])
   @@map("assets")
 }
 

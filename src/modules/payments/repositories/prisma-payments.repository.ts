@@ -47,6 +47,53 @@ export class PrismaPaymentsRepository
     return payments.map((payment) => mapUpcomingPayment(payment));
   }
 
+  /**
+   * Translate a UI status (`normal` | `important` | `pending`) into the DB
+   * predicate — the inverse of `toUiPaymentStatus`, which derives the UI status
+   * from the `status` enum + `attentionLevel`:
+   *   - `pending`   ← status = pending_confirmation
+   *   - `important` ← status ≠ pending_confirmation AND attentionLevel = important
+   *   - `normal`    ← status ≠ pending_confirmation AND attentionLevel ≠ important
+   * Keeping this in one place means the pushed-down filter returns exactly what
+   * the old in-memory `payment.status === query.status` filter did.
+   */
+  private uiStatusWhere(status?: string): Record<string, unknown> {
+    if (status === 'pending') {
+      return { status: 'pending_confirmation' };
+    }
+    if (status === 'important') {
+      return {
+        status: { not: 'pending_confirmation' },
+        attentionLevel: 'important',
+      };
+    }
+    if (status === 'normal') {
+      return {
+        status: { not: 'pending_confirmation' },
+        attentionLevel: { not: 'important' },
+      };
+    }
+    return {};
+  }
+
+  async findUpcomingPaymentsPage(
+    householdId: string,
+    filter: { status?: string; limit?: number },
+  ): Promise<UpcomingPayment[]> {
+    const take = filter.limit && filter.limit > 0 ? filter.limit : undefined;
+    const payments = await this.prisma.upcomingPayment.findMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        ...this.uiStatusWhere(filter.status),
+      },
+      orderBy: { dueDate: 'asc' },
+      ...(take ? { take } : {}),
+    });
+
+    return payments.map((payment) => mapUpcomingPayment(payment));
+  }
+
   async findUpcomingPaymentById(
     householdId: string,
     paymentId: string,

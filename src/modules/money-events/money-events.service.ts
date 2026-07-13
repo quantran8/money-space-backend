@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../../database/prisma/prisma.service';
 import { AS_OF } from '../../common/seed/money-space.seed';
 import { AssetsService } from '../assets/assets.service';
+import type { Asset } from '../assets/entities/asset.entity';
 import { MoneyEvent } from './entities/money-event.entity';
 import {
   computeSavingInterestPeriods,
@@ -52,30 +53,34 @@ export class MoneyEventsService {
 
   async listMoneyEvents(householdId: string, query?: ListMoneyEventsQuery) {
     await this.moneyEventsRepository.assertHousehold(householdId);
-    let items =
-      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
 
-    if (query?.month) {
-      const month = query.month;
-      items = items.filter((event) => event.isoDate.startsWith(month));
-    }
-    if (query?.type) {
-      items = items.filter((event) => event.type === query.type);
-    }
-    if (query?.category) {
-      items = items.filter((event) => event.category === query.category);
-    }
+    // Filters + limit are pushed into SQL (index-backed) instead of fetching the
+    // whole ledger and filtering in memory. `total` preserves the previous
+    // `items.length` semantics — the number of returned items (capped by the
+    // limit when one is set).
+    let limit: number | undefined;
     if (query?.limit) {
-      const limit = Number(query.limit);
-      if (Number.isFinite(limit) && limit > 0) {
-        items = items.slice(0, limit);
+      const parsed = Number(query.limit);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        limit = parsed;
       }
     }
 
+    const { items } = await this.moneyEventsRepository.findMoneyEventsPage(
+      householdId,
+      {
+        month: query?.month,
+        type: query?.type,
+        category: query?.category,
+        limit,
+      },
+    );
+
+    const cards = items.map((event) => toMoneyEventCard(event));
     return {
       householdId,
-      items: items.map((event) => toMoneyEventCard(event)),
-      total: items.length,
+      items: cards,
+      total: cards.length,
     };
   }
 
@@ -100,26 +105,19 @@ export class MoneyEventsService {
   async getMoneyEventsSummary(householdId: string, month?: string) {
     await this.moneyEventsRepository.assertHousehold(householdId);
     const targetMonth = month ?? AS_OF.slice(0, 7);
-    const items =
-      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
-    const monthly = items.filter((event) =>
-      event.isoDate.startsWith(targetMonth),
-    );
 
-    let totalIncome = 0;
-    let totalOutcome = 0;
-    for (const event of monthly) {
-      if (event.direction === 'inflow') {
-        totalIncome += Math.abs(event.amount);
-      } else if (event.direction === 'outflow') {
-        totalOutcome += Math.abs(event.amount);
-      }
-    }
+    // Aggregated in one grouped query + one count, instead of fetching the whole
+    // ledger and summing in memory. `neutral` events (asset revaluations,
+    // transfers, goal contributions, sale bookkeeping) count toward
+    // `recordedCount` but move no household money, so they are excluded from the
+    // thu/chi sums — the same rule the old in-memory loop applied.
+    const { recordedCount, totalIncome, totalOutcome } =
+      await this.moneyEventsRepository.summarizeMonth(householdId, targetMonth);
 
     return {
       householdId,
       month: targetMonth,
-      recordedCount: monthly.length,
+      recordedCount,
       totalIncome,
       totalOutcome,
       netChange: totalIncome - totalOutcome,
@@ -286,11 +284,22 @@ export class MoneyEventsService {
         asset.calculationTerm,
     );
 
+    // Load the household's events ONCE and reuse the list across every deposit
+    // for the idempotency check, instead of re-fetching the whole table per
+    // deposit. `listAssets` above already loaded each deposit entity (with its
+    // calculationTerm), so we pass those through too — no per-deposit re-read.
+    // Safe because one deposit's accrual only ever writes interest events keyed
+    // to its own assetId, so a deposit never needs to see events another deposit
+    // creates in the same run.
+    const existingEvents =
+      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
+
     let credited = 0;
     for (const deposit of deposits) {
-      credited += await this.accrueSavingInterestForAsset(
+      credited += await this.accrueSavingInterestForDeposit(
         householdId,
-        deposit.id,
+        deposit,
+        existingEvents,
       );
     }
     return { householdId, deposits: deposits.length, credited };
@@ -316,7 +325,27 @@ export class MoneyEventsService {
     householdId: string,
     assetId: string,
   ): Promise<number> {
+    // Single-asset entry point (worker route). Load the asset + the household
+    // event list once, then delegate to the shared core. The household-wide
+    // accrual path loads both in bulk and calls the core directly, avoiding a
+    // per-deposit re-read.
     const asset = await this.assetsService.getAssetEntity(householdId, assetId);
+    const existing =
+      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
+    return this.accrueSavingInterestForDeposit(householdId, asset, existing);
+  }
+
+  /**
+   * Core accrual for one saving deposit. Takes the already-loaded `asset` entity
+   * and the household's `existingEvents` list (for the idempotency check) so a
+   * bulk caller can accrue every deposit without re-fetching either per deposit.
+   */
+  private async accrueSavingInterestForDeposit(
+    householdId: string,
+    asset: Asset,
+    existingEvents: MoneyEvent[],
+  ): Promise<number> {
+    const assetId = asset.id;
     const term = asset.calculationTerm;
     if (asset.type !== 'saving_deposit' || !term) {
       return 0;
@@ -328,10 +357,8 @@ export class MoneyEventsService {
     }
 
     // Idempotency: dates already credited for this deposit.
-    const existing =
-      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
     const creditedDates = new Set(
-      existing
+      existingEvents
         .filter(
           (event) =>
             event.category === 'interest' && event.fromAssetId === assetId,

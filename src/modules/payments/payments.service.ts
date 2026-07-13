@@ -24,25 +24,28 @@ export class PaymentsService {
     query?: ListUpcomingPaymentsQuery,
   ) {
     await this.paymentsRepository.assertHousehold(householdId);
-    let items =
-      await this.paymentsRepository.findUpcomingPaymentsByHousehold(
-        householdId,
-      );
 
-    if (query?.status) {
-      items = items.filter((payment) => payment.status === query.status);
-    }
+    // Status + limit are pushed into SQL (index-backed on householdId, dueDate)
+    // instead of fetching every payment and filtering in memory. `total`
+    // preserves the previous `items.length` semantics (count of returned rows).
+    let limit: number | undefined;
     if (query?.limit) {
-      const limit = Number(query.limit);
-      if (Number.isFinite(limit) && limit > 0) {
-        items = items.slice(0, limit);
+      const parsed = Number(query.limit);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        limit = parsed;
       }
     }
 
+    const items = await this.paymentsRepository.findUpcomingPaymentsPage(
+      householdId,
+      { status: query?.status, limit },
+    );
+
+    const cards = items.map((payment) => toPaymentCard(payment));
     return {
       householdId,
-      items: items.map((payment) => toPaymentCard(payment)),
-      total: items.length,
+      items: cards,
+      total: cards.length,
     };
   }
 

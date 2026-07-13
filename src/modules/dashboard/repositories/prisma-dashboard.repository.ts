@@ -102,22 +102,34 @@ export class PrismaDashboardRepository
     return goals.map((goal) => mapFinancialGoal(goal));
   }
 
+  // The dashboard's "recent events" panel shows only a handful of the newest
+  // events, so cap the read at a small top-N (index-backed on
+  // householdId, eventDate DESC) instead of materializing the whole ledger.
+  private static readonly RECENT_EVENTS_LIMIT = 10;
+  // The net-worth trend chart plots the most recent window of snapshots; one
+  // snapshot per day would otherwise grow the payload without bound.
+  private static readonly ASSET_TREND_LIMIT = 90;
+
   async findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]> {
     const events = await this.prisma.moneyEvent.findMany({
       where: { householdId, deletedAt: null },
       orderBy: { eventDate: 'desc' },
+      take: PrismaDashboardRepository.RECENT_EVENTS_LIMIT,
     });
 
     return events.map((event) => mapMoneyEvent(event));
   }
 
   async getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]> {
+    // Fetch the newest N (index-backed on householdId, snapshotDate DESC), then
+    // reverse to ascending — the trend chart expects oldest → newest.
     const snapshots = await this.prisma.snapshot.findMany({
       where: { householdId, deletedAt: null },
-      orderBy: { snapshotDate: 'asc' },
+      orderBy: { snapshotDate: 'desc' },
+      take: PrismaDashboardRepository.ASSET_TREND_LIMIT,
     });
 
-    return snapshots.map((snapshot) => mapSnapshot(snapshot));
+    return snapshots.reverse().map((snapshot) => mapSnapshot(snapshot));
   }
 
   async getOutstandingDebtTotal(householdId: string): Promise<number> {

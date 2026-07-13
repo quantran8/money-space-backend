@@ -94,6 +94,50 @@ export class PrismaSnapshotsRepository
     };
   }
 
+  private lineageFromRow(v: any): {
+    valuationId?: string;
+    valuationMethod?: string;
+    valuationDate?: string;
+  } {
+    if (!v) return {};
+    return {
+      valuationId: v.id,
+      valuationMethod: v.valuationMethod as string | undefined,
+      valuationDate: v.valuationDate
+        ? new Date(v.valuationDate).toISOString().slice(0, 10)
+        : undefined,
+    };
+  }
+
+  /**
+   * Latest non-deleted valuation lineage for every asset in the household, in a
+   * SINGLE query. Replaces a per-asset `valuationLineage` lookup that fired one
+   * `findFirst` per asset (a 1+N inside `getActiveAssetLines`, which runs in
+   * `ensureTodaySnapshot`'s interactive transaction). `distinct: ['assetId']`
+   * with `orderBy assetId, valuationDate desc` returns the newest row per asset;
+   * it is served by `@@index([householdId, assetId, valuationDate(sort: Desc)])`.
+   */
+  private async latestLineageByAsset(
+    householdId: string,
+  ): Promise<Map<string, ReturnType<typeof this.lineageFromRow>>> {
+    const rows = await this.prisma.assetValueHistory.findMany({
+      where: { householdId, deletedAt: null },
+      orderBy: [{ assetId: 'asc' }, { valuationDate: 'desc' }],
+      distinct: ['assetId'],
+      select: {
+        id: true,
+        assetId: true,
+        valuationMethod: true,
+        valuationDate: true,
+      },
+    });
+    const map = new Map<string, ReturnType<typeof this.lineageFromRow>>();
+    for (const row of rows) {
+      map.set(row.assetId, this.lineageFromRow(row));
+    }
+    return map;
+  }
+
   private async toLine(asset: any): Promise<SnapshotAssetLine> {
     // Only market-priced assets need market prices / fx rates. Manual (cash,
     // bank) and formula-calculated (savings) assets value from their own row,
@@ -125,16 +169,21 @@ export class PrismaSnapshotsRepository
   }
 
   async getActiveAssetLines(householdId: string): Promise<SnapshotAssetLine[]> {
-    const [assets, { marketPrices, fxRates }] = await Promise.all([
-      this.prisma.asset.findMany({
-        where: { householdId, deletedAt: null, status: 'active' },
-        include: {
-          marketPositions: { where: { deletedAt: null }, take: 1 },
-          calculationTerms: { where: { deletedAt: null }, take: 1 },
-        },
-      }),
-      this.loadPricing(),
-    ]);
+    // assets + pricing + per-asset valuation lineage all resolve concurrently
+    // as three queries. `lineageByAsset` batches what was previously one
+    // `findFirst` per asset (a 1+N inside this transaction).
+    const [assets, { marketPrices, fxRates }, lineageByAsset] =
+      await Promise.all([
+        this.prisma.asset.findMany({
+          where: { householdId, deletedAt: null, status: 'active' },
+          include: {
+            marketPositions: { where: { deletedAt: null }, take: 1 },
+            calculationTerms: { where: { deletedAt: null }, take: 1 },
+          },
+        }),
+        this.loadPricing(),
+        this.latestLineageByAsset(householdId),
+      ]);
 
     const lines: SnapshotAssetLine[] = [];
     for (const row of assets) {
@@ -144,7 +193,7 @@ export class PrismaSnapshotsRepository
         row.calculationTerms[0],
       );
       const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
-      const lineage = await this.valuationLineage(asset.id);
+      const lineage = lineageByAsset.get(asset.id) ?? {};
       lines.push({
         assetId: asset.id,
         assetName: asset.name,
@@ -351,11 +400,17 @@ export class PrismaSnapshotsRepository
     `;
   }
 
+  // Snapshots grow one row per day, so cap the list at the most recent window
+  // (index-backed on householdId, snapshotDate DESC) rather than returning the
+  // household's entire history — which grows without bound as it ages.
+  private static readonly LIST_SNAPSHOTS_LIMIT = 365;
+
   async listSnapshots(householdId: string): Promise<SnapshotDetail[]> {
     const rows = await this.prisma.snapshot.findMany({
       where: { householdId, deletedAt: null },
       orderBy: { snapshotDate: 'desc' },
       include: { snapshotAssetValues: true },
+      take: PrismaSnapshotsRepository.LIST_SNAPSHOTS_LIMIT,
     });
     return rows.map((row) => this.toDetail(row));
   }
