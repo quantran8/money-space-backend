@@ -4,9 +4,24 @@ Shared savings goals with progress. Related: [[money-events]] (goal_contribution
 
 ## Overview
 
-CRUD over `FinancialGoal` (name, category, targetAmount, deadline, priority, status, optional `linkedAssetId`). Every response is a card including a computed **progress %**.
+CRUD over `FinancialGoal` (name, category, targetAmount, deadline, priority, status). The goal itself does **not** store a source wallet. Every response is a card including a computed **progress %**.
 
 ## Rules
+
+- **The money source is chosen PER CONTRIBUTION, not on the goal.** A goal has no
+  source wallet — the old `linked_asset_id` column was dropped (migration
+  `..._drop_goal_linked_asset`). Instead, each `goal_contribution` money event
+  carries its own `fromAssetId`: the wallet that specific contribution comes out
+  of. So creating/editing a goal never asks for or validates a wallet.
+- **Contributing debits the chosen wallet.** A `goal_contribution` money event
+  MUST carry `fromAssetId` = a cash/bank wallet — the backend rejects a
+  contribution with no / non-wallet source (400,
+  `MoneyEventsService.assertGoalContributionSource`). It debits that wallet
+  (money leaves the spendable pocket) while `direction` stays **neutral**, so it
+  is a move between the household's own pockets — NOT counted as spending in the
+  thu/chi summary (same treatment as a transfer). The frontend goals page's
+  quick-add row has a required "nguồn tiền" wallet picker per goal (defaults to
+  the first wallet). See [[money-events]].
 
 - **`currentAmount` is DERIVED, not stored.** It is the live `Σ amount` of the
   goal's `goal_contribution` money events (`deletedAt IS NULL`), computed on read

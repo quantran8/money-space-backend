@@ -83,7 +83,130 @@ export class MoneyEventsService {
     return toMoneyEventCard(await this.ensureMoneyEvent(householdId, eventId));
   }
 
+  /**
+   * Aggregate the money that moved in a month — the **source of truth** for the
+   * events page's summary card (total in / out / net). The frontend must NOT
+   * recompute these from the event list; it reads them from here.
+   *
+   * Only `inflow` / `outflow` events count toward thu/chi; `neutral` entries
+   * (asset_update revaluations, transfers between own wallets, goal
+   * contributions, sale bookkeeping) move no household money and are excluded —
+   * the same rule `deriveDirection` encodes. `amount` is summed by `direction`
+   * (not by sign) so it stays correct regardless of how the amount is stored.
+   *
+   * `month` defaults to the household's current AS_OF month when omitted, so a
+   * caller can ask for "this month" without computing the date itself.
+   */
+  async getMoneyEventsSummary(householdId: string, month?: string) {
+    await this.moneyEventsRepository.assertHousehold(householdId);
+    const targetMonth = month ?? AS_OF.slice(0, 7);
+    const items =
+      await this.moneyEventsRepository.findMoneyEventsByHousehold(householdId);
+    const monthly = items.filter((event) =>
+      event.isoDate.startsWith(targetMonth),
+    );
+
+    let totalIncome = 0;
+    let totalOutcome = 0;
+    for (const event of monthly) {
+      if (event.direction === 'inflow') {
+        totalIncome += Math.abs(event.amount);
+      } else if (event.direction === 'outflow') {
+        totalOutcome += Math.abs(event.amount);
+      }
+    }
+
+    return {
+      householdId,
+      month: targetMonth,
+      recordedCount: monthly.length,
+      totalIncome,
+      totalOutcome,
+      netChange: totalIncome - totalOutcome,
+    };
+  }
+
+  /**
+   * Event types whose linked assets are plain cash moves: the source
+   * (`fromAssetId`) and, where present, the destination (`toAssetId`) must both
+   * be spendable wallets (cash / bank_account). A valued asset (gold, stock,
+   * saving deposit, …) is never the wallet of an income/expense/transfer — it
+   * changes hands via its own flow (sell / revalue). asset_sale / asset_update /
+   * debt_update / goal_contribution deliberately link non-wallet assets and are
+   * excluded. See [[money-events]].
+   */
+  private static readonly WALLET_ONLY_EVENT_TYPES: ReadonlySet<string> =
+    new Set(['income', 'expense', 'transfer']);
+
+  /**
+   * For income / expense / transfer events, assert every linked asset is a
+   * cash / bank_account wallet — money can only flow in or out of a spendable
+   * balance. No-op for other event types (which link valued assets on purpose).
+   *
+   * `goal_contribution` is handled separately (`assertGoalContributionSource`):
+   * it moves cash out of a spendable wallet INTO a savings goal, so its
+   * `fromAssetId` is required and must be a wallet, but it links no valued
+   * `toAssetId` — the goal is not an asset row.
+   */
+  private async assertWalletLinks(
+    householdId: string,
+    type: string,
+    fromAssetId?: string,
+    toAssetId?: string,
+  ): Promise<void> {
+    if (!MoneyEventsService.WALLET_ONLY_EVENT_TYPES.has(type)) {
+      return;
+    }
+    if (fromAssetId) {
+      await this.assetsService.assertWalletAsset(householdId, fromAssetId);
+    }
+    if (toAssetId) {
+      await this.assetsService.assertWalletAsset(householdId, toAssetId);
+    }
+  }
+
+  /**
+   * A `goal_contribution` moves cash from a spendable wallet into a savings goal
+   * (it debits `fromAssetId` in `applyWalletEffects` — direction stays `neutral`,
+   * so it is NOT counted as spending in the thu/chi summary; it is a move between
+   * the household's own pockets, like a transfer). The source **wallet is
+   * mandatory** — a contribution that debits nothing would let progress rise for
+   * free (the bug this fixes). It must be a `cash` / `bank_account` asset.
+   * No-op for every other event type.
+   */
+  private async assertGoalContributionSource(
+    householdId: string,
+    type: string,
+    fromAssetId?: string,
+  ): Promise<void> {
+    if (type !== 'goal_contribution') {
+      return;
+    }
+    if (!fromAssetId) {
+      throw new BadRequestException(
+        'A goal contribution must specify the wallet the money comes from (fromAssetId).',
+      );
+    }
+    await this.assetsService.assertWalletAsset(householdId, fromAssetId);
+  }
+
   async createMoneyEvent(householdId: string, payload: CreateMoneyEventDto) {
+    // Income/expense/transfer only move cash — their linked assets must be
+    // spendable wallets. Reject a non-wallet source/destination up front (400)
+    // before opening the write transaction.
+    await this.assertWalletLinks(
+      householdId,
+      payload.type,
+      payload.fromAssetId,
+      payload.toAssetId,
+    );
+    // A goal_contribution must debit a real wallet (see the method) — reject a
+    // contribution with no / non-wallet source before touching any balance.
+    await this.assertGoalContributionSource(
+      householdId,
+      payload.type,
+      payload.fromAssetId,
+    );
     // `insertMoneyEvent` asserts the household exists (and needs its row to
     // resolve `createdById`), so we don't assert it a second time here.
     const event: MoneyEvent = {
@@ -317,6 +440,22 @@ export class MoneyEventsService {
       soldValue: payload.soldValue ?? event.soldValue,
     };
 
+    // Same wallet-only rule as create: an edited income/expense/transfer must
+    // still point its source/destination at cash / bank_account wallets. Reject
+    // before touching any wallet balances.
+    await this.assertWalletLinks(
+      householdId,
+      next.type,
+      next.fromAssetId,
+      next.toAssetId,
+    );
+    // An edited goal_contribution must still debit a wallet source.
+    await this.assertGoalContributionSource(
+      householdId,
+      next.type,
+      next.fromAssetId,
+    );
+
     // Editing an event can change its amount or its linked wallets, so reverse
     // the old event's wallet moves and apply the new one's — together with the
     // row update, in one transaction so they can't diverge. For an asset_sale
@@ -352,7 +491,9 @@ export class MoneyEventsService {
             assetId,
           );
           const currentStored =
-            asset.valuationMode === 'manual' ? (asset.manualValue ?? 0) : newValue;
+            asset.valuationMode === 'manual'
+              ? (asset.manualValue ?? 0)
+              : newValue;
           const valueBeforeEvent = currentStored - event.amount;
           const delta = newValue - valueBeforeEvent;
           // Persist the event with amount = new delta, keeping date/title/note.

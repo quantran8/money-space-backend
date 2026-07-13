@@ -38,6 +38,66 @@ Auto-derived from event type unless explicitly overridden (explicit wins):
 - `goal_contribution` **must link** to a goal.
 - Amount must be **> 0**.
 
+### goal_contribution requires a wallet source (and debits it)
+
+A `goal_contribution` moves cash from a spendable wallet **into a savings goal**
+([[goals]]). Its `fromAssetId` is **mandatory** and must be a `cash` /
+`bank_account` asset — `MoneyEventsService.assertGoalContributionSource` rejects a
+missing / non-wallet source with a **400** on both create and update, before any
+balance moves. `applyWalletEffects` then **debits** that wallet by the amount
+(direction stays **neutral** — see the summary rule below — so it debits the
+pocket without counting as spending, exactly like a transfer between the
+household's own wallets). This closes the old bug where a `goal_contribution`
+with no source raised progress without any money leaving a wallet. The source is
+chosen **per contribution** (the goals quick-add row's required wallet picker) —
+the goal itself stores no source wallet. See [[goals]].
+
+### Wallet-only link rule (income / expense / transfer)
+
+For **income, expense, transfer** every linked asset (`fromAssetId` and, where
+present, `toAssetId`) must be a spendable **wallet** — `cash` or `bank_account`
+only. Money can only flow in or out of a free cash balance; a valued asset
+(gold, stock, saving deposit, …) changes hands through its own flow (sell /
+revalue), never a generic cash move.
+
+- **Backend** (`MoneyEventsService.assertWalletLinks`, gated by
+  `WALLET_ONLY_EVENT_TYPES = {income, expense, transfer}`) rejects a non-wallet
+  source/destination with a **400** — checked up front on both create and update,
+  before any wallet balance is touched. Reuses `AssetsService.assertWalletAsset`.
+- **Frontend** enforces it in the UI too: the events forms build a
+  `sourceAssetOptions` list (assets filtered to cash / bank_account) and use it
+  for the "nguồn tiền" source select **and** the income/transfer destination
+  select; only goal_contribution's destination still lists all assets.
+- **`asset_sale` is the exception**: its `fromAssetId` is the *sold* asset (a
+  non-wallet — gold, stock, …), so it is deliberately excluded from the rule. The
+  sold asset is **view-only** — an asset_sale edits through the dedicated
+  `AssetSaleDialog`, where the sold asset is fixed context (shown in the header,
+  never a form field), so the source can be seen but never changed.
+
+## Monthly summary (thu / chi / net) — backend is source of truth
+
+`GET /api/households/:householdId/money-events/summary?month=YYYY-MM` →
+`{ householdId, month, recordedCount, totalIncome, totalOutcome, netChange }`,
+computed by `MoneyEventsService.getMoneyEventsSummary`. **The frontend must NOT
+re-derive these totals from the event list** — it reads them from this endpoint.
+
+- Filters events to `isoDate.startsWith(month)` (month defaults to `AS_OF`'s
+  month when omitted).
+- **Only `inflow` / `outflow` count** toward thu/chi; `neutral` events
+  (asset_update, transfer, goal_contribution, sale bookkeeping) are excluded —
+  same rule as `deriveDirection`. Summed by `direction` on `Math.abs(amount)`;
+  `netChange = totalIncome − totalOutcome`. Note: a `neutral` event can still
+  **move a wallet balance** (a transfer, and now a goal_contribution, debit a
+  wallet) — "neutral" means it doesn't change the household's total money (it
+  moves between its own pockets), so it must not show as thu/chi even though a
+  wallet balance changed.
+- Route is declared **before** `:eventId` so "summary" isn't captured as an id.
+- Frontend: `useEventsSummary` (query key `…, 'events', 'summary', month`) feeds
+  the events page summary card. Event create/update/delete invalidate the whole
+  `['households', id, 'events']` prefix so both list and summary refetch.
+  upcoming-in-7-days and attention counts stay client-derived (payment /
+  attention concerns the summary endpoint doesn't cover).
+
 ## Upcoming payments
 
 - `UpcomingPayment`: name, amount, dueDate, frequency, `autoCreateNext` flag, owner member, optional `debtId` link, status, attention level/flag.

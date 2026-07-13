@@ -661,6 +661,28 @@ export class AssetsService {
     return this.ensureAsset(householdId, assetId);
   }
 
+  /** Whether an asset type holds a free, spendable cash balance (cash / bank). */
+  static isWalletAssetType(type: AssetType): boolean {
+    return WALLET_ASSET_TYPES.has(type);
+  }
+
+  /**
+   * Assert that an asset is a spendable wallet (cash / bank_account) — the only
+   * asset kinds that can be the source or destination of a plain income /
+   * expense / transfer money event. A valued asset (gold, stock, saving deposit,
+   * …) changes hands through its own dedicated flow (sell / revalue), never a
+   * generic cash move, so linking one here is a user error → 400. See
+   * [[money-events]].
+   */
+  async assertWalletAsset(householdId: string, assetId: string): Promise<void> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (!WALLET_ASSET_TYPES.has(asset.type)) {
+      throw new BadRequestException(
+        `Asset "${asset.name}" is not a cash or bank account, so it cannot be the source or destination of an income, expense, or transfer.`,
+      );
+    }
+  }
+
   /**
    * Write an `AssetValueHistory` point for a saving deposit dated at an interest
    * payout, for the auto-crediting flow — one per credited period. Idempotent

@@ -27,6 +27,19 @@ export class MoneyEventsController {
     return this.moneyEventsService.listMoneyEvents(householdId, query);
   }
 
+  /**
+   * Monthly thu/chi/net aggregate for the events summary card. Declared before
+   * the `:eventId` route so "summary" isn't captured as an event id. `month` is
+   * `YYYY-MM`; omitted → the current AS_OF month.
+   */
+  @Get('summary')
+  getMoneyEventsSummary(
+    @Param('householdId') householdId: string,
+    @Query('month') month?: string,
+  ) {
+    return this.moneyEventsService.getMoneyEventsSummary(householdId, month);
+  }
+
   @Get(':eventId')
   getMoneyEvent(
     @Param('householdId') householdId: string,

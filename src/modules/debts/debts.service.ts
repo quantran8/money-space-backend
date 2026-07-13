@@ -17,6 +17,19 @@ import { Debt } from './entities/debt.entity';
 import { DEBTS_REPOSITORY } from './repositories/debts.repository.interface';
 import type { DebtsRepository } from './repositories/debts.repository.interface';
 
+/**
+ * The subset of a debt-linked money event that `updateDebt`'s mode paths read:
+ * `direction`/`amount` to sum recorded repayments, plus `id`/`type`/`isoDate`
+ * to find and re-date the borrow inflow when `borrowedAt` moves.
+ */
+type BorrowEvent = {
+  id: string;
+  type: string;
+  direction: string;
+  amount: number;
+  isoDate: string;
+};
+
 /** Months between two repayments for each recurring `paymentFrequency`. */
 const REPAYMENT_STEP_MONTHS: Record<string, number> = {
   monthly: 1,
@@ -292,6 +305,7 @@ export class DebtsService {
         payload,
         mode.effectiveDate,
         mode.balanceIntent,
+        events,
       );
     }
     await this.snapshotAfterDebt(householdId, next.receivedToAssetId);
@@ -303,6 +317,39 @@ export class DebtsService {
     return events
       .filter((event) => event.direction === 'outflow')
       .reduce((sum, event) => sum + event.amount, 0);
+  }
+
+  /**
+   * Keep the borrow inflow event's date in sync with the debt's `borrowedAt`.
+   *
+   * `createDebt` logs one `debt_update` **inflow** event ("Vay: …") dated at
+   * `borrowedAt`. When an update moves `borrowedAt`, that event — and the wallet
+   * valuation point it wrote at the old date — would otherwise be stranded on the
+   * original date. Re-date the event via `MoneyEventsService.updateMoneyEvent`,
+   * which re-syncs both the event row and its linked valuation point.
+   *
+   * A debt has at most one borrow inflow (created once, on create). Repayment
+   * outflows and reconcile/adjustment neutrals are left untouched. Meant to run
+   * inside the caller's `runInTransaction` (the nested update reuses it).
+   */
+  private async resyncBorrowEventDate(
+    householdId: string,
+    debt: Debt,
+    next: Debt,
+    events: BorrowEvent[],
+  ): Promise<void> {
+    if (!next.borrowedAt || next.borrowedAt === debt.borrowedAt) {
+      return;
+    }
+    const borrowEvent = events.find(
+      (event) => event.type === 'debt_update' && event.direction === 'inflow',
+    );
+    if (!borrowEvent || borrowEvent.isoDate === next.borrowedAt) {
+      return;
+    }
+    await this.moneyEventsService.updateMoneyEvent(householdId, borrowEvent.id, {
+      isoDate: next.borrowedAt,
+    });
   }
 
   /** Auditable scalar fields, for before/after diffing in the audit log. */
@@ -336,7 +383,7 @@ export class DebtsService {
     debt: Debt,
     next: Debt,
     payload: UpdateDebtDto,
-    events: { direction: string; amount: number }[],
+    events: BorrowEvent[],
   ) {
     const correctedOriginal = payload.originalAmount ?? debt.originalAmount;
     const totalRepaid = this.sumRepaidOutflows(events);
@@ -347,6 +394,8 @@ export class DebtsService {
         await this.debtsRepository.updateDebt(debt.id, next);
         // Delete-all + reinsert = "rewrite the schedule as if always true".
         await this.debtsRepository.upsertDebtInterestPeriods(next);
+        // A moved `borrowedAt` must re-date the borrow inflow event too.
+        await this.resyncBorrowEventDate(householdId, debt, next, events);
         await this.debtsRepository.writeAuditLog(householdId, {
           action: 'debt.corrected',
           entityType: 'debt',
@@ -387,6 +436,7 @@ export class DebtsService {
     effectiveDate: string,
     balanceIntent?:
       'fix_original' | 'additional_disbursement' | 'reconcile_balance',
+    events: BorrowEvent[] = [],
   ) {
     const originalChanged =
       payload.originalAmount !== undefined &&
@@ -472,6 +522,11 @@ export class DebtsService {
         }
 
         await this.debtsRepository.updateDebt(debt.id, next);
+
+        // A moved `borrowedAt` must re-date the original borrow inflow event too
+        // (independent of the effective-date changes above, which log their own
+        // dated events).
+        await this.resyncBorrowEventDate(householdId, debt, next, events);
 
         // Interest rate change → append a new stage from effectiveDate; the old
         // stages (and their historical rates) are preserved.
