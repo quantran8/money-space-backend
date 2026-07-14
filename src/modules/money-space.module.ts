@@ -7,6 +7,7 @@ import { GoalsModule } from './goals/goals.module';
 import { HouseholdsModule } from './households/households.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { MembersModule } from './members/members.module';
+import { MoneyEventCategoriesModule } from './money-event-categories/money-event-categories.module';
 import { MoneyEventsModule } from './money-events/money-events.module';
 import { PaymentsModule } from './payments/payments.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
@@ -19,6 +20,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     AssetsModule,
     DebtsModule,
     MembersModule,
+    MoneyEventCategoriesModule,
     MoneyEventsModule,
     GoalsModule,
     PaymentsModule,
@@ -32,6 +34,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     AssetsModule,
     DebtsModule,
     MembersModule,
+    MoneyEventCategoriesModule,
     MoneyEventsModule,
     GoalsModule,
     PaymentsModule,

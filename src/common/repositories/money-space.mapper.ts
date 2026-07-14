@@ -11,6 +11,7 @@ import type { Household } from '../../modules/households/entities/household.enti
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
 import type { HouseholdMember } from '../../modules/members/entities/member.entity';
+import type { MoneyEventCategory } from '../../modules/money-event-categories/entities/money-event-category.entity';
 import type { MoneyEvent } from '../../modules/money-events/entities/money-event.entity';
 import type { UpcomingPayment } from '../../modules/payments/entities/upcoming-payment.entity';
 import { defaultPermissionForRole } from '../utils/money-space.utils';
@@ -88,6 +89,17 @@ export function mapHousehold(row: DbRow): Household {
     updateFrequency: row.updateFrequency ?? row.update_frequency,
     createdBy: row.createdById ?? row.created_by,
     createdAt: row.createdAt ?? row.created_at,
+  };
+}
+
+export function mapMoneyEventCategory(row: DbRow): MoneyEventCategory {
+  return {
+    id: row.id,
+    householdId: row.householdId ?? row.household_id ?? null,
+    code: row.code,
+    label: row.label,
+    isSystem: row.isSystem ?? row.is_system ?? false,
+    sortOrder: row.sortOrder ?? row.sort_order ?? 0,
   };
 }
 

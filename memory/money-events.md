@@ -19,6 +19,18 @@ any non-empty code (falls back to `other` only when blank). The `interest` code
 omitted it, so it was silently rewritten to `other` (fixed). System seed list:
 `SYSTEM_MONEY_EVENT_CATEGORIES` in `money-space.mapper.ts`.
 
+**Categories CRUD API** (`money-event-categories` module):
+`/api/households/:householdId/money-event-categories` — `GET` (any member) lists
+system rows (`household_id IS NULL`) + the household's own rows;
+`POST`/`PATCH`/`DELETE` require the `edit` capability and operate only on the
+household's **own** custom rows (system rows are read-only; the repo scopes
+edit/delete to the household's `householdId`). The `code` is **immutable** on
+update (only `label`/`sortOrder` change) — `money_events.category` points at the
+code, so a rename would orphan history; create a new category and re-tag. Code
+validated `^[a-z][a-z0-9_]*$` (usable as a client i18n key), unique per scope
+(409 on duplicate), soft-deleted via `deletedAt`. The client stores the code and
+renders the label via i18n keyed by code, not the DB `label`.
+
 ## Direction derivation (`deriveDirection` / `getDirectionFromEventType`)
 
 Auto-derived from event type unless explicitly overridden (explicit wins):
