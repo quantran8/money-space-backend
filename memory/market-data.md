@@ -1,33 +1,27 @@
-# Market data (prices & FX)
+# Market data (provider + TTL cache)
 
-Read-only reference data that feeds the asset valuation engine. Related: [[asset-valuation]], [[assets]].
+External providers are the source of truth for current market quotes. The app
+does **not** persist provider ticks in PostgreSQL.
 
-## Overview
+## Flow
 
-Two reference tables, both currently used as stand-ins for a future pricing/FX API.
+- `PriceProvider` is the adapter boundary for a real batched quote provider.
+- `NoopPriceProvider` is the default until a provider is configured.
+- `MarketDataService.getMarketPrices()` caches provider results in process for
+  `MARKET_PRICE_CACHE_TTL_MS` (default 5 minutes) and coalesces concurrent
+  refreshes. A stale non-empty cache is returned when the provider fails.
+- Assets, dashboard and snapshots consume quotes through `MarketDataService`.
+- `fx_rates` remains persisted for now; it is a separate concern.
 
-- **`MarketPrice`** — per `assetClass / symbol / market / quoteCurrency`, with `source` + payload hash. Feeds `market_priced` valuation.
-- **`FxRate`** — `base → quote` rate, timestamped, with `source`. Feeds FX conversion to VND.
+## Durable history
 
-## Rules
+The durable record is the user's value, not every provider tick.
+`asset_value_history` stores the final value used by the user's chart, without
+copying the current position or provider quote into every history row. Current
+quantity, average purchase price and latest manually entered price remain in
+`asset_market_positions`.
 
-- Market price matched by `(assetClass, symbol)`, case-insensitive.
-- `fxRateToVnd(base)`: VND→VND = 1; otherwise finds a base→VND rate and returns
-  its value, or **`null` when the rate is unknown** (currency ≠ VND). Callers
-  MUST treat `null` as "value undefined" — `computeCurrentValue` returns `0`
-  rather than mis-pricing. (Was previously `?? 1`, which silently priced 1 USD =
-  1 VND when a rate was missing — a ~25,000× understatement; fixed.)
-- **Latest-per-key lookup**: the valuation reads go through
-  `PrismaRepository.findLatestMarketPrices()` / `findLatestFxRates()` —
-  `DISTINCT ON (...) ORDER BY ..., <time> DESC`, one row per instrument, served
-  by the `*_latest_idx` indexes. This replaced the old "load the whole table +
-  JS `.find()`" pattern so it scales as the price history grows. The
-  `/market-data/prices` + `/fx-rates` endpoints also use it (they show the
-  current rate board, not the full tick history).
-- **Currently stubbed**: frontend `latestPrice() → null` and `fxToVnd() → 1` (`assets.repository.ts`). When a real pricing API is wired, this is the integration point (a writer for `market_prices` / `fx_rates`).
-
-## Where it lives in code
-
-- **backend**: `src/modules/market-data/` (`market-data.service.ts`, `entities/{market-price,fx-rate}.entity.ts`, `repositories/prisma-market-data.repository.ts`).
-- **frontend-web**: stubs in `src/features/assets/api/assets.repository.ts`.
-- **mobile-app**: to be ported.
+`POST /api/households/:householdId/assets/refresh-valuations` is the idempotent
+daily/external-worker entry point. It refreshes provider cache once, then upserts
+one value-history point per active market asset for the day and updates
+`assets.current_value` plus today's household snapshot.

@@ -10,9 +10,15 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
 
 - **Discriminated form**: visible fields switch on the selected type's valuation mode. Per-mode conditional validation via `.superRefine`:
   - `manual` → requires `value`.
-  - `market_priced` → requires `symbol` + `quantity ≥ 0` + `unitPrice` (user-entered price of 1 unit; see [[asset-valuation]]).
+  - `market_priced` → requires `symbol` + `quantity ≥ 0` + `purchasePrice` (original purchase price of 1 unit; see [[asset-valuation]]).
   - `formula_calculated` → requires `principal` + `interestRate ≥ 0` + `startDate`.
 - `toAsset()` converts raw form → typed `Asset`, returning `null` on incomplete inputs.
+- **Same-symbol accumulation**: creating a market-priced asset first looks for
+  an active position in the household with the same `assetClass + symbol`
+  (case-insensitive). If found, it adds quantity to that asset and recalculates
+  `purchasePrice` as a quantity-weighted average instead of creating a duplicate
+  `assets` / `asset_market_positions` row. `lastPrice` is preserved. A fully
+  sold historical asset is not reused; buying it again starts a new lifecycle.
 - **Liquidity summary**: assets are grouped/summed into 3 buckets — "Có thể dùng ngay" (`usable_now`), "Tiết kiệm & dự phòng" (`not_immediately_usable`), "Dài hạn" (`long_term`). `snapshotTotal` = sum of the three (`computeLiquidityTotals` on backend).
 - **Delete** = soft-delete (`deletedAt`) + also delete the asset's valuations + unlink the asset from any money events.
 - **Status / lifecycle**: `status` (`active` | `sold` | `closed`, default `active`) + `soldAt`. Distinct from `deletedAt`: a **sold** asset is kept (quantity/value 0) for history, excluded from the liquidity buckets and net worth, but still listed. Selling an asset (reducing the position + closing it on a full sale) is driven by an `asset_sale` money event — see [[asset-sale]]. `AssetsService.sellPosition` / `reverseSalePosition` apply/undo the position change.
@@ -20,7 +26,7 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
 
 ## Sub-entities (backend)
 
-- `AssetMarketPosition` — symbol / quantity / quoteCurrency / `unitPrice` (user-entered price of 1 unit, nullable → fall back to market cache) / lastPrice (API cache) (for market-priced).
+- `AssetMarketPosition` — symbol / quantity / quoteCurrency / `purchasePrice` (original purchase/cost price) / `lastPrice` + `lastPriceAt` (latest manual or API market price) for market-priced assets.
 - `AssetCalculationTerm` — principal / rate / dates / compounding (for formula-based interest instruments).
 - `AssetValuation` — point-in-time value with method/confidence; optionally linked to a market price, FX rate, or calc term.
 

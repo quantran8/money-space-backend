@@ -10,12 +10,14 @@ import {
 } from '../../common/utils/money-space.utils';
 import { DASHBOARD_REPOSITORY } from './repositories/dashboard.repository.interface';
 import type { DashboardRepository } from './repositories/dashboard.repository.interface';
+import { MarketDataService } from '../market-data/market-data.service';
 
 @Injectable()
 export class DashboardService {
   constructor(
     @Inject(DASHBOARD_REPOSITORY)
     private readonly dashboardRepository: DashboardRepository,
+    private readonly marketData: MarketDataService,
   ) {}
 
   async getDashboard(householdId: string) {
@@ -33,7 +35,7 @@ export class DashboardService {
     ] = await Promise.all([
       this.dashboardRepository.assertHousehold(householdId),
       this.dashboardRepository.findAssetsByHousehold(householdId),
-      this.dashboardRepository.getMarketPrices(),
+      this.marketData.getMarketPrices(),
       this.dashboardRepository.getFxRates(),
       this.dashboardRepository.getAttentionItems(householdId),
       this.dashboardRepository.findUpcomingPaymentsByHousehold(householdId),

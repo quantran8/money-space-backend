@@ -29,7 +29,6 @@ export interface AssetValueHistory {
   // Lineage — how this number was produced (nullable; populated as sources exist).
   source?: string;
   confidenceLevel?: ConfidenceLevel;
-  marketPriceId?: string;
   fxRateId?: string;
   calculationTermId?: string;
 }

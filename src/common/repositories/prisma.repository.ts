@@ -72,26 +72,7 @@ export abstract class PrismaRepository {
       .join('');
   }
 
-  /**
-   * Latest market price per (asset_class, symbol, market, quote_currency).
-   *
-   * The valuation engine only ever needs the newest price per instrument, not
-   * the full history. `DISTINCT ON (...) ORDER BY ..., price_time DESC` returns
-   * exactly one row per key — served by the `market_prices_latest_idx` index —
-   * so we never load the whole price history into memory (the old
-   * `findMany({ orderBy })` + JS `.find()` did, which does not scale as the
-   * time-series grows). Rows come back snake-cased; `mapMarketPrice` accepts that.
-   */
-  protected findLatestMarketPrices(): Promise<DbRow[]> {
-    return this.prisma.$queryRaw<DbRow[]>`
-      SELECT DISTINCT ON (asset_class, symbol, market, quote_currency)
-        asset_class, symbol, market, quote_currency, price, price_time, source
-      FROM market_prices
-      ORDER BY asset_class, symbol, market, quote_currency, price_time DESC
-    `;
-  }
-
-  /** Latest FX rate per (base_currency, quote_currency). See findLatestMarketPrices. */
+  /** Latest FX rate per (base_currency, quote_currency). */
   protected findLatestFxRates(): Promise<DbRow[]> {
     return this.prisma.$queryRaw<DbRow[]>`
       SELECT DISTINCT ON (base_currency, quote_currency)

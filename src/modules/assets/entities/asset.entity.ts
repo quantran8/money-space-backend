@@ -40,6 +40,8 @@ export interface Asset {
   note: string;
   status: AssetStatus;
   soldAt?: string;
+  /** Remaining floor/land area for a real-estate asset, in square metres. */
+  areaSqm?: number;
   manualValue?: number;
   marketPosition?: MarketPosition;
   calculationTerm?: CalculationTerm;

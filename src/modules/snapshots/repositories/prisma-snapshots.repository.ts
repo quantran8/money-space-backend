@@ -4,7 +4,6 @@ import {
   mapAsset,
   mapFxRate,
   mapHousehold,
-  mapMarketPrice,
 } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
@@ -16,6 +15,7 @@ import {
 import { AS_OF } from '../../../common/seed/money-space.seed';
 import { Household } from '../../households/entities/household.entity';
 import { SnapshotDetail } from '../entities/snapshot-detail.entity';
+import { MarketDataService } from '../../market-data/market-data.service';
 import {
   SnapshotAssetLine,
   SnapshotsRepository,
@@ -26,7 +26,10 @@ export class PrismaSnapshotsRepository
   extends PrismaRepository
   implements SnapshotsRepository
 {
-  constructor(prisma: PrismaService) {
+  constructor(
+    prisma: PrismaService,
+    private readonly marketData: MarketDataService,
+  ) {
     super(prisma);
   }
 
@@ -70,11 +73,11 @@ export class PrismaSnapshotsRepository
 
   private async loadPricing() {
     const [prices, rates] = await Promise.all([
-      this.findLatestMarketPrices(),
+      this.marketData.getMarketPrices(),
       this.findLatestFxRates(),
     ]);
     return {
-      marketPrices: prices.map((p) => mapMarketPrice(p)),
+      marketPrices: prices,
       fxRates: rates.map((r) => mapFxRate(r)),
     };
   }

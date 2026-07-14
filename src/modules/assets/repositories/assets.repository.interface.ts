@@ -1,9 +1,8 @@
-import type { Asset } from '../entities/asset.entity';
+import type { Asset, AssetClass } from '../entities/asset.entity';
 import type { AssetValueHistory } from '../entities/asset-value-history.entity';
 import type { SnapshotPoint } from '../../dashboard/entities/snapshot-point.entity';
 import type { Household } from '../../households/entities/household.entity';
 import type { FxRate } from '../../market-data/entities/fx-rate.entity';
-import type { MarketPrice } from '../../market-data/entities/market-price.entity';
 import type { MoneyEvent } from '../../money-events/entities/money-event.entity';
 
 export const ASSETS_REPOSITORY = Symbol('ASSETS_REPOSITORY');
@@ -15,6 +14,12 @@ export interface AssetsRepository {
   findAssetById(
     householdId: string,
     assetId: string,
+  ): Promise<Asset | undefined>;
+  /** Active market asset with the same class + symbol (case-insensitive). */
+  findActiveMarketAssetBySymbol(
+    householdId: string,
+    assetClass: AssetClass,
+    symbol: string,
   ): Promise<Asset | undefined>;
   insertAsset(asset: Asset): Promise<void>;
   /**
@@ -70,6 +75,5 @@ export interface AssetsRepository {
     assetId: string,
   ): Promise<MoneyEvent[]>;
   getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]>;
-  getMarketPrices(): Promise<MarketPrice[]>;
   getFxRates(): Promise<FxRate[]>;
 }

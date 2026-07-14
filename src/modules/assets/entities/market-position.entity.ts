@@ -7,9 +7,12 @@ export interface MarketPosition {
   unit: string;
   quoteCurrency: string;
   /**
-   * User-entered price of one `unit` in `quoteCurrency` (e.g. price of 1 BTC,
-   * 1 share). When present, value = quantity × unitPrice × fx; the app falls
-   * back to the cached market price otherwise.
+   * Original purchase price of one unit. This is the cost basis and must not be
+   * overwritten by a later manual revaluation.
    */
-  unitPrice?: number;
+  purchasePrice?: number;
+  /** Latest manually entered or externally fetched market price. */
+  lastPrice?: number;
+  /** ISO timestamp at which `lastPrice` was observed. */
+  lastPriceAt?: string;
 }

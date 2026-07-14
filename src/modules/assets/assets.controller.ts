@@ -56,6 +56,12 @@ export class AssetsController {
   }
 
   @RequireCapability('edit')
+  @Post('refresh-valuations')
+  refreshMarketValuations(@Param('householdId') householdId: string) {
+    return this.assetsService.refreshMarketValuations(householdId);
+  }
+
+  @RequireCapability('edit')
   @Post()
   createAsset(
     @Param('householdId') householdId: string,

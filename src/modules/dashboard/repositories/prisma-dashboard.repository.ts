@@ -5,7 +5,6 @@ import {
   mapFinancialGoal,
   mapFxRate,
   mapHousehold,
-  mapMarketPrice,
   mapMoneyEvent,
   mapSnapshot,
   mapUpcomingPayment,
@@ -18,7 +17,6 @@ import { SnapshotPoint } from '../entities/snapshot-point.entity';
 import { FinancialGoal } from '../../goals/entities/financial-goal.entity';
 import { Household } from '../../households/entities/household.entity';
 import { FxRate } from '../../market-data/entities/fx-rate.entity';
-import { MarketPrice } from '../../market-data/entities/market-price.entity';
 import { MoneyEvent } from '../../money-events/entities/money-event.entity';
 import { UpcomingPayment } from '../../payments/entities/upcoming-payment.entity';
 import { DashboardRepository } from './dashboard.repository.interface';
@@ -57,11 +55,6 @@ export class PrismaDashboardRepository
     return assets.map((asset) =>
       mapAsset(asset, asset.marketPositions[0], asset.calculationTerms[0]),
     );
-  }
-
-  async getMarketPrices(): Promise<MarketPrice[]> {
-    const prices = await this.findLatestMarketPrices();
-    return prices.map((price) => mapMarketPrice(price));
   }
 
   async getFxRates(): Promise<FxRate[]> {

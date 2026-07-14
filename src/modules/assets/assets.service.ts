@@ -30,6 +30,7 @@ import type { UpdateAssetDto } from './dto/update-asset.dto';
 import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import { SnapshotsService } from '../snapshots/snapshots.service';
+import { MarketDataService } from '../market-data/market-data.service';
 
 /**
  * Ties a valuation write back to the money event that caused it, so the value
@@ -49,6 +50,7 @@ export class AssetsService {
     private readonly assetsRepository: AssetsRepository,
     private readonly prisma: PrismaService,
     private readonly snapshots: SnapshotsService,
+    private readonly marketData: MarketDataService,
   ) {}
 
   async listAssets(householdId: string) {
@@ -93,6 +95,50 @@ export class AssetsService {
         },
       ],
     };
+  }
+
+  /**
+   * Daily/external-worker entry point: refresh provider cache once, then persist
+   * one value-history point per active market asset for today.
+   */
+  async refreshMarketValuations(householdId: string) {
+    await this.assetsRepository.assertHousehold(householdId);
+    const [assets, marketPrices, fxRates] = await Promise.all([
+      this.assetsRepository.findAssetsByHousehold(householdId),
+      this.marketData.getMarketPrices(true),
+      this.assetsRepository.getFxRates(),
+    ]);
+    const marketAssets = assets.filter(
+      (asset) =>
+        asset.status === 'active' &&
+        asset.valuationMode === 'market_priced' &&
+        !!asset.marketPosition,
+    );
+    await this.prisma.runInTransaction(async () => {
+      for (const asset of marketAssets) {
+        const value = computeCurrentValue(
+          asset,
+          marketPrices,
+          fxRates,
+          AS_OF,
+        );
+        await this.assetsRepository.insertAssetValueHistory({
+          id: this.assetsRepository.createId('valuation'),
+          assetId: asset.id,
+          householdId,
+          valuationDate: this.todayIso(),
+          value,
+          currency: asset.currency,
+          note: `Định giá định kỳ: ${asset.name}`,
+          ...this.valuationLineage(asset),
+        });
+        await this.assetsRepository.updateAssetCurrentValue(asset.id, value);
+      }
+    });
+    for (const asset of marketAssets) {
+      await this.snapshots.onAssetChanged(householdId, asset.id);
+    }
+    return { householdId, refreshed: marketAssets.length, asOf: this.todayIso() };
   }
 
   async getAssetSnapshots(householdId: string) {
@@ -228,7 +274,8 @@ export class AssetsService {
     const currentQuantity = asset.marketPosition?.quantity ?? 0;
     // Unit price implied by the current position; 0 quantity → no basis to price
     // history, so fall back to a flat current-value point.
-    const unitPrice = currentQuantity > 0 ? currentValue / currentQuantity : 0;
+    const currentUnitPrice =
+      currentQuantity > 0 ? currentValue / currentQuantity : 0;
 
     const points: Array<{ date: string; value: number }> = [
       { date: AS_OF, value: currentValue },
@@ -243,7 +290,7 @@ export class AssetsService {
         quantity += event.soldQuantity ?? 0;
         points.push({
           date: event.isoDate,
-          value: Math.max(0, quantity * unitPrice),
+          value: Math.max(0, quantity * currentUnitPrice),
         });
       }
     }
@@ -299,22 +346,64 @@ export class AssetsService {
       currency: payload.currency ?? 'VND',
       note: payload.note ?? '',
       status: 'active',
+      areaSqm: payload.areaSqm,
       manualValue: payload.manualValue,
       marketPosition: payload.marketPosition,
       calculationTerm: payload.calculationTerm,
     });
 
-    // The asset row and its initial valuation must be written atomically.
+    // The asset row and its initial valuation must be written atomically. When
+    // the household already has an active position for the same class+symbol,
+    // add to that position and recompute weighted-average purchase price rather
+    // than creating a duplicate asset row.
     // Creating an asset does NOT log a money event — it moves no money through
     // the ledger, it just establishes the asset's starting value. We still
     // record one initial history point (unlinked, dated AS_OF) so the value
     // series has a starting point, plus the `current_value` cache.
-    const currentValue = await this.prisma.runInTransaction(async () => {
+    const result = await this.prisma.runInTransaction(async () => {
+      if (asset.marketPosition) {
+        const incoming = asset.marketPosition;
+        const existing =
+          await this.assetsRepository.findActiveMarketAssetBySymbol(
+            householdId,
+            incoming.assetClass,
+            incoming.symbol,
+          );
+        if (existing?.marketPosition) {
+          const held = existing.marketPosition;
+          const quantity = held.quantity + incoming.quantity;
+          const heldCost = held.purchasePrice ?? 0;
+          const incomingCost = incoming.purchasePrice ?? 0;
+          const purchasePrice =
+            quantity > 0
+              ? (held.quantity * heldCost + incoming.quantity * incomingCost) /
+                quantity
+              : heldCost;
+          const merged: Asset = {
+            ...existing,
+            marketPosition: {
+              ...held,
+              quantity,
+              purchasePrice,
+            },
+          };
+          await this.assetsRepository.updateAsset(existing.id, merged);
+          const value = await this.computeValueAsync(merged);
+          await this.writeUnlinkedValuationPoint(
+            merged,
+            value,
+            `Cập nhật vị thế: ${merged.name}`,
+          );
+          await this.assetsRepository.updateAssetCurrentValue(merged.id, value);
+          return { asset: merged, currentValue: value };
+        }
+      }
       await this.assetsRepository.insertAsset(asset);
-      return this.writeInitialValuation(asset);
+      const currentValue = await this.writeInitialValuation(asset);
+      return { asset, currentValue };
     });
-    await this.snapshots.onAssetChanged(householdId, asset.id);
-    return this.toAssetRecord(asset, currentValue);
+    await this.snapshots.onAssetChanged(householdId, result.asset.id);
+    return this.toAssetRecord(result.asset, result.currentValue);
   }
 
   async updateAsset(
@@ -336,13 +425,17 @@ export class AssetsService {
       liquidity: payload.liquidity ?? current.liquidity,
       currency: payload.currency ?? current.currency,
       note: payload.note ?? current.note,
+      areaSqm: payload.areaSqm !== undefined ? payload.areaSqm : current.areaSqm,
       manualValue:
         payload.manualValue !== undefined
           ? payload.manualValue
           : current.manualValue,
       marketPosition:
         payload.marketPosition !== undefined
-          ? payload.marketPosition
+          ? {
+              ...current.marketPosition,
+              ...payload.marketPosition,
+            }
           : current.marketPosition,
       calculationTerm:
         payload.calculationTerm !== undefined
@@ -350,16 +443,22 @@ export class AssetsService {
           : current.calculationTerm,
     });
 
-    // The asset row, its revaluation event (only when the value actually moved)
-    // and its valuation update atomically. A user re-pricing the asset directly
-    // (manualValue, unitPrice, quantity, term…) is logged as an `asset_update`
-    // money event so the change appears in history without touching a wallet.
+    // Persist the asset and its valuation atomically. Updating only the latest
+    // market price is a quote refresh, not a ledger event: it writes an unlinked
+    // history point. Changes to cost basis/position or another valuation source
+    // still create a neutral `asset_update` event.
     const oldValue = await this.computeValueAsync(current);
     const currentValue = await this.prisma.runInTransaction(async () => {
       await this.assetsRepository.updateAsset(assetId, next);
       const value = await this.computeValueAsync(next);
+      const valueChanged = value !== oldValue;
+      const latestMarketPriceOnly =
+        valueChanged && this.isLatestMarketPriceOnlyUpdate(current, next);
+      if (latestMarketPriceOnly) {
+        await this.writeLatestMarketPricePoint(next, value);
+      }
       const context =
-        value !== oldValue
+        valueChanged && !latestMarketPriceOnly
           ? await this.logRevaluation(next, oldValue, value, 'Định giá lại')
           : undefined;
       return this.upsertCurrentValuation(next, context);
@@ -373,7 +472,7 @@ export class AssetsService {
    * so revaluation-delta detection and the persisted point can never diverge.
    */
   private async computeValueAsync(asset: Asset): Promise<number> {
-    const marketPrices = await this.assetsRepository.getMarketPrices();
+    const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
     return computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
   }
@@ -383,6 +482,68 @@ export class AssetsService {
    *  separate from the seed `AS_OF` constant (used for value computation). */
   private todayIso(): string {
     return new Date().toISOString().slice(0, 10);
+  }
+
+  /**
+   * Whether a market asset changed only because its latest observed price was
+   * refreshed. Cost basis (`purchasePrice`) and position identity/quantity are
+   * deliberately compared; changing any of them remains a ledger-visible
+   * revaluation and creates `asset_update`.
+   */
+  private isLatestMarketPriceOnlyUpdate(current: Asset, next: Asset): boolean {
+    if (
+      current.valuationMode !== 'market_priced' ||
+      next.valuationMode !== 'market_priced' ||
+      !current.marketPosition ||
+      !next.marketPosition
+    ) {
+      return false;
+    }
+    const before = current.marketPosition;
+    const after = next.marketPosition;
+    const positionUnchanged =
+      before.assetClass === after.assetClass &&
+      before.symbol === after.symbol &&
+      before.quantity === after.quantity &&
+      before.unit === after.unit &&
+      before.quoteCurrency === after.quoteCurrency &&
+      before.purchasePrice === after.purchasePrice;
+    const latestPriceChanged =
+      before.lastPrice !== after.lastPrice ||
+      before.lastPriceAt !== after.lastPriceAt;
+    return positionUnchanged && latestPriceChanged;
+  }
+
+  /** Record a user-entered current market price without manufacturing a money event. */
+  private async writeLatestMarketPricePoint(
+    asset: Asset,
+    value: number,
+  ): Promise<void> {
+    await this.writeUnlinkedValuationPoint(
+      asset,
+      value,
+      `Cập nhật giá thị trường: ${asset.name}`,
+      { method: 'manual', source: 'user', confidenceLevel: 'high' },
+    );
+  }
+
+  /** Write/update the one unlinked value-history point for an asset on today. */
+  private async writeUnlinkedValuationPoint(
+    asset: Asset,
+    value: number,
+    note: string,
+    lineage = this.valuationLineage(asset),
+  ): Promise<void> {
+    await this.assetsRepository.insertAssetValueHistory({
+      id: this.assetsRepository.createId('valuation'),
+      assetId: asset.id,
+      householdId: asset.householdId,
+      valuationDate: this.todayIso(),
+      value,
+      currency: asset.currency,
+      note,
+      ...lineage,
+    });
   }
 
   /**
@@ -752,6 +913,24 @@ export class AssetsService {
       if (remaining <= 0) {
         fullySold = true;
       }
+    } else if (asset.type === 'real_estate' && asset.areaSqm !== undefined) {
+      const currentArea = asset.areaSqm;
+      const soldArea = sale.sellAll ? currentArea : (sale.quantitySold ?? 0);
+      if (soldArea > currentArea) {
+        throw new BadRequestException('Area sold exceeds the current property area');
+      }
+      next.areaSqm = sale.sellAll ? 0 : Math.max(0, currentArea - soldArea);
+      const currentValue = asset.manualValue ?? 0;
+      next.manualValue = sale.sellAll
+        ? 0
+        : Math.max(0, currentValue - (sale.valueSold ?? 0));
+      if (next.areaSqm <= 0) fullySold = true;
+    } else if (asset.type === 'bond' && asset.calculationTerm) {
+      const current = asset.calculationTerm.principalAmount;
+      const sold = sale.sellAll ? current : (sale.valueSold ?? 0);
+      const remaining = sale.sellAll ? 0 : Math.max(0, current - sold);
+      next.calculationTerm = { ...asset.calculationTerm, principalAmount: remaining };
+      if (remaining <= 0) fullySold = true;
     } else {
       // Manual asset: reduce the stored value by the sold portion.
       const current = asset.manualValue ?? 0;
@@ -768,8 +947,11 @@ export class AssetsService {
       next.soldAt = sale.soldOn;
       if (next.marketPosition) {
         next.marketPosition = { ...next.marketPosition, quantity: 0 };
+      } else if (next.type === 'bond' && next.calculationTerm) {
+        next.calculationTerm = { ...next.calculationTerm, principalAmount: 0 };
       } else {
         next.manualValue = 0;
+        if (next.type === 'real_estate') next.areaSqm = 0;
       }
     }
 
@@ -798,6 +980,14 @@ export class AssetsService {
       next.marketPosition = {
         ...asset.marketPosition,
         quantity: asset.marketPosition.quantity + (sale.quantitySold ?? 0),
+      };
+    } else if (asset.type === 'real_estate' && asset.areaSqm !== undefined) {
+      next.areaSqm = asset.areaSqm + (sale.quantitySold ?? 0);
+      next.manualValue = (asset.manualValue ?? 0) + (sale.valueSold ?? 0);
+    } else if (asset.type === 'bond' && asset.calculationTerm) {
+      next.calculationTerm = {
+        ...asset.calculationTerm,
+        principalAmount: asset.calculationTerm.principalAmount + (sale.valueSold ?? 0),
       };
     } else {
       next.manualValue = (asset.manualValue ?? 0) + (sale.valueSold ?? 0);
@@ -907,7 +1097,7 @@ export class AssetsService {
   private async getAssetRecords(householdId: string) {
     const [assets, marketPrices, fxRates] = await Promise.all([
       this.assetsRepository.findAssetsByHousehold(householdId),
-      this.assetsRepository.getMarketPrices(),
+      this.marketData.getMarketPrices(),
       this.assetsRepository.getFxRates(),
     ]);
 
@@ -1005,7 +1195,7 @@ export class AssetsService {
   ): Promise<number> {
     // Called inside the asset create/update transaction (shared connection), so
     // these reads run sequentially rather than concurrently on the same client.
-    const marketPrices = await this.assetsRepository.getMarketPrices();
+    const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
     const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
 
@@ -1039,7 +1229,7 @@ export class AssetsService {
    * `moneyEventId`. Runs inside the create transaction (shared connection).
    */
   private async writeInitialValuation(asset: Asset): Promise<number> {
-    const marketPrices = await this.assetsRepository.getMarketPrices();
+    const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
     const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
 
@@ -1061,9 +1251,8 @@ export class AssetsService {
    * Lineage for a valuation point derived from the asset's mode: where the
    * number came from + how much we trust it. `manual` = user-entered (high
    * confidence, no external source); `formula` ties back to the calculation
-   * term; `market_priced` will carry marketPriceId/fxRateId once a pricing-API
-   * writer populates those tables. marketPriceId/fxRateId/calculationTermId stay
-   * null until their source rows are wired.
+   * term. Market position details stay in `asset_market_positions`; history
+   * stores only the resulting value and its high-level lineage.
    */
   private valuationLineage(asset: Asset): {
     method: AssetValueHistory['method'];

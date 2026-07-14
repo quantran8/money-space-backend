@@ -5,7 +5,6 @@ import {
   mapAssetValueHistory,
   mapFxRate,
   mapHousehold,
-  mapMarketPrice,
   mapMoneyEvent,
   mapSnapshot,
 } from '../../../common/repositories/money-space.mapper';
@@ -14,12 +13,11 @@ import {
   PrismaRepository,
 } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
-import { Asset } from '../entities/asset.entity';
+import { Asset, AssetClass } from '../entities/asset.entity';
 import { AssetValueHistory } from '../entities/asset-value-history.entity';
 import { SnapshotPoint } from '../../dashboard/entities/snapshot-point.entity';
 import { Household } from '../../households/entities/household.entity';
 import { FxRate } from '../../market-data/entities/fx-rate.entity';
-import { MarketPrice } from '../../market-data/entities/market-price.entity';
 import { MoneyEvent } from '../../money-events/entities/money-event.entity';
 import { AssetsRepository } from './assets.repository.interface';
 
@@ -80,6 +78,46 @@ export class PrismaAssetsRepository
       : undefined;
   }
 
+  async findActiveMarketAssetBySymbol(
+    householdId: string,
+    assetClass: AssetClass,
+    symbol: string,
+  ): Promise<Asset | undefined> {
+    const asset = await this.prisma.asset.findFirst({
+      where: {
+        householdId,
+        status: 'active',
+        deletedAt: null,
+        marketPositions: {
+          some: {
+            assetClass,
+            symbol: { equals: symbol, mode: 'insensitive' },
+            deletedAt: null,
+          },
+        },
+      },
+      include: {
+        marketPositions: {
+          where: {
+            assetClass,
+            symbol: { equals: symbol, mode: 'insensitive' },
+            deletedAt: null,
+          },
+          take: 1,
+        },
+        calculationTerms: { where: { deletedAt: null }, take: 1 },
+      },
+    });
+
+    return asset
+      ? mapAsset(
+          asset,
+          asset.marketPositions[0],
+          asset.calculationTerms[0],
+        )
+      : undefined;
+  }
+
   async insertAsset(asset: Asset): Promise<void> {
     // Single round-trip: insert the asset while deriving `created_by` from the
     // household row in one statement. If the household doesn't exist (or is
@@ -91,7 +129,7 @@ export class PrismaAssetsRepository
     const currentValue = asset.manualValue ?? 0;
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO assets
-        (id, household_id, name, type, valuation_mode, current_value,
+        (id, household_id, name, type, valuation_mode, current_value, area_sqm,
          currency, value_updated_at, liquidity, note, created_by, updated_at)
       SELECT
         ${asset.id}::uuid,
@@ -100,6 +138,7 @@ export class PrismaAssetsRepository
         ${asset.type}::"AssetType",
         ${asset.valuationMode}::"AssetValuationMode",
         ${currentValue}::numeric,
+        ${asset.areaSqm ?? null}::numeric,
         ${asset.currency},
         now(),
         ${asset.liquidity}::"AssetLiquidity",
@@ -172,6 +211,7 @@ export class PrismaAssetsRepository
         note: asset.note,
         status: asset.status,
         soldAt: asset.soldAt ? new Date(asset.soldAt) : null,
+        areaSqm: asset.areaSqm ?? null,
       } as any,
     });
     await this.upsertAssetDetails(asset);
@@ -260,7 +300,6 @@ export class PrismaAssetsRepository
       // Lineage — provenance of the number (nullable until a source exists).
       source: valuation.source ?? null,
       confidenceLevel: valuation.confidenceLevel ?? null,
-      marketPriceId: valuation.marketPriceId ?? null,
       fxRateId: valuation.fxRateId ?? null,
       calculationTermId: valuation.calculationTermId ?? null,
       deletedAt: null,
@@ -344,11 +383,6 @@ export class PrismaAssetsRepository
     return snapshots.map((snapshot) => mapSnapshot(snapshot));
   }
 
-  async getMarketPrices(): Promise<MarketPrice[]> {
-    const prices = await this.findLatestMarketPrices();
-    return prices.map((price) => mapMarketPrice(price));
-  }
-
   async getFxRates(): Promise<FxRate[]> {
     const rates = await this.findLatestFxRates();
     return rates.map((rate) => mapFxRate(rate));
@@ -373,7 +407,11 @@ export class PrismaAssetsRepository
         quantity: asset.marketPosition.quantity,
         unit: asset.marketPosition.unit,
         quoteCurrency: asset.marketPosition.quoteCurrency,
-        unitPrice: asset.marketPosition.unitPrice ?? null,
+        purchasePrice: asset.marketPosition.purchasePrice ?? null,
+        lastPrice: asset.marketPosition.lastPrice ?? null,
+        lastPriceAt: asset.marketPosition.lastPriceAt
+          ? new Date(asset.marketPosition.lastPriceAt)
+          : null,
         deletedAt: null,
       } as any;
       const existing = await this.findActiveAssetDetail(

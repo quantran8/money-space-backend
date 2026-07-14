@@ -287,37 +287,37 @@ model Currency {
 }
 
 model Profile {
-  id                       String            @id @db.Uuid
-  fullName                 String?           @map("full_name")
-  displayName              String?           @map("display_name")
-  avatarUrl                String?           @map("avatar_url")
+  id                       String              @id @db.Uuid
+  fullName                 String?             @map("full_name")
+  displayName              String?             @map("display_name")
+  avatarUrl                String?             @map("avatar_url")
   email                    String?
   phone                    String?
-  createdAt                DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
-  householdsCreated        Household[]       @relation("HouseholdCreatedBy")
-  householdMembers         HouseholdMember[] @relation("HouseholdMemberUser")
-  invitedHouseholdMembers  HouseholdMember[] @relation("HouseholdMemberInvitedBy")
-  householdInvitesSent     HouseholdInvite[] @relation("HouseholdInviteInvitedBy")
-  householdInvitesAccepted HouseholdInvite[] @relation("HouseholdInviteAcceptedBy")
-  snapshotsCreated         Snapshot[]        @relation("SnapshotCreatedBy")
-  assetsCreated            Asset[]           @relation("AssetCreatedBy")
-  assetsUpdated            Asset[]           @relation("AssetUpdatedBy")
+  createdAt                DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  householdsCreated        Household[]         @relation("HouseholdCreatedBy")
+  householdMembers         HouseholdMember[]   @relation("HouseholdMemberUser")
+  invitedHouseholdMembers  HouseholdMember[]   @relation("HouseholdMemberInvitedBy")
+  householdInvitesSent     HouseholdInvite[]   @relation("HouseholdInviteInvitedBy")
+  householdInvitesAccepted HouseholdInvite[]   @relation("HouseholdInviteAcceptedBy")
+  snapshotsCreated         Snapshot[]          @relation("SnapshotCreatedBy")
+  assetsCreated            Asset[]             @relation("AssetCreatedBy")
+  assetsUpdated            Asset[]             @relation("AssetUpdatedBy")
   assetValueHistoryCreated AssetValueHistory[] @relation("AssetValueHistoryCreatedBy")
   assetValueHistoryUpdated AssetValueHistory[] @relation("AssetValueHistoryUpdatedBy")
-  upcomingPaymentsCreated  UpcomingPayment[] @relation("UpcomingPaymentCreatedBy")
-  upcomingPaymentsUpdated  UpcomingPayment[] @relation("UpcomingPaymentUpdatedBy")
-  upcomingPaymentsPaidBy   UpcomingPayment[] @relation("UpcomingPaymentPaidBy")
-  debtsCreated             Debt[]            @relation("DebtCreatedBy")
-  debtsUpdated             Debt[]            @relation("DebtUpdatedBy")
-  financialGoalsCreated    FinancialGoal[]   @relation("FinancialGoalCreatedBy")
-  financialGoalsUpdated    FinancialGoal[]   @relation("FinancialGoalUpdatedBy")
-  moneyEventsCreated       MoneyEvent[]      @relation("MoneyEventCreatedBy")
-  moneyEventsUpdated       MoneyEvent[]      @relation("MoneyEventUpdatedBy")
-  attentionItemsCreated    AttentionItem[]   @relation("AttentionItemCreatedBy")
-  attentionItemsSeen       AttentionItem[]   @relation("AttentionItemSeenBy")
-  attentionItemsResolved   AttentionItem[]   @relation("AttentionItemResolvedBy")
-  auditLogsActed           AuditLog[]        @relation("AuditLogActor")
+  upcomingPaymentsCreated  UpcomingPayment[]   @relation("UpcomingPaymentCreatedBy")
+  upcomingPaymentsUpdated  UpcomingPayment[]   @relation("UpcomingPaymentUpdatedBy")
+  upcomingPaymentsPaidBy   UpcomingPayment[]   @relation("UpcomingPaymentPaidBy")
+  debtsCreated             Debt[]              @relation("DebtCreatedBy")
+  debtsUpdated             Debt[]              @relation("DebtUpdatedBy")
+  financialGoalsCreated    FinancialGoal[]     @relation("FinancialGoalCreatedBy")
+  financialGoalsUpdated    FinancialGoal[]     @relation("FinancialGoalUpdatedBy")
+  moneyEventsCreated       MoneyEvent[]        @relation("MoneyEventCreatedBy")
+  moneyEventsUpdated       MoneyEvent[]        @relation("MoneyEventUpdatedBy")
+  attentionItemsCreated    AttentionItem[]     @relation("AttentionItemCreatedBy")
+  attentionItemsSeen       AttentionItem[]     @relation("AttentionItemSeenBy")
+  attentionItemsResolved   AttentionItem[]     @relation("AttentionItemResolvedBy")
+  auditLogsActed           AuditLog[]          @relation("AuditLogActor")
 
   @@map("profiles")
 }
@@ -452,6 +452,7 @@ model Asset {
   liquidity            AssetLiquidity         @default(usable_now)
   status               AssetStatus            @default(active)
   soldAt               DateTime?              @map("sold_at") @db.Timestamptz(6)
+  areaSqm              Decimal?               @map("area_sqm") @db.Decimal(14, 4)
   purpose              String?
   visibilityLevel      VisibilityLevel        @default(detail) @map("visibility_level")
   note                 String?
@@ -495,7 +496,7 @@ model AssetMarketPosition {
   quantity          Decimal    @db.Decimal(20, 8)
   unit              String?
   quoteCurrency     String     @map("quote_currency")
-  unitPrice         Decimal?   @map("unit_price") @db.Decimal(20, 8)
+  purchasePrice     Decimal?   @map("purchase_price") @db.Decimal(20, 8)
   priceSource       String?    @map("price_source")
   priceSourceSymbol String?    @map("price_source_symbol")
   lastPrice         Decimal?   @map("last_price") @db.Decimal(20, 8)
@@ -511,33 +512,15 @@ model AssetMarketPosition {
   @@map("asset_market_positions")
 }
 
-model MarketPrice {
-  id                String           @id @default(uuid(7)) @db.Uuid
-  assetClass        AssetClass       @map("asset_class")
-  symbol            String
-  market            String?
-  quoteCurrency     String           @map("quote_currency")
-  price             Decimal          @db.Decimal(20, 8)
-  priceTime         DateTime         @map("price_time") @db.Timestamptz(6)
-  source            String
-  sourcePayloadHash String?          @map("source_payload_hash")
-  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  valueHistory      AssetValueHistory[]
-
-  @@unique([assetClass, symbol, market, quoteCurrency, source, priceTime], map: "market_prices_dedup_unique")
-  @@index([assetClass, symbol, market, quoteCurrency, priceTime(sort: Desc)])
-  @@map("market_prices")
-}
-
 model FxRate {
-  id              String           @id @default(uuid(7)) @db.Uuid
-  baseCurrency    String           @map("base_currency")
-  quoteCurrency   String           @map("quote_currency")
-  rate            Decimal          @db.Decimal(20, 8)
-  rateTime        DateTime         @map("rate_time") @db.Timestamptz(6)
-  source          String
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  valueHistory    AssetValueHistory[]
+  id            String              @id @default(uuid(7)) @db.Uuid
+  baseCurrency  String              @map("base_currency")
+  quoteCurrency String              @map("quote_currency")
+  rate          Decimal             @db.Decimal(20, 8)
+  rateTime      DateTime            @map("rate_time") @db.Timestamptz(6)
+  source        String
+  createdAt     DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  valueHistory  AssetValueHistory[]
 
   @@unique([baseCurrency, quoteCurrency, source, rateTime], map: "fx_rates_dedup_unique")
   @@index([baseCurrency, quoteCurrency, rateTime(sort: Desc)])
@@ -590,7 +573,6 @@ model AssetValueHistory {
   valuationMethod     AssetValuationMethod  @map("valuation_method")
   source              String?
   confidenceLevel     ConfidenceLevel?      @map("confidence_level")
-  marketPriceId       String?               @map("market_price_id") @db.Uuid
   fxRateId            String?               @map("fx_rate_id") @db.Uuid
   calculationTermId   String?               @map("calculation_term_id") @db.Uuid
   // The money event whose effect produced this valuation point — the linkage
@@ -607,7 +589,6 @@ model AssetValueHistory {
   deletedAt           DateTime?             @map("deleted_at") @db.Timestamptz(6)
   household           Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
   asset               Asset                 @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  marketPrice         MarketPrice?          @relation(fields: [marketPriceId], references: [id])
   fxRate              FxRate?               @relation(fields: [fxRateId], references: [id])
   calculationTerm     AssetCalculationTerm? @relation(fields: [calculationTermId], references: [id])
   moneyEvent          MoneyEvent?           @relation("MoneyEventValueHistory", fields: [moneyEventId], references: [id], onDelete: SetNull)
@@ -760,74 +741,74 @@ model UpcomingPayment {
 }
 
 model FinancialGoal {
-  id            String       @id @default(uuid(7)) @db.Uuid
-  householdId   String       @map("household_id") @db.Uuid
-  name          String
-  category      GoalCategory @default(other)
-  targetAmount  Decimal      @default(0) @map("target_amount") @db.Decimal(14, 2)
+  id           String       @id @default(uuid(7)) @db.Uuid
+  householdId  String       @map("household_id") @db.Uuid
+  name         String
+  category     GoalCategory @default(other)
+  targetAmount Decimal      @default(0) @map("target_amount") @db.Decimal(14, 2)
   // current_amount is DERIVED at read time (Σ goal_contribution money events),
   // not stored — the old cache column drifted because nothing maintained it.
-  deadline      DateTime?    @db.Date
-  priority      GoalPriority @default(medium)
-  status        GoalStatus   @default(active)
+  deadline     DateTime?    @db.Date
+  priority     GoalPriority @default(medium)
+  status       GoalStatus   @default(active)
   // No source wallet on the goal — the money source is chosen per contribution
   // (each goal_contribution money event carries its own fromAssetId).
-  note          String?
-  createdById   String       @map("created_by") @db.Uuid
-  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById   String?      @map("updated_by") @db.Uuid
-  updatedAt     DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt     DateTime?    @map("deleted_at") @db.Timestamptz(6)
-  household     Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy     Profile      @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
-  updatedBy     Profile?     @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
-  moneyEvents   MoneyEvent[] @relation("MoneyEventFinancialGoal")
+  note         String?
+  createdById  String       @map("created_by") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById  String?      @map("updated_by") @db.Uuid
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime?    @map("deleted_at") @db.Timestamptz(6)
+  household    Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy    Profile      @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
+  updatedBy    Profile?     @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
+  moneyEvents  MoneyEvent[] @relation("MoneyEventFinancialGoal")
 
   @@index([householdId, status])
   @@map("financial_goals")
 }
 
 model MoneyEvent {
-  id                String           @id @default(uuid(7)) @db.Uuid
-  householdId       String           @map("household_id") @db.Uuid
+  id                String              @id @default(uuid(7)) @db.Uuid
+  householdId       String              @map("household_id") @db.Uuid
   description       String?
-  eventType         MoneyEventType   @map("event_type")
+  eventType         MoneyEventType      @map("event_type")
   // `category` is a free string CODE resolved against `money_event_categories`
   // (seeded system rows + per-household custom rows) at the app layer — NOT a
   // Postgres enum, so adding a category is a data insert, not a migration.
-  category          String           @default("other")
-  amount            Decimal          @default(0) @db.Decimal(14, 2)
-  feeAmount         Decimal          @default(0) @map("fee_amount") @db.Decimal(14, 2)
-  soldQuantity      Decimal?         @map("sold_quantity") @db.Decimal(20, 8)
-  soldValue         Decimal?         @map("sold_value") @db.Decimal(14, 2)
-  currency          String           @default("VND")
-  eventDate         DateTime         @map("event_date") @db.Date
+  category          String              @default("other")
+  amount            Decimal             @default(0) @db.Decimal(14, 2)
+  feeAmount         Decimal             @default(0) @map("fee_amount") @db.Decimal(14, 2)
+  soldQuantity      Decimal?            @map("sold_quantity") @db.Decimal(20, 8)
+  soldValue         Decimal?            @map("sold_value") @db.Decimal(14, 2)
+  currency          String              @default("VND")
+  eventDate         DateTime            @map("event_date") @db.Date
   direction         MoneyDirection
-  fromAssetId       String?          @map("from_asset_id") @db.Uuid
-  toAssetId         String?          @map("to_asset_id") @db.Uuid
-  upcomingPaymentId String?          @map("upcoming_payment_id") @db.Uuid
-  debtId            String?          @map("debt_id") @db.Uuid
-  financialGoalId   String?          @map("financial_goal_id") @db.Uuid
-  snapshotId        String?          @map("snapshot_id") @db.Uuid
+  fromAssetId       String?             @map("from_asset_id") @db.Uuid
+  toAssetId         String?             @map("to_asset_id") @db.Uuid
+  upcomingPaymentId String?             @map("upcoming_payment_id") @db.Uuid
+  debtId            String?             @map("debt_id") @db.Uuid
+  financialGoalId   String?             @map("financial_goal_id") @db.Uuid
+  snapshotId        String?             @map("snapshot_id") @db.Uuid
   // is_large_event / is_attention_needed dropped: never read in code, and
   // attention is centralized in the AttentionItem table (derive from amount /
   // AttentionItem, don't store denormalized flags on the ledger).
-  visibilityLevel   VisibilityLevel  @default(detail) @map("visibility_level")
-  status            MoneyEventStatus @default(recorded)
-  createdById       String           @map("created_by") @db.Uuid
-  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById       String?          @map("updated_by") @db.Uuid
-  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt         DateTime?        @map("deleted_at") @db.Timestamptz(6)
-  household         Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  fromAsset         Asset?           @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
-  toAsset           Asset?           @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
-  upcomingPayment   UpcomingPayment? @relation("MoneyEventUpcomingPayment", fields: [upcomingPaymentId], references: [id])
-  debt              Debt?            @relation(fields: [debtId], references: [id])
-  financialGoal     FinancialGoal?   @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
-  snapshot          Snapshot?        @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
-  createdBy         Profile          @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
-  updatedBy         Profile?         @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
+  visibilityLevel   VisibilityLevel     @default(detail) @map("visibility_level")
+  status            MoneyEventStatus    @default(recorded)
+  createdById       String              @map("created_by") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById       String?             @map("updated_by") @db.Uuid
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt         DateTime?           @map("deleted_at") @db.Timestamptz(6)
+  household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromAsset         Asset?              @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
+  toAsset           Asset?              @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
+  upcomingPayment   UpcomingPayment?    @relation("MoneyEventUpcomingPayment", fields: [upcomingPaymentId], references: [id])
+  debt              Debt?               @relation(fields: [debtId], references: [id])
+  financialGoal     FinancialGoal?      @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
+  snapshot          Snapshot?           @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
+  createdBy         Profile             @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
+  updatedBy         Profile?            @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
   valueHistory      AssetValueHistory[] @relation("MoneyEventValueHistory")
 
   @@index([householdId, eventDate(sort: Desc)])

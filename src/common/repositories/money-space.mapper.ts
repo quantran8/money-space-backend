@@ -12,7 +12,6 @@ import type {
   HouseholdConfig,
 } from '../../modules/households/entities/household.entity';
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
-import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
 import type { HouseholdMember } from '../../modules/members/entities/member.entity';
 import type { MoneyEventCategory } from '../../modules/money-event-categories/entities/money-event-category.entity';
 import type { MoneyEvent } from '../../modules/money-events/entities/money-event.entity';
@@ -200,12 +199,28 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
           quoteCurrency: position.quoteCurrency ?? position.quote_currency,
           // Keep undefined (not 0) when unset, so valuation can fall back to
           // the cached market price rather than reading the position as free.
-          unitPrice:
-            (position.unitPrice ?? position.unit_price) != null
-              ? numberFromDb(position.unitPrice ?? position.unit_price)
+          purchasePrice:
+            (position.purchasePrice ?? position.purchase_price) != null
+              ? numberFromDb(
+                  position.purchasePrice ?? position.purchase_price,
+                )
+              : undefined,
+          lastPrice:
+            (position.lastPrice ?? position.last_price) != null
+              ? numberFromDb(position.lastPrice ?? position.last_price)
+              : undefined,
+          lastPriceAt:
+            (position.lastPriceAt ?? position.last_price_at) != null
+              ? new Date(
+                  position.lastPriceAt ?? position.last_price_at,
+                ).toISOString()
               : undefined,
         }
       : undefined,
+    areaSqm:
+      (row.areaSqm ?? row.area_sqm) != null
+        ? numberFromDb(row.areaSqm ?? row.area_sqm)
+        : undefined,
     calculationTerm: term
       ? {
           calculationType: term.calculationType ?? term.calculation_type,
@@ -251,7 +266,6 @@ export function mapAssetValueHistory(row: DbRow): AssetValueHistory {
     note: row.note ?? '',
     source: row.source ?? undefined,
     confidenceLevel: row.confidenceLevel ?? row.confidence_level ?? undefined,
-    marketPriceId: row.marketPriceId ?? row.market_price_id ?? undefined,
     fxRateId: row.fxRateId ?? row.fx_rate_id ?? undefined,
     calculationTermId:
       row.calculationTermId ?? row.calculation_term_id ?? undefined,
@@ -271,18 +285,6 @@ export function mapSnapshot(row: DbRow): SnapshotPoint {
     ),
     totalDebt: numberFromDb(row.totalDebt ?? row.total_debt),
     attentionCount: numberFromDb(row.attentionCount ?? row.attention_count),
-  };
-}
-
-export function mapMarketPrice(row: DbRow): MarketPrice {
-  return {
-    assetClass: row.assetClass ?? row.asset_class,
-    symbol: row.symbol,
-    price: numberFromDb(row.price),
-    unit: row.unit ?? '',
-    quoteCurrency: row.quoteCurrency ?? row.quote_currency,
-    priceTime: row.priceTime ?? row.price_time,
-    source: row.source,
   };
 }
 

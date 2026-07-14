@@ -250,13 +250,15 @@ export function computeCurrentValue(
   }
 
   if (asset.valuationMode === 'market_priced' && asset.marketPosition) {
-    const { unitPrice, quoteCurrency, quantity } = asset.marketPosition;
+    const { purchasePrice, lastPrice, quoteCurrency, quantity } =
+      asset.marketPosition;
 
-    // Prefer the user-entered unit price; fall back to the cached market price.
-    if (typeof unitPrice === 'number' && Number.isFinite(unitPrice)) {
+    // A manually recorded latest price wins. Otherwise prefer the market cache;
+    // the original purchase price is only the final fallback/cost basis.
+    if (typeof lastPrice === 'number' && Number.isFinite(lastPrice)) {
       const fx = fxRateToVnd(fxRates, quoteCurrency);
       // Unknown FX rate → value undefined; return 0 rather than mis-price it.
-      return fx === null ? 0 : quantity * unitPrice * fx;
+      return fx === null ? 0 : quantity * lastPrice * fx;
     }
 
     const quote = quoteFor(
@@ -264,12 +266,19 @@ export function computeCurrentValue(
       asset.marketPosition.assetClass,
       asset.marketPosition.symbol,
     );
-    if (!quote) {
-      return 0;
+    if (quote) {
+      const fx = fxRateToVnd(fxRates, quote.quoteCurrency);
+      return fx === null ? 0 : quantity * quote.price * fx;
     }
 
-    const fx = fxRateToVnd(fxRates, quote.quoteCurrency);
-    return fx === null ? 0 : quantity * quote.price * fx;
+    if (
+      typeof purchasePrice === 'number' &&
+      Number.isFinite(purchasePrice)
+    ) {
+      const fx = fxRateToVnd(fxRates, quoteCurrency);
+      return fx === null ? 0 : quantity * purchasePrice * fx;
+    }
+    return 0;
   }
 
   if (asset.valuationMode === 'formula_calculated' && asset.calculationTerm) {

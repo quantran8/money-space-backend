@@ -4,7 +4,7 @@ export type MoneyEventType =
   | 'transfer'
   | 'asset_purchase'
   | 'asset_sale'
-  // A revaluation: the user re-priced an asset directly (manualValue, unitPrice,
+  // A revaluation: the user re-priced an asset directly (manualValue, lastPrice,
   // quantity, term…). `neutral` — records why the value changed for history, but
   // moves no wallet and is excluded from income/expense reports. See [[asset-valuation]].
   | 'asset_update'

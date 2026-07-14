@@ -13,6 +13,7 @@ export interface CreateAssetDto {
   liquidity: AssetLiquidity;
   currency?: string;
   note?: string;
+  areaSqm?: number;
   manualValue?: number;
   marketPosition?: MarketPosition;
   calculationTerm?: CalculationTerm;

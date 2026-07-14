@@ -28,14 +28,16 @@ Single dispatch entry point. Returns VND, or `null`/`0` when a price is unknown.
 
 - **`manual`** → `manualValue ?? 0`.
 - **`market_priced`** → `quantity × price × fxRateToVnd(quoteCurrency)`.
-  - **Price source precedence**: user-entered `marketPosition.unitPrice` (if set)
-    wins; otherwise fall back to the `quoteFor()` market-price cache lookup.
-  - `unitPrice` is persisted on `asset_market_positions.unit_price` (nullable
-    `Decimal(20,8)`); NULL means "use the market-price cache". Lets the user type
-    the price of 1 unit (1 BTC, 1 share, 1 chỉ gold) — the MVP path while the
-    pricing API is unwired.
+  - **Price source precedence**: `marketPosition.lastPrice` (latest manual
+    price) → `quoteFor()` market-price cache → original `purchasePrice`
+    as the final fallback/cost basis.
+  - `purchasePrice` is persisted on `asset_market_positions.purchase_price` as the
+    original purchase/cost price and is not overwritten by revaluation.
+    `lastPrice` / `lastPriceAt` are persisted in `last_price` / `last_price_at`
+    when the user updates the current price.
   - Quote matched by (assetClass, symbol), case-insensitive.
-  - Frontend returns `null` if no `unitPrice` and no known price; backend returns `0`.
+  - Frontend returns `null` if no position price and no known cached price;
+    backend returns `0`.
 - **`formula_calculated`** → **simple accrued interest** (non-compounding):
   ```
   current_value = principal + principal × (rate/100) × elapsedYears
@@ -114,8 +116,9 @@ their names — the *concept* of a valuation point is unchanged.
    the dashboard reads — mapping mode → method (`manual → manual`,
    `market_priced → market_price_api`, `formula_calculated → formula_calculated`)
    and writing lineage (`source` user/market_price_api/formula; `confidenceLevel`
-   high for manual else medium; `marketPriceId`/`fxRateId`/`calculationTermId`
-   null until wired).
+   high for manual else medium). Current position details remain in
+   `asset_market_positions`; history stores the resulting value rather than
+   duplicating quantity, purchase price, quote and FX inputs.
 2. **Always** writes the derived value back to `assets.current_value`
    (`updateAssetCurrentValue`) so the cache is true for EVERY mode.
 3. **When given a `ValuationContext`** (`{ moneyEventId, valuationDate }` — i.e.
@@ -135,8 +138,9 @@ a money event:**
   `moneyEventId`) plus the `current_value` cache. (`valuationLineage(asset)`
   derives method/source/confidence from the mode, shared with the linked-write
   path.)
-- **Direct re-pricing on update** (user edits `manualValue`/`unitPrice`/
-  `quantity`/term via *update* asset): `AssetsService.logRevaluation` writes a
+- **Direct cost-basis/position revaluation on update** (user edits
+  `manualValue`/`purchasePrice`/`quantity`/term via *update* asset):
+  `AssetsService.logRevaluation` writes a
   **neutral `asset_update` money event** (via
   `assetsRepository.insertRevaluationEvent`, `to_asset_id = asset`,
   `amount = new − old`) that moves no wallet and is excluded from
@@ -144,6 +148,12 @@ a money event:**
   actually moved. AssetsService writes `money_events` directly (its repo) to
   avoid the Assets↔MoneyEvents module cycle. (Create used to do this too — it no
   longer does.)
+- **Latest market-price refresh** (`lastPrice` / `lastPriceAt`) updates
+  `assets.current_value` and writes an unlinked, user-sourced history point for
+  the day. It deliberately creates **no** `money_event`: a quote refresh is not
+  a cash movement or a cost-basis adjustment. If `purchasePrice`, quantity, or
+  another position field changes in the same update, the normal `asset_update`
+  path still applies.
 - Saving-deposit interest: unchanged (`writeSavingValuationAt`, one dated point
   per credited period).
 
