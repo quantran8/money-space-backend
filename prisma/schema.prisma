@@ -164,23 +164,15 @@ enum AttentionLevel {
   urgent
 }
 
-enum DebtType {
-  family_loan
-  friend_loan
-  bank_loan
-  consumer_finance
-  mortgage
-  credit_card
-  installment
-  other
-}
-
+// Who the household borrowed from. Drives the debt's repayment rules:
+//   - bank_institution: fixed schedule (interest + term + payment amount are
+//     required); repayment money events are locked and can't be hand-edited.
+//   - relative / other: interest and a fixed term are optional; when the user
+//     sets an amount + schedule, editing a repayment event rebalances the next
+//     unpaid installment by the over/under-payment. See memory/debts.md.
 enum LenderType {
-  family
-  friend
-  bank
-  credit_institution
-  company
+  relative
+  bank_institution
   other
 }
 
@@ -335,6 +327,10 @@ model Household {
   name                  String
   currency              String                 @default("VND")
   updateFrequency       UpdateFrequency        @default(weekly) @map("update_frequency")
+  // Per-household config bag (jsonb). Holds household-scoped settings that don't
+  // warrant their own column, e.g. `{ "defaultEventCategoryCode": "housing" }`
+  // — the code auto-selected in the money-event form. Nullable / defaults to {}.
+  config                Json                   @default("{}") @map("config") @db.JsonB
   createdById           String                 @map("created_by") @db.Uuid
   createdAt             DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt             DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -664,7 +660,6 @@ model Debt {
   id                   String                   @id @default(uuid(7)) @db.Uuid
   householdId          String                   @map("household_id") @db.Uuid
   name                 String
-  debtType             DebtType                 @map("debt_type")
   lenderType           LenderType               @map("lender_type")
   lenderName           String?                  @map("lender_name")
   originalAmount       Decimal                  @default(0) @map("original_amount") @db.Decimal(14, 2)
@@ -795,7 +790,6 @@ model FinancialGoal {
 model MoneyEvent {
   id                String           @id @default(uuid(7)) @db.Uuid
   householdId       String           @map("household_id") @db.Uuid
-  title             String
   description       String?
   eventType         MoneyEventType   @map("event_type")
   // `category` is a free string CODE resolved against `money_event_categories`

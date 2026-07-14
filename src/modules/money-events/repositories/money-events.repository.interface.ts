@@ -59,13 +59,44 @@ export interface MoneyEventsRepository {
    */
   deleteMoneyEventsByDebt(householdId: string, debtId: string): Promise<void>;
   /**
-   * Decrement a debt's `outstandingAmount` by `amount`, floored at 0, scoped to
-   * the household. Used when a repayment event is recorded against a debt so the
-   * remaining balance reflects the payment.
+   * Adjust a debt's `outstandingAmount` by `delta` (may be negative to reduce or
+   * positive to raise), floored at 0, scoped to the household. A repayment
+   * reduces it (negative delta); reversing that repayment on an edit/delete
+   * raises it back (positive delta).
    */
-  reduceDebtOutstanding(
+  adjustDebtOutstanding(
     householdId: string,
     debtId: string,
-    amount: number,
+    delta: number,
   ): Promise<void>;
+  /**
+   * The repayment terms a debt-linked event needs to decide its side effects:
+   * the lender bucket (fixed-schedule lenders lock their events and never
+   * rebalance) and the fixed installment amount (the baseline an over/under
+   * payment is measured against). Undefined when the debt is absent/deleted.
+   */
+  findDebtRepaymentInfo(
+    householdId: string,
+    debtId: string,
+  ): Promise<DebtRepaymentInfo | undefined>;
+  /**
+   * Rebalance the next unpaid upcoming payment of a `relative`/`other` debt by
+   * `delta`: `nextAmount = max(0, nextAmount + delta)`. An overpayment passes a
+   * negative delta (next installment shrinks); an underpayment passes a positive
+   * delta (next installment grows). Total owed and the number of installments
+   * are unchanged. No-op when the debt has no future unpaid installment.
+   */
+  adjustNextUnpaidPayment(
+    householdId: string,
+    debtId: string,
+    afterDate: string,
+    delta: number,
+  ): Promise<void>;
+}
+
+/** Repayment terms of a debt, read by the events layer. */
+export interface DebtRepaymentInfo {
+  lenderType: 'relative' | 'bank_institution' | 'other';
+  /** The fixed installment amount, or undefined when no schedule is set. */
+  fixedPaymentAmount?: number;
 }

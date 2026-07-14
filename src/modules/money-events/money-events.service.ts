@@ -188,7 +188,25 @@ export class MoneyEventsService {
     await this.assetsService.assertWalletAsset(householdId, fromAssetId);
   }
 
+  /**
+   * `category` is required on a money event — it's the primary label now that
+   * `title` is gone. Reject a missing / empty / whitespace-only category with a
+   * 400. Used on create (always) and on update when the field is provided (an
+   * edit must not blank an existing category).
+   */
+  private assertCategoryPresent(category?: string): void {
+    if (!category || category.trim().length === 0) {
+      throw new BadRequestException('A money event must have a category.');
+    }
+  }
+
   async createMoneyEvent(householdId: string, payload: CreateMoneyEventDto) {
+    // `category` is mandatory — every event must be classified (the `title`
+    // field was dropped, so category is the primary way an event is labelled).
+    // Reject an empty/whitespace category up front (400). Internal callers
+    // (debts, saving interest, revaluations) always pass a code, so this only
+    // guards the user-facing create path.
+    this.assertCategoryPresent(payload.category);
     // Income/expense/transfer only move cash — their linked assets must be
     // spendable wallets. Reject a non-wallet source/destination up front (400)
     // before opening the write transaction.
@@ -210,7 +228,6 @@ export class MoneyEventsService {
     const event: MoneyEvent = {
       id: this.moneyEventsRepository.createId('event'),
       householdId,
-      title: payload.title.trim(),
       amount: payload.amount,
       feeAmount: payload.feeAmount ?? 0,
       soldQuantity: payload.soldQuantity,
@@ -239,7 +256,6 @@ export class MoneyEventsService {
     // The event insert, the wallet moves and the debt decrement all land (or
     // roll back) together, so they run in one transaction — sequentially, since
     // they share the transaction's single connection.
-    const repaysDebt = Boolean(event.debtId) && event.direction === 'outflow';
     // The wallet/sale effects fan out into ~15-20 sequential round-trips
     // (credit/debit → upsertCurrentValuation), so raise the timeout well above
     // the 5s default to keep the interactive transaction from aborting mid-write
@@ -252,13 +268,11 @@ export class MoneyEventsService {
         // a full sale). The wallet credit above already used the net amount
         // (amount - fee), so only the source-asset reduction remains.
         await this.applySaleEffects(event);
-        if (repaysDebt) {
-          await this.moneyEventsRepository.reduceDebtOutstanding(
-            householdId,
-            event.debtId as string,
-            event.amount,
-          );
-        }
+        // A repayment (debt-linked outflow) reduces the debt's outstanding and,
+        // for editable relative/other debts, rebalances the next installment by
+        // any over/under payment. The borrow inflow is a debt_update *inflow* and
+        // is excluded — it raises the wallet, it must not pay the debt down.
+        await this.applyDebtRepaymentEffects(householdId, event, -1);
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -389,7 +403,7 @@ export class MoneyEventsService {
       await this.prisma.runInTransaction(
         async () => {
           await this.createMoneyEvent(householdId, {
-            title: `Lãi tiết kiệm: ${asset.name}`,
+            note: `Lãi tiết kiệm: ${asset.name}`,
             amount: period.amount,
             isoDate: period.periodEnd,
             type: 'income',
@@ -446,13 +460,22 @@ export class MoneyEventsService {
     payload: UpdateMoneyEventDto,
   ) {
     const event = await this.ensureMoneyEvent(householdId, eventId);
+    // An edit that touches `category` must not blank it — category is required.
+    // (Omitting the field entirely leaves the existing category untouched.)
+    if (payload.category !== undefined) {
+      this.assertCategoryPresent(payload.category);
+    }
+    // A repayment recorded against a bank/institution debt is locked — its
+    // amount and schedule are fixed. Reject the edit before touching anything.
+    // (The debt's own borrow inflow is not a repayment, so re-dating it on a
+    // borrowedAt change still passes.)
+    await this.assertRepaymentEditable(householdId, event);
     const nextType = payload.type ?? event.type;
     const next: MoneyEvent = {
       ...event,
       ...payload,
       id: event.id,
       householdId: event.householdId,
-      title: payload.title?.trim() ?? event.title,
       note: payload.note?.trim() ?? event.note,
       type: nextType,
       direction: deriveDirection(
@@ -491,13 +514,19 @@ export class MoneyEventsService {
     // Reverse + re-apply is roughly double the wallet-effect round-trips of a
     // create, so raise the timeout above the 5s default to avoid aborting the
     // transaction mid-write and stranding its connection.
-    // A revaluation (`asset_update`) edit is special: its `amount` is the NEW
-    // absolute asset value (not a wallet move). Editing it must re-price the
-    // asset and update the linked `asset_value_history` point + `current_value`
-    // cache — a two-way sync back to the asset. `next.amount` (the value the user
-    // entered) drives it; we store the event's `amount` as the delta from the
-    // asset's value before this event (currentValue − old event amount) so the
-    // ledger stays consistent with the create path.
+    // A revaluation (`asset_update`) edit is special: its `amount` is the **diff**
+    // the record represents (e.g. −0,5tr when a wallet was revalued 5tr → 4,5tr),
+    // NOT a wallet move and NOT a new absolute value. Editing it means editing
+    // that diff, and the edit must:
+    //   1. shift the asset's running balance by how much the diff itself moved
+    //      (`newDelta − oldDelta`) — never overwrite the balance, so every
+    //      later inflow/outflow that stacked on top of this record stays intact
+    //      and the balance re-bases automatically; and
+    //   2. re-stamp this record's own `asset_value_history` point at the value the
+    //      asset held *at its date* (value-before-event + newDelta), not the
+    //      current "now" balance.
+    // `event.amount` is the OLD stored diff; `next.amount` is the NEW diff the
+    // user entered (signed). See `AssetsService.applyRevaluationDeltaEdit`.
     if (event.type === 'asset_update' && next.type === 'asset_update') {
       const assetId = event.toAssetId;
       if (!assetId) {
@@ -505,41 +534,38 @@ export class MoneyEventsService {
           'Revaluation event has no linked asset to update',
         );
       }
-      const newValue = next.amount;
+      const oldDelta = event.amount;
+      const newDelta = next.amount;
       await this.prisma.runInTransaction(
         async () => {
-          // Value the asset held just before this event applied: its current
-          // stored value minus the delta this event had recorded. Manual assets
-          // store it in `manualValue`; for derived assets there's no free value,
-          // so fall back to the old delta (best effort — revaluation is a manual
-          // concern).
-          const asset = await this.assetsService.getAssetEntity(
-            householdId,
-            assetId,
-          );
-          const currentStored =
-            asset.valuationMode === 'manual'
-              ? (asset.manualValue ?? 0)
-              : newValue;
-          const valueBeforeEvent = currentStored - event.amount;
-          const delta = newValue - valueBeforeEvent;
-          // Persist the event with amount = new delta, keeping date/title/note.
+          // Persist the event with amount = the new diff, keeping date/note.
           await this.moneyEventsRepository.updateMoneyEvent(eventId, {
             ...next,
-            amount: delta,
+            amount: newDelta,
           });
-          // Re-price the asset + refresh the linked history point at newValue.
-          await this.assetsService.applyRevaluationEdit(
+          // Shift the asset's running balance by (newDelta − oldDelta) and
+          // re-stamp its linked history point at the value-at-record-date.
+          // `applyRevaluationDeltaEdit` recovers the value-before-record itself by
+          // netting out this record's diff + every later event on the asset (it
+          // reads the events after the update above, excluding this record by id).
+          await this.assetsService.applyRevaluationDeltaEdit(
             householdId,
             assetId,
-            newValue,
+            {
+              moneyEventId: eventId,
+              eventDate: next.isoDate,
+              oldDelta,
+              newDelta,
+            },
             { moneyEventId: eventId, valuationDate: next.isoDate },
           );
         },
         { timeout: 30000, maxWait: 10000 },
       );
       await this.snapshotAfterEvent(householdId, [assetId]);
-      return toMoneyEventCard(next);
+      // `next.amount` was overwritten with the new diff in the DB — reflect that
+      // in the returned card so the client sees the persisted diff.
+      return toMoneyEventCard({ ...next, amount: newDelta });
     }
 
     // Editing an event can change its amount or its linked wallets, so reverse
@@ -554,6 +580,11 @@ export class MoneyEventsService {
       async () => {
         await this.applyWalletEffects(event, 'reverse');
         await this.reverseSaleEffects(event);
+        // Undo the old event's debt-repayment effects (raise outstanding back,
+        // un-rebalance the next installment) before re-applying the edited event's
+        // — so an amount/link change nets out to exactly the new state. Reversal
+        // uses the ORIGINAL event's amount/debt; the re-apply uses the new one.
+        await this.applyDebtRepaymentEffects(householdId, event, 1);
         // Clear this event's old history points before re-applying: the edit may
         // have moved it to a different asset set, and `apply` only writes points
         // for the NEW assets — so any point on a dropped asset would otherwise be
@@ -562,6 +593,7 @@ export class MoneyEventsService {
         await this.moneyEventsRepository.updateMoneyEvent(eventId, next);
         await this.applyWalletEffects(next, 'apply');
         await this.applySaleEffects(next);
+        await this.applyDebtRepaymentEffects(householdId, next, -1);
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -577,6 +609,9 @@ export class MoneyEventsService {
 
   async deleteMoneyEvent(householdId: string, eventId: string) {
     const event = await this.ensureMoneyEvent(householdId, eventId);
+    // A repayment on a bank/institution debt is locked — it can't be deleted by
+    // hand either; the debt record is the only way to change its schedule.
+    await this.assertRepaymentEditable(householdId, event);
     // Removing an event undoes the money it moved: reverse its wallet effects in
     // the same transaction as the soft-delete. For an asset_sale, also restore
     // the sold asset's position (and reopen it if the sale had closed it).
@@ -588,6 +623,9 @@ export class MoneyEventsService {
         await this.moneyEventsRepository.deleteMoneyEvent(eventId);
         await this.applyWalletEffects(event, 'reverse');
         await this.reverseSaleEffects(event);
+        // Deleting a repayment restores the debt's outstanding and un-rebalances
+        // the next installment it had shifted.
+        await this.applyDebtRepaymentEffects(householdId, event, 1);
         // The reversal above re-touched this event's linked valuation points
         // (same event id). Removing the event should remove those points from
         // history entirely, so soft-delete them last.
@@ -614,6 +652,94 @@ export class MoneyEventsService {
     return this.moneyEventsRepository.findMoneyEventsByDebt(
       householdId,
       debtId,
+    );
+  }
+
+  /** Whether an event is a repayment against a debt (a debt-linked outflow). */
+  private isDebtRepayment(event: {
+    debtId?: string | null;
+    direction: string;
+  }): boolean {
+    return Boolean(event.debtId) && event.direction === 'outflow';
+  }
+
+  /**
+   * Reject hand-editing (or deleting) a repayment recorded against a
+   * **bank/institution** debt. Those debts have a fixed schedule and locked
+   * events (see memory/debts.md): the only sanctioned way to change what was
+   * paid is to update the debt record so the schedule recomputes. `relative` /
+   * `other` debts are editable, so they pass. No-op for non-repayment events
+   * (the borrow inflow, income/expense, etc.) — only debt-linked outflows lock.
+   */
+  private async assertRepaymentEditable(
+    householdId: string,
+    event: { debtId?: string | null; direction: string },
+  ): Promise<void> {
+    if (!this.isDebtRepayment(event)) {
+      return;
+    }
+    const info = await this.moneyEventsRepository.findDebtRepaymentInfo(
+      householdId,
+      event.debtId as string,
+    );
+    if (info && info.lenderType === 'bank_institution') {
+      throw new BadRequestException(
+        'Repayments on a bank/institution debt are fixed and cannot be edited directly. Update the debt record instead.',
+      );
+    }
+  }
+
+  /**
+   * Apply (`sign = -1`) or reverse (`sign = +1`) a debt repayment's effect on the
+   * debt: always adjust the debt's `outstandingAmount` by the paid amount, and —
+   * for `relative`/`other` debts with a fixed installment set — rebalance the
+   * next unpaid upcoming payment by how far this payment ran over/under that
+   * installment (overpay shrinks the next installment, underpay grows it; total
+   * owed and installment count are unchanged). Bank/institution debts keep their
+   * fixed schedule, so they never rebalance. Meant to run inside the caller's
+   * transaction. No-op when the event is not a debt repayment.
+   */
+  private async applyDebtRepaymentEffects(
+    householdId: string,
+    event: { debtId?: string | null; direction: string; amount: number },
+    sign: 1 | -1,
+  ): Promise<void> {
+    if (!this.isDebtRepayment(event)) {
+      return;
+    }
+    const debtId = event.debtId as string;
+    // Recording a repayment reduces outstanding (sign -1 → negative delta);
+    // reversing one raises it back (sign +1 → positive delta).
+    await this.moneyEventsRepository.adjustDebtOutstanding(
+      householdId,
+      debtId,
+      sign * -event.amount,
+    );
+
+    const info = await this.moneyEventsRepository.findDebtRepaymentInfo(
+      householdId,
+      debtId,
+    );
+    // Only editable (non-bank) debts with a configured installment rebalance the
+    // schedule. Without a fixed installment there's no baseline to over/under-pay
+    // against, so nothing to carry forward.
+    if (
+      !info ||
+      info.lenderType === 'bank_institution' ||
+      !info.fixedPaymentAmount ||
+      info.fixedPaymentAmount <= 0
+    ) {
+      return;
+    }
+    // over/under vs. the planned installment. Overpay (amount > installment) →
+    // the next installment shrinks by the surplus; underpay → it grows by the
+    // shortfall. Reversing flips the sign so an edit nets out cleanly.
+    const overpayment = event.amount - info.fixedPaymentAmount;
+    await this.moneyEventsRepository.adjustNextUnpaidPayment(
+      householdId,
+      debtId,
+      (event as { isoDate?: string }).isoDate ?? AS_OF,
+      sign * -overpayment,
     );
   }
 

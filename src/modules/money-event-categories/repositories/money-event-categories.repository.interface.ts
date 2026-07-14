@@ -22,4 +22,19 @@ export interface MoneyEventCategoriesRepository {
   insertCategory(category: MoneyEventCategory): Promise<void>;
   updateCategory(id: string, category: MoneyEventCategory): Promise<void>;
   deleteCategory(id: string): Promise<void>;
+  /**
+   * Set (or clear, with `null`) the household's default money-event category
+   * CODE, stored on `households.config.defaultEventCategoryCode`. Merges into the
+   * existing config bag so other keys are preserved.
+   */
+  setDefaultCategoryCode(
+    householdId: string,
+    code: string | null,
+  ): Promise<void>;
+  /** The code currently pointed at by a live category row that this household
+   *  can see (system or its own). Used to clear a dangling default. */
+  findCategoryByCode(
+    householdId: string,
+    code: string,
+  ): Promise<MoneyEventCategory | undefined>;
 }

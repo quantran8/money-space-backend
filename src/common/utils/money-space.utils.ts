@@ -503,7 +503,6 @@ export function toMoneyEventCard(event: MoneyEvent) {
   // display. `amount` keeps its sign (inflow > 0, outflow < 0).
   return {
     id: event.id,
-    title: event.title,
     amount: event.amount,
     feeAmount: event.feeAmount ?? 0,
     // Sale specifics, so an edit can prefill/preserve them (undefined for

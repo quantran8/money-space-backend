@@ -4,7 +4,25 @@ Loans the household still owes, with repayment estimation. Related: [[money-even
 
 ## Overview
 
-CRUD over `Debt` (name, debtType, lenderType, lenderName, original/outstanding amount, borrowedAt, expectedFinalDueDate, status, owner member, optional `receivedToAsset` link).
+CRUD over `Debt` (name, **lenderType**, lenderName, original/outstanding amount, borrowedAt, expectedFinalDueDate, status, owner member, optional `receivedToAsset` link).
+
+## Lender type — the single classification (drives repayment rules)
+
+A debt is classified by **one** field, `lenderType` (the old dual `debtType` + `lenderType` was collapsed — migration `..._debt_lender_type_simplify` drops the `debt_type` column and its enum, and rewrites `LenderType` to three values). `isFixedScheduleLender(lenderType)` in the entity is the single predicate the rules key on:
+
+- **`bank_institution`** — a *fixed-schedule* loan. On create/update `DebtsService.assertLenderTerms` **requires** an interest rate (a positive `interestRate` or a period with one), an `expectedFinalDueDate` (its term), and a positive `fixedPaymentAmount` (else **400**). Its repayment money events are **locked**: the only sanctioned way to change what was paid is to update the debt record so the schedule recomputes.
+- **`relative`** / **`other`** — interest and a fixed term are **optional**. When the user sets an amount + schedule, editing (or creating/deleting) a repayment event **rebalances the next unpaid installment** by the over/under-payment (see below). All three terms are optional.
+
+The old 6-value LenderType migrated as: `family, friend → relative`; `bank, credit_institution → bank_institution`; `company, other → other`.
+
+## Repayment-event side effects (money-events layer)
+
+Recording, editing, or deleting a debt **repayment** (a debt-linked **outflow** money event) runs `MoneyEventsService.applyDebtRepaymentEffects(event, sign)` inside the event's transaction (`sign = -1` to apply on create, `+1` to reverse on the old event before re-applying the new one on edit, `+1` on delete). It:
+
+1. **Adjusts the debt's `outstandingAmount`** by the paid amount (`adjustDebtOutstanding`, floored at 0 — a repayment lowers it, a reversal raises it back). *(create already did this via the former `reduceDebtOutstanding`; edit/delete previously did **not** touch outstanding — that gap is now closed so an edited/deleted repayment keeps outstanding correct.)*
+2. For **`relative`/`other` debts with a fixed installment set** (`fixedPaymentAmount`): `adjustNextUnpaidPayment` shifts the next unpaid `UpcomingPayment` (earliest non-`paid` row due on/after the event date) by `−overpayment` where `overpayment = amount − fixedPaymentAmount`. **Overpay → next installment shrinks; underpay → it grows** (`max(0, …)`). Total owed and installment count are unchanged. No-op when the debt has no future unpaid installment.
+
+**Bank/institution is never rebalanced** (its schedule is fixed) and `assertRepaymentEditable` **rejects** any `updateMoneyEvent`/`deleteMoneyEvent` on a `bank_institution` repayment (**400**). The check keys on *debt-linked outflow*, so the debt's own borrow **inflow** (`debt_update` inflow) is exempt — `resyncBorrowEventDate` can still re-date it. `relative`/`other` repayments stay editable.
 
 ## Key invariant: borrowing does not inflate net worth
 
@@ -35,7 +53,7 @@ A **history-ful** update **must** carry `payload.updateMode` (`UpdateDebtDto`), 
 - **`{ kind: 'effective', effectiveDate, balanceIntent? }`** (`applyEffective`) — a change from `effectiveDate`; history before it is untouched. Per changed field:
   - **interest rate** → `closeLatestInterestPeriodAt(debtId, effectiveDate)` then `appendInterestPeriod(...)` (do **not** wipe old stages). The new rate is the payload scalar `interestRate`.
   - **fixedPaymentAmount** → `PaymentsService.updateUnpaidUpcomingPaymentAmounts` (only reminders with `dueDate >= effectiveDate`); the amount persists on the debts row via `updateDebt`. Recorded repayments (money events) are inherently untouched.
-  - **debtType / core scalars** → set on the row; audit only.
+  - **lenderType / core scalars** → set on the row; audit only.
   - **originalAmount changed** → requires `balanceIntent` (else 400; never auto-infer):
     - `fix_original` → delegates to `applyCorrection` (audit `debt.corrected`).
     - `additional_disbursement` → `originalAmount` **rises to the new value** and `outstandingAmount += delta`; if `receivedToAssetId` set, log a `debt_update` **inflow** event (credits wallet, does NOT auto-reduce). Audit `debt.additional_disbursement`.
@@ -95,4 +113,4 @@ Deleting a debt removes **everything the debt created**, in one transaction (rai
 
 ## Enums
 
-`DebtType` (8), `LenderType` (6), `DebtStatus = active | paid_off | paused | overdue | cancelled`, `PaymentFrequency = none | monthly | quarterly | yearly`, `InterestCalc = fixed | reducing`.
+`LenderType = relative | bank_institution | other` (the sole debt classification — `DebtType` was dropped), `DebtStatus = active | paid_off | paused | overdue | cancelled`, `PaymentFrequency = none | monthly | quarterly | yearly`, `InterestCalc = fixed | reducing`.

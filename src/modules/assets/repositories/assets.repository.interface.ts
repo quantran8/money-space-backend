@@ -27,7 +27,6 @@ export interface AssetsRepository {
     id: string;
     householdId: string;
     assetId: string;
-    title: string;
     amount: number;
     isoDate: string;
     note?: string;

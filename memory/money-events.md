@@ -8,13 +8,29 @@ Two record source types unified into `FinancialRecordItem`:
 - `upcoming_payment` — planned.
 - `money_event` — actual, the central transaction log.
 
-`MoneyEvent` fields: title, type, category, amount, currency, eventDate, direction, and optional links to fromAsset, toAsset, upcomingPayment, debt, financialGoal, snapshot.
+`MoneyEvent` fields: type, category, amount, currency, eventDate, direction, `description` (the **note**), and optional links to fromAsset, toAsset, upcomingPayment, debt, financialGoal, snapshot.
 
-**`category` is a free-form CODE**, not a Postgres enum — backed by the
-`money_event_categories` table (seeded system rows with `household_id IS NULL` +
-per-household custom rows). Adding a category is a data insert, not a migration.
-Existence is validated at the service layer; `normalizeMoneyEventCategory` keeps
-any non-empty code (falls back to `other` only when blank). The `interest` code
+**No `title` field.** The old free-text `title` column was dropped (migration
+`20260714140000_drop_money_event_title`) — the **note (`description`)** is now
+the event's descriptive label, and `category` is its classification. Internal
+flows that used to auto-generate a title (debts: `Vay: …` / `Vay thêm: …` /
+`Điều chỉnh dư nợ: …`; saving interest: `Lãi tiết kiệm: …`; revaluation:
+`Định giá lại: …`; asset sale: `Đã bán …`; goal contribution; payment paid) now
+fold that label into the note instead. Display (event list, dashboard recents,
+debt/asset history) shows the note, falling back to the translated category
+label when the note is empty. The migration copies any existing `title` into
+`description` where the description was blank, so historical labels survive.
+
+**`category` is REQUIRED and a free-form CODE**, not a Postgres enum — backed by
+the `money_event_categories` table (seeded system rows with `household_id IS
+NULL` + per-household custom rows). Adding a category is a data insert, not a
+migration. It is mandatory on every event: `createMoneyEvent` rejects a
+missing/blank category with a 400 (`assertCategoryPresent`), and an update that
+touches `category` may not blank it. The frontend form makes the category picker
+required for expense/income (the auto-classified types — transfer /
+goal_contribution / payment_paid — derive it). `normalizeMoneyEventCategory`
+keeps any non-empty code (falls back to `other` only for the internal
+auto-classified flows that pass a fixed code). The `interest` code
 (saving-deposit interest events) is a seeded system category — the old enum
 omitted it, so it was silently rewritten to `other` (fixed). System seed list:
 `SYSTEM_MONEY_EVENT_CATEGORIES` in `money-space.mapper.ts`.
@@ -30,6 +46,21 @@ code, so a rename would orphan history; create a new category and re-tag. Code
 validated `^[a-z][a-z0-9_]*$` (usable as a client i18n key), unique per scope
 (409 on duplicate), soft-deleted via `deletedAt`. The client stores the code and
 renders the label via i18n keyed by code, not the DB `label`.
+
+**Default category (`isDefault`).** Each household may mark **one** category as
+its default — auto-selected in the money-event create form. Because a system row
+is shared across households (`household_id IS NULL`), default-ness can't be a
+column on the category row; it's a **per-household pointer** stored on
+`households.config.defaultEventCategoryCode` (a jsonb config bag added by
+migration `20260714150000_household_config`). So the default may point at a
+**system OR custom** code. The list API overlays `isDefault` per row by comparing
+each `code` to the household's pointer (`listCategories` in the service).
+Set/clear it via `PUT /api/households/:id/money-event-categories/default` with
+`{ code }` (or `{ code: null }` to clear) — `edit` capability, the target code
+must be one the household can see, and setting a new default replaces the old
+(single pointer). Deleting the default category clears the pointer. The frontend
+reads `isDefault` to prefill the form's category on create and exposes a star
+toggle per row in the Settings → Categories card.
 
 ## Direction derivation (`deriveDirection` / `getDirectionFromEventType`)
 
@@ -124,6 +155,12 @@ Creating a money event **moves the money it represents between its linked wallet
 - **create** → debit `fromAssetId`, credit `toAssetId` by `amount`.
 - **update** → reverse the *old* event's moves, then apply the *new* one's (handles amount or wallet changes).
 - **delete** → reverse the event's moves (credit back `fromAsset`, debit `toAsset`).
+
+**Editing an `asset_update` revaluation is a special case** (its `amount` is a
+signed **diff**, not a wallet move): the edit **adjusts** the linked asset's
+balance by `newDiff − oldDiff` (never overwrites it) and re-stamps its history
+point at the value-at-record-date. The modal shows "Mức thay đổi" (the diff) with
+a Tăng/Giảm toggle, not the current balance. Full flow: [[asset-valuation]].
 
 **Only wallet assets move**: `credit/debitManualAsset` no-op unless the asset's `type` is `cash` or `bank_account` (`WALLET_ASSET_TYPES` in [[assets]]). A market-priced / formula asset is valued from its price/formula, not by adding cash — so an event linking such an asset (or a missing link) simply doesn't move it. A debit **floors at 0** — spending more than a wallet holds drives it to 0, never negative. `fromAssetId`/`toAssetId` are still stored on every event regardless of asset type; only the balance move is wallet-gated.
 

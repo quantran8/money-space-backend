@@ -120,4 +120,43 @@ export class PrismaMoneyEventCategoriesRepository
       data: { deletedAt: new Date() },
     });
   }
+
+  async setDefaultCategoryCode(
+    householdId: string,
+    code: string | null,
+  ): Promise<void> {
+    // Merge into the existing jsonb config (`||` preserves other keys); clearing
+    // the default removes just that key so the bag doesn't accumulate nulls.
+    if (code === null) {
+      await this.prisma.$executeRaw`
+        UPDATE households
+        SET config = (COALESCE(config, '{}'::jsonb) - 'defaultEventCategoryCode')
+        WHERE id = ${householdId}::uuid
+          AND deleted_at IS NULL
+      `;
+      return;
+    }
+    await this.prisma.$executeRaw`
+      UPDATE households
+      SET config = COALESCE(config, '{}'::jsonb)
+        || jsonb_build_object('defaultEventCategoryCode', ${code}::text)
+      WHERE id = ${householdId}::uuid
+        AND deleted_at IS NULL
+    `;
+  }
+
+  async findCategoryByCode(
+    householdId: string,
+    code: string,
+  ): Promise<MoneyEventCategory | undefined> {
+    const row = await this.prisma.moneyEventCategory.findFirst({
+      where: {
+        code,
+        deletedAt: null,
+        OR: [{ householdId: null }, { householdId }],
+      },
+    });
+
+    return row ? mapMoneyEventCategory(row) : undefined;
+  }
 }

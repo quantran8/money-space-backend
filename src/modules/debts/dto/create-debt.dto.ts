@@ -1,13 +1,11 @@
 import type {
   DebtInterestPeriod,
   DebtStatus,
-  DebtType,
   LenderType,
 } from '../entities/debt.entity';
 
 export interface CreateDebtDto {
   name: string;
-  debtType: DebtType;
   lenderType: LenderType;
   lenderName?: string;
   originalAmount: number;

@@ -404,14 +404,18 @@ export class AssetsService {
     }
     const today = this.todayIso();
     const eventId = this.assetsRepository.createId('event');
+    // `title` was dropped from money events; the descriptive label now lives in
+    // the event's note (description). Prefix the asset's own note with it so the
+    // history entry still reads "Định giá lại: <asset>" without a separate column.
+    const label = `${reason}: ${asset.name}`;
+    const note = asset.note ? `${label} — ${asset.note}` : label;
     await this.assetsRepository.insertRevaluationEvent({
       id: eventId,
       householdId: asset.householdId,
       assetId: asset.id,
-      title: `${reason}: ${asset.name}`,
       amount: newValue - oldValue,
       isoDate: today,
-      note: asset.note,
+      note,
     });
     return { moneyEventId: eventId, valuationDate: today };
   }
@@ -444,6 +448,159 @@ export class AssetsService {
     // Non-manual: can't override a price/formula-derived value. Refresh the
     // linked point + cache at the current derived value instead.
     return this.upsertCurrentValuation(asset, context);
+  }
+
+  /**
+   * Re-apply an edited revaluation (`asset_update`) event **by its delta**, not by
+   * overwriting an absolute value. Editing a "Định giá lại" record means editing
+   * the *change* it recorded (e.g. −0,5tr), and the edit must:
+   *
+   * 1. **Adjust the asset's running balance by how much the diff itself moved**
+   *    (`deltaChange = newDelta − oldDelta`), never clobber it with an absolute
+   *    number. So a wallet at 6,5tr whose −0,5tr revaluation is re-entered as
+   *    −1tr drops to 6tr (6,5 + (−1 − (−0,5))), leaving every later inflow/outflow
+   *    that stacked on top of it intact — the balance re-bases automatically.
+   * 2. **Re-stamp this record's own history point at the value it produced *at its
+   *    date*** — `valueBeforeEvent + newDelta` (the balance just after this
+   *    revaluation applied), not the current "now" balance. `valueBeforeEvent` is
+   *    the value the asset held immediately before this record.
+   *
+   * For a **manual** asset the running balance lives in `manualValue`, so we bump
+   * it by `deltaChange`. For a market/formula asset there is no free value to
+   * shift (the value is derived), so we only re-stamp the record's point at the
+   * value-before-event + newDelta and leave the derived `current_value` alone.
+   *
+   * Returns the asset's resolved `current_value` after the adjustment. Runs inside
+   * the caller's transaction (the money-event update owns atomicity).
+   */
+  async applyRevaluationDeltaEdit(
+    householdId: string,
+    assetId: string,
+    params: {
+      moneyEventId: string;
+      eventDate: string;
+      oldDelta: number;
+      newDelta: number;
+    },
+    context: ValuationContext,
+  ): Promise<number> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    const { moneyEventId, eventDate, oldDelta, newDelta } = params;
+    const deltaChange = newDelta - oldDelta;
+    // Value the asset held immediately BEFORE this record applied — needed to
+    // stamp the record's history point at its date. It is NOT `current − oldDelta`
+    // when later events moved the balance past this record: for the running
+    // balance B = base + Σ(all events), the value before this record is
+    //   B − oldDelta − Σ(events strictly AFTER this record).
+    // So subtract this record's own diff and every later event's signed cash
+    // contribution from the current balance. (This record already carries its NEW
+    // amount in the DB by now, so exclude it by id and use `oldDelta` explicitly.)
+    const runningBalance =
+      asset.valuationMode === 'manual' ? (asset.manualValue ?? 0) : 0;
+    const laterContribution = await this.sumEventContributionsAfter(
+      householdId,
+      assetId,
+      moneyEventId,
+      eventDate,
+    );
+    const valueBeforeEvent = runningBalance - oldDelta - laterContribution;
+    // The value this record produced at its own date (used for its history point).
+    const valueAtEvent = valueBeforeEvent + newDelta;
+
+    if (asset.valuationMode === 'manual') {
+      // Shift the running balance by how much the diff moved — do NOT overwrite.
+      const nextBalance = (asset.manualValue ?? 0) + deltaChange;
+      const next: Asset = { ...asset, manualValue: nextBalance };
+      await this.assetsRepository.updateAsset(assetId, next);
+      // Re-stamp this record's point at the value AT its date, then refresh the
+      // `current_value` cache to the new running balance.
+      await this.writeLinkedValuationPoint(next, valueAtEvent, context);
+      await this.assetsRepository.updateAssetCurrentValue(assetId, nextBalance);
+      return nextBalance;
+    }
+
+    // Non-manual: the value is price/formula-derived and can't be shifted by a
+    // manual diff. Only re-stamp the record's own point at the value-at-date; the
+    // derived `current_value` stays whatever the price/formula produces.
+    await this.writeLinkedValuationPoint(asset, valueAtEvent, context);
+    return this.upsertCurrentValuation(asset);
+  }
+
+  /**
+   * Sum the signed cash contribution to `assetId` of every money event dated
+   * **strictly after** `afterDate`, excluding the event `excludeEventId`. Used to
+   * recover the asset's balance just before a back-dated revaluation record (the
+   * running balance minus this record's own diff minus everything that landed
+   * after it).
+   *
+   * Contribution rules mirror `applyWalletEffects` / value-history reconstruction:
+   * - a normal event crediting this asset (`toAssetId`) adds `amount − feeAmount`;
+   *   debiting it (`fromAssetId`) subtracts it;
+   * - an `asset_update` revaluation stores a **signed delta** in `amount` (linked
+   *   via `toAssetId`), so its contribution is that delta as-is (not its
+   *   magnitude) — a −0,5tr revaluation lowers the balance.
+   * Same-date events are treated as NOT "after" (the ordering between a
+   * revaluation and a same-day move is ambiguous), so the boundary is exclusive.
+   */
+  private async sumEventContributionsAfter(
+    householdId: string,
+    assetId: string,
+    excludeEventId: string,
+    afterDate: string,
+  ): Promise<number> {
+    const events = await this.assetsRepository.findMoneyEventsByAsset(
+      householdId,
+      assetId,
+    );
+    let sum = 0;
+    for (const event of events) {
+      if (event.id === excludeEventId || event.isoDate <= afterDate) {
+        continue;
+      }
+      if (event.type === 'asset_update') {
+        // Signed delta already; only counts when this asset is the target.
+        if (event.toAssetId === assetId) {
+          sum += event.amount;
+        }
+        continue;
+      }
+      const net = event.amount - (event.feeAmount ?? 0);
+      if (event.toAssetId === assetId) {
+        sum += net;
+      } else if (event.fromAssetId === assetId) {
+        sum -= net;
+      }
+    }
+    return sum;
+  }
+
+  /**
+   * Append/update the history point linked to a money event (keyed on
+   * `moneyEventId + assetId`, dated at the event's date) with an **explicit**
+   * value, rather than the asset's recomputed "now" value. Used when the point
+   * must record the value the asset held *at the event's date* (a back-dated
+   * revaluation whose later events already moved the balance past it). Runs inside
+   * the caller's transaction.
+   */
+  private async writeLinkedValuationPoint(
+    asset: Asset,
+    value: number,
+    context: ValuationContext,
+  ): Promise<void> {
+    if (!context.moneyEventId) {
+      return;
+    }
+    await this.assetsRepository.insertAssetValueHistory({
+      id: this.assetsRepository.createId('valuation'),
+      assetId: asset.id,
+      householdId: asset.householdId,
+      valuationDate: context.valuationDate ?? AS_OF,
+      value,
+      currency: asset.currency,
+      note: asset.note,
+      moneyEventId: context.moneyEventId,
+      ...this.valuationLineage(asset),
+    });
   }
 
   async deleteAsset(householdId: string, assetId: string) {

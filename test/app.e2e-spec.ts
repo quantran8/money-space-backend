@@ -84,9 +84,8 @@ describe('AppModule integration', () => {
         {
           id: 'event-1',
           householdId: household.id,
-          title: 'Luong',
           amount: 10_000_000,
-          note: '',
+          note: 'Luong',
           isoDate: '2026-07-01',
           type: 'income',
           category: 'income',

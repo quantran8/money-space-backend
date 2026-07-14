@@ -158,6 +158,43 @@ a money event:**
   `assetsService.removeValuationsForEvent(eventId)` soft-deletes the event's
   linked points so they disappear from history.
 
+### Editing an `asset_update` revaluation edits its DIFF, not an absolute value
+
+A revaluation record's `amount` **is the signed diff** it represented (e.g. a
+wallet revalued 5tr → 4,5tr stores `amount = −0,5tr`). Editing such a record
+edits **that diff**, and the edit must **adjust** the asset — never **overwrite**
+it with an absolute value (the old behaviour). `MoneyEventsService.updateMoneyEvent`
+(the `asset_update` branch) → `AssetsService.applyRevaluationDeltaEdit`:
+
+1. **Shift the running balance by how much the diff moved**:
+   `manualValue += (newDelta − oldDelta)`. So a wallet now at 6,5tr (a +2tr inflow
+   landed after the revaluation) whose −0,5tr diff is re-entered as −1tr drops to
+   6tr, and every later inflow/outflow that stacked on top stays intact — the
+   balance re-bases automatically instead of being clobbered. Manual assets hold
+   the balance in `manualValue`; market/formula assets have no free balance to
+   shift, so only their point is re-stamped and the derived `current_value` is left
+   to the price/formula.
+2. **Re-stamp this record's own history point at the value it produced *at its
+   date*** — `valueBeforeEvent + newDelta` (4tr in the example), NOT the current
+   "now" balance. `valueBeforeEvent` (5tr) is recovered as
+   `runningBalance − oldDelta − Σ(signed contributions of events dated strictly
+   after this record)` (`sumEventContributionsAfter`) — netting out this record's
+   own diff plus everything that landed after it. `asset_update` events contribute
+   their **signed** delta (not magnitude); normal events contribute `amount − fee`,
+   `+` when crediting the asset, `−` when debiting; same-date events are treated as
+   NOT "after" (order-ambiguous).
+
+The point is written with an **explicit** value via `writeLinkedValuationPoint`
+(same `(moneyEventId, assetId)` upsert as `upsertCurrentValuation`) rather than the
+recomputed now-value.
+
+**Frontend** (`use-events-page.ts` + `actual-record-form.tsx`): the revaluation
+edit modal now shows **"Mức thay đổi"** (the diff) prefilled from the record's
+stored `amount` — magnitude in the money field, sign as a **Tăng / Giảm** toggle
+(`revaluationDirection`) — NOT the asset's current balance. Submit sends
+`amount = magnitude × (increase ? +1 : −1)` (a signed diff, may be negative;
+`UpdateMoneyEventDto.amount` is unvalidated so negatives pass). See [[money-events]].
+
 ## Value history over time (asset detail page)
 
 `AssetsService.getAssetValueHistory(householdId, assetId)` reads the persisted

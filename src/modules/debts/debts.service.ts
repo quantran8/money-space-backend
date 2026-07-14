@@ -13,7 +13,7 @@ import type { CreateUpcomingPaymentDto } from '../payments/dto/create-upcoming-p
 import type { CreateDebtDto } from './dto/create-debt.dto';
 import type { ListDebtsQuery } from './dto/list-debts.query';
 import type { UpdateDebtDto } from './dto/update-debt.dto';
-import { Debt } from './entities/debt.entity';
+import { Debt, isFixedScheduleLender } from './entities/debt.entity';
 import { DEBTS_REPOSITORY } from './repositories/debts.repository.interface';
 import type { DebtsRepository } from './repositories/debts.repository.interface';
 
@@ -106,6 +106,39 @@ export class DebtsService {
     return this.ensureDebt(householdId, debtId);
   }
 
+  /**
+   * A `bank_institution` loan is a fixed-schedule debt: the interest rate, the
+   * final due date (its term), and the fixed monthly payment are all required so
+   * the repayment schedule and its locked events are well-defined (see
+   * memory/debts.md). `relative` / `other` loans leave all three optional. This
+   * runs on both create and update so a debt can't be moved into the
+   * bank_institution bucket while missing its required terms.
+   */
+  private assertLenderTerms(debt: Debt): void {
+    if (!isFixedScheduleLender(debt.lenderType)) {
+      return;
+    }
+    const missing: string[] = [];
+    const hasRate =
+      (debt.interestRate ?? 0) > 0 ||
+      (debt.interestPeriods?.some((period) => (period.interestRate ?? 0) > 0) ??
+        false);
+    if (!hasRate) {
+      missing.push('interestRate');
+    }
+    if (!debt.expectedFinalDueDate) {
+      missing.push('expectedFinalDueDate');
+    }
+    if (!debt.fixedPaymentAmount || debt.fixedPaymentAmount <= 0) {
+      missing.push('fixedPaymentAmount');
+    }
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `A bank/institution debt requires ${missing.join(', ')}`,
+      );
+    }
+  }
+
   async createDebt(householdId: string, payload: CreateDebtDto) {
     // `insertDebt` asserts the household exists (and needs its row to resolve
     // `createdById`), so we don't assert it a second time here.
@@ -113,7 +146,6 @@ export class DebtsService {
       id: this.debtsRepository.createId('debt'),
       householdId,
       name: payload.name.trim(),
-      debtType: payload.debtType,
       lenderType: payload.lenderType,
       lenderName: payload.lenderName?.trim(),
       originalAmount: payload.originalAmount,
@@ -133,6 +165,9 @@ export class DebtsService {
       interestPeriods: payload.interestPeriods,
       note: payload.note?.trim(),
     };
+
+    // A bank/institution loan must carry its fixed-schedule terms up front.
+    this.assertLenderTerms(debt);
 
     // All writes for a debt (the debt row + its terms + interest periods, plus
     // crediting the wallet that received the borrowed money) must succeed or
@@ -155,9 +190,8 @@ export class DebtsService {
         // only), so we must NOT credit it a second time here.
         if (debt.receivedToAssetId) {
           await this.moneyEventsService.createMoneyEvent(householdId, {
-            title: `Vay: ${debt.name}`,
             amount: debt.originalAmount,
-            note: debt.note,
+            note: debt.note ? `Vay: ${debt.name} — ${debt.note}` : `Vay: ${debt.name}`,
             isoDate: debt.borrowedAt ?? AS_OF,
             type: 'debt_update',
             category: 'debt',
@@ -251,13 +285,16 @@ export class DebtsService {
       note: fields.note?.trim() ?? debt.note,
       originalAmount: fields.originalAmount ?? debt.originalAmount,
       outstandingAmount: fields.outstandingAmount ?? debt.outstandingAmount,
-      debtType: fields.debtType ?? debt.debtType,
       lenderType: fields.lenderType ?? debt.lenderType,
       borrowedAt: fields.borrowedAt ?? debt.borrowedAt,
       expectedFinalDueDate:
         fields.expectedFinalDueDate ?? debt.expectedFinalDueDate,
       status: fields.status ?? debt.status,
     };
+
+    // The updated debt must still satisfy its lender's term requirements — this
+    // also guards moving a debt into the bank_institution bucket.
+    this.assertLenderTerms(next);
 
     // A debt with no recorded money events yet keeps the simple direct-overwrite
     // behaviour — nothing to preserve, no mode prompt (see memory/debts.md).
@@ -358,7 +395,7 @@ export class DebtsService {
       originalAmount: debt.originalAmount,
       outstandingAmount: debt.outstandingAmount,
       interestRate: debt.interestRate,
-      debtType: debt.debtType,
+      lenderType: debt.lenderType,
       paymentFrequency: debt.paymentFrequency,
       fixedPaymentAmount: debt.fixedPaymentAmount,
       expectedFinalDueDate: debt.expectedFinalDueDate,
@@ -478,9 +515,10 @@ export class DebtsService {
             const event = await this.moneyEventsService.createMoneyEvent(
               householdId,
               {
-                title: `Vay thêm: ${debt.name}`,
                 amount: delta,
-                note: debt.note,
+                note: debt.note
+                  ? `Vay thêm: ${debt.name} — ${debt.note}`
+                  : `Vay thêm: ${debt.name}`,
                 isoDate: effectiveDate,
                 type: 'debt_update',
                 category: 'debt',
@@ -506,9 +544,10 @@ export class DebtsService {
           const event = await this.moneyEventsService.createMoneyEvent(
             householdId,
             {
-              title: `Điều chỉnh dư nợ: ${debt.name}`,
               amount: Math.abs(delta),
-              note: debt.note,
+              note: debt.note
+                ? `Điều chỉnh dư nợ: ${debt.name} — ${debt.note}`
+                : `Điều chỉnh dư nợ: ${debt.name}`,
               isoDate: effectiveDate,
               type: 'adjustment',
               category: 'debt',

@@ -1,15 +1,18 @@
-export type DebtType =
-  | 'family_loan'
-  | 'friend_loan'
-  | 'bank_loan'
-  | 'consumer_finance'
-  | 'mortgage'
-  | 'credit_card'
-  | 'installment'
-  | 'other';
+/**
+ * Who the household borrowed from — the single classification of a debt. Drives
+ * the repayment rules (see memory/debts.md):
+ *   - `bank_institution`: interest, term, and a fixed monthly payment are
+ *     required; repayment money events are locked (can't be hand-edited).
+ *   - `relative` / `other`: interest and a fixed term are optional; when the
+ *     user sets a schedule, editing a repayment event rebalances the next
+ *     unpaid installment by the over/under-payment.
+ */
+export type LenderType = 'relative' | 'bank_institution' | 'other';
 
-export type LenderType =
-  'family' | 'friend' | 'bank' | 'credit_institution' | 'company' | 'other';
+/** Lenders whose repayment schedule is fixed and whose events are locked. */
+export function isFixedScheduleLender(lenderType: LenderType): boolean {
+  return lenderType === 'bank_institution';
+}
 
 export type DebtStatus =
   'active' | 'paid_off' | 'paused' | 'overdue' | 'cancelled';
@@ -35,7 +38,6 @@ export interface Debt {
   id: string;
   householdId: string;
   name: string;
-  debtType: DebtType;
   lenderType: LenderType;
   lenderName?: string;
   originalAmount: number;

@@ -12,4 +12,12 @@ export interface MoneyEventCategory {
   /** System rows are seeded, shared, and cannot be edited or deleted. */
   isSystem: boolean;
   sortOrder: number;
+  /**
+   * Whether this category is the household's default (auto-selected in the
+   * money-event form). Computed per-household (the pointer lives on
+   * `households.config.defaultEventCategoryCode`), NOT stored on the row — a
+   * system row is shared, so its default-ness differs per household. At most one
+   * category per household has `isDefault: true`.
+   */
+  isDefault: boolean;
 }

@@ -17,7 +17,6 @@ export type MoneyDirection = 'inflow' | 'outflow' | 'neutral';
 export interface MoneyEvent {
   id: string;
   householdId: string;
-  title: string;
   amount: number;
   /** Sale/purchase fee. 0 for every other event type. See asset-sale.md. */
   feeAmount: number;

@@ -124,7 +124,6 @@ export class PrismaAssetsRepository
     id: string;
     householdId: string;
     assetId: string;
-    title: string;
     amount: number;
     isoDate: string;
     note?: string;
@@ -136,13 +135,12 @@ export class PrismaAssetsRepository
     // household in one round-trip, like `insertAsset`/`insertMoneyEvent`.
     await this.prisma.$executeRaw`
       INSERT INTO money_events
-        (id, household_id, title, description, event_type, category, amount,
+        (id, household_id, description, event_type, category, amount,
          fee_amount, currency, event_date, direction, to_asset_id,
          created_by, updated_at)
       SELECT
         ${event.id}::uuid,
         h.id,
-        ${event.title},
         ${event.note ?? ''},
         'asset_update'::"MoneyEventType",
         'other',

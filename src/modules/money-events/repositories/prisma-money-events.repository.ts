@@ -10,7 +10,10 @@ import { PrismaRepository } from '../../../common/repositories/prisma.repository
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import { Household } from '../../households/entities/household.entity';
 import { MoneyEvent } from '../entities/money-event.entity';
-import { MoneyEventsRepository } from './money-events.repository.interface';
+import {
+  DebtRepaymentInfo,
+  MoneyEventsRepository,
+} from './money-events.repository.interface';
 
 @Injectable()
 export class PrismaMoneyEventsRepository
@@ -174,14 +177,13 @@ export class PrismaMoneyEventsRepository
     // on ORM writes, but a raw INSERT must set it explicitly.
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO money_events
-        (id, household_id, title, description, event_type, category, amount,
+        (id, household_id, description, event_type, category, amount,
          fee_amount, sold_quantity, sold_value, currency, event_date, direction,
          from_asset_id, to_asset_id,
          upcoming_payment_id, debt_id, financial_goal_id, created_by, updated_at)
       SELECT
         ${event.id}::uuid,
         h.id,
-        ${event.title},
         ${event.note},
         ${event.type}::"MoneyEventType",
         ${category},
@@ -215,7 +217,6 @@ export class PrismaMoneyEventsRepository
     await this.prisma.moneyEvent.updateMany({
       where: { id: eventId, householdId: event.householdId, deletedAt: null },
       data: {
-        title: event.title,
         description: event.note,
         eventType: event.type,
         category: normalizeMoneyEventCategory(event.category),
@@ -256,21 +257,72 @@ export class PrismaMoneyEventsRepository
     });
   }
 
-  async reduceDebtOutstanding(
+  async adjustDebtOutstanding(
     householdId: string,
     debtId: string,
-    amount: number,
+    delta: number,
   ): Promise<void> {
     // Floor at 0 in the same statement (GREATEST) so a payment larger than the
-    // remaining balance settles the debt rather than pushing it negative. Scoped
-    // to the household and skips soft-deleted debts.
+    // remaining balance settles the debt rather than pushing it negative. A
+    // repayment passes a negative delta (reduce); reversing one passes a positive
+    // delta (raise back). Scoped to the household and skips soft-deleted debts.
     await this.prisma.$executeRaw`
       UPDATE debts
-      SET outstanding_amount = GREATEST(0, outstanding_amount - ${amount}::numeric),
+      SET outstanding_amount = GREATEST(0, outstanding_amount + ${delta}::numeric),
           updated_at = now()
       WHERE id = ${debtId}::uuid
         AND household_id = ${householdId}::uuid
         AND deleted_at IS NULL
     `;
+  }
+
+  async findDebtRepaymentInfo(
+    householdId: string,
+    debtId: string,
+  ): Promise<DebtRepaymentInfo | undefined> {
+    const debt = await this.prisma.debt.findFirst({
+      where: { id: debtId, householdId, deletedAt: null },
+      select: { lenderType: true, fixedPaymentAmount: true },
+    });
+    if (!debt) {
+      return undefined;
+    }
+    return {
+      lenderType: debt.lenderType,
+      fixedPaymentAmount:
+        debt.fixedPaymentAmount === null
+          ? undefined
+          : Number(debt.fixedPaymentAmount),
+    };
+  }
+
+  async adjustNextUnpaidPayment(
+    householdId: string,
+    debtId: string,
+    afterDate: string,
+    delta: number,
+  ): Promise<void> {
+    // The "next" installment is the earliest still-unpaid upcoming payment due
+    // on or after the repayment date. `paid` rows are settled history; anything
+    // else (unpaid / pending_confirmation / overdue / postponed) is still owed.
+    const next = await this.prisma.upcomingPayment.findFirst({
+      where: {
+        householdId,
+        debtId,
+        deletedAt: null,
+        status: { not: 'paid' },
+        dueDate: { gte: this.toDate(afterDate) ?? undefined },
+      },
+      orderBy: { dueDate: 'asc' },
+      select: { id: true, amount: true },
+    });
+    if (!next) {
+      return;
+    }
+    const nextAmount = Math.max(0, Number(next.amount) + delta);
+    await this.prisma.upcomingPayment.update({
+      where: { id: next.id },
+      data: { amount: nextAmount },
+    });
   }
 }

@@ -86,7 +86,7 @@ export class PrismaDebtsRepository
     // previous debt.create behaviour.
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO debts
-        (id, household_id, name, debt_type, lender_type, lender_name,
+        (id, household_id, name, lender_type, lender_name,
          original_amount, outstanding_amount, currency, borrowed_at,
          expected_final_due_date, status, owner_member_id, received_to_asset_id,
          note, payment_frequency, fixed_payment_amount, minimum_payment_amount,
@@ -95,7 +95,6 @@ export class PrismaDebtsRepository
         ${debt.id}::uuid,
         h.id,
         ${debt.name},
-        ${debt.debtType}::"DebtType",
         ${debt.lenderType}::"LenderType",
         ${debt.lenderName ?? null},
         ${debt.originalAmount}::numeric,
@@ -131,7 +130,6 @@ export class PrismaDebtsRepository
       where: { id: debtId, householdId: debt.householdId, deletedAt: null },
       data: {
         name: debt.name,
-        debtType: debt.debtType,
         lenderType: debt.lenderType,
         lenderName: debt.lenderName,
         originalAmount: debt.originalAmount,

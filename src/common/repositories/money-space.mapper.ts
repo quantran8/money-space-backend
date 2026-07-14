@@ -7,7 +7,10 @@ import type {
   DebtInterestPeriod,
 } from '../../modules/debts/entities/debt.entity';
 import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.entity';
-import type { Household } from '../../modules/households/entities/household.entity';
+import type {
+  Household,
+  HouseholdConfig,
+} from '../../modules/households/entities/household.entity';
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
 import type { HouseholdMember } from '../../modules/members/entities/member.entity';
@@ -81,12 +84,39 @@ export function normalizeMoneyEventCategory(category?: string): string {
   return code && code.length > 0 ? code : 'other';
 }
 
+/**
+ * Normalize the `households.config` jsonb into a typed {@link HouseholdConfig}.
+ * Prisma returns jsonb already parsed (object), but a raw SQL path may hand back
+ * a string — tolerate both, and never throw on malformed data (fall back to {}).
+ */
+function mapHouseholdConfig(value: unknown): HouseholdConfig {
+  let raw: unknown = value;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      raw = undefined;
+    }
+  }
+  if (!raw || typeof raw !== 'object') {
+    return {};
+  }
+  const source = raw as Record<string, unknown>;
+  const config: HouseholdConfig = {};
+  const defaultCode = source.defaultEventCategoryCode;
+  if (typeof defaultCode === 'string' && defaultCode.length > 0) {
+    config.defaultEventCategoryCode = defaultCode;
+  }
+  return config;
+}
+
 export function mapHousehold(row: DbRow): Household {
   return {
     id: row.id,
     name: row.name,
     currency: row.currency,
     updateFrequency: row.updateFrequency ?? row.update_frequency,
+    config: mapHouseholdConfig(row.config),
     createdBy: row.createdById ?? row.created_by,
     createdAt: row.createdAt ?? row.created_at,
   };
@@ -100,6 +130,9 @@ export function mapMoneyEventCategory(row: DbRow): MoneyEventCategory {
     label: row.label,
     isSystem: row.isSystem ?? row.is_system ?? false,
     sortOrder: row.sortOrder ?? row.sort_order ?? 0,
+    // Default-ness is per-household (pointer on households.config), not a row
+    // column — the service overlays the true value from the household's config.
+    isDefault: false,
   };
 }
 
@@ -308,7 +341,6 @@ export function mapDebt(row: DbRow, period?: DbRow, periods?: DbRow[]): Debt {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
     name: row.name,
-    debtType: row.debtType ?? row.debt_type,
     lenderType: row.lenderType ?? row.lender_type,
     lenderName: row.lenderName ?? row.lender_name ?? undefined,
     originalAmount: numberFromDb(row.originalAmount ?? row.original_amount),
@@ -357,7 +389,6 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
   return {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
-    title: row.title,
     amount: numberFromDb(row.amount),
     feeAmount: numberFromDb(row.feeAmount ?? row.fee_amount ?? 0),
     soldQuantity:

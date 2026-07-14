@@ -4,7 +4,6 @@ import type {
 } from '../entities/money-event.entity';
 
 export interface CreateMoneyEventDto {
-  title: string;
   amount: number;
   /** Sale/purchase fee. Defaults to 0. See asset-sale.md. */
   feeAmount?: number;
