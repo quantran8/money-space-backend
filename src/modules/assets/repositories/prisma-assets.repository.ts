@@ -197,6 +197,43 @@ export class PrismaAssetsRepository
     `;
   }
 
+  async insertAssetPurchaseEvent(event: {
+    id: string;
+    householdId: string;
+    assetId: string;
+    amount: number;
+    isoDate: string;
+    note: string;
+  }): Promise<void> {
+    // Adding to an existing market position is a ledger-visible purchase, but
+    // the create-asset form does not choose a funding wallet. Keep it neutral
+    // and link the purchased position through `to_asset_id`; no wallet balance
+    // is manufactured or debited.
+    await this.prisma.$executeRaw`
+      INSERT INTO money_events
+        (id, household_id, description, event_type, category, amount,
+         fee_amount, currency, event_date, direction, to_asset_id,
+         created_by, updated_at)
+      SELECT
+        ${event.id}::uuid,
+        h.id,
+        ${event.note},
+        'asset_purchase'::"MoneyEventType",
+        'investment',
+        ${event.amount}::numeric,
+        0::numeric,
+        'VND',
+        ${this.toDate(event.isoDate)}::date,
+        'neutral'::"MoneyDirection",
+        ${event.assetId}::uuid,
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${event.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+  }
+
   async updateAsset(assetId: string, asset: Asset): Promise<void> {
     await this.prisma.asset.updateMany({
       where: { id: assetId, householdId: asset.householdId, deletedAt: null },

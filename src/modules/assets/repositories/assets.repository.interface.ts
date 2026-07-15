@@ -36,6 +36,20 @@ export interface AssetsRepository {
     isoDate: string;
     note?: string;
   }): Promise<void>;
+  /**
+   * Record an additional buy merged into an existing market position. The
+   * event is neutral (it does not imply a wallet source) and links to the
+   * position through `toAssetId`, so it appears in both the household ledger
+   * and the asset activity timeline.
+   */
+  insertAssetPurchaseEvent(event: {
+    id: string;
+    householdId: string;
+    assetId: string;
+    amount: number;
+    isoDate: string;
+    note: string;
+  }): Promise<void>;
   updateAsset(assetId: string, asset: Asset): Promise<void>;
   updateAssetCurrentValue(assetId: string, value: number): Promise<void>;
   deleteAsset(assetId: string): Promise<void>;

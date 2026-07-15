@@ -356,10 +356,10 @@ export class AssetsService {
     // the household already has an active position for the same class+symbol,
     // add to that position and recompute weighted-average purchase price rather
     // than creating a duplicate asset row.
-    // Creating an asset does NOT log a money event — it moves no money through
-    // the ledger, it just establishes the asset's starting value. We still
-    // record one initial history point (unlinked, dated AS_OF) so the value
-    // series has a starting point, plus the `current_value` cache.
+    // A brand-new asset does not log a money event — it establishes the opening
+    // position. Adding quantity to an existing class+symbol is different: it is
+    // a real additional purchase, so that merge logs a neutral asset_purchase
+    // event (no funding wallet was selected) and links the new valuation to it.
     const result = await this.prisma.runInTransaction(async () => {
       if (asset.marketPosition) {
         const incoming = asset.marketPosition;
@@ -388,13 +388,8 @@ export class AssetsService {
             },
           };
           await this.assetsRepository.updateAsset(existing.id, merged);
-          const value = await this.computeValueAsync(merged);
-          await this.writeUnlinkedValuationPoint(
-            merged,
-            value,
-            `Cập nhật vị thế: ${merged.name}`,
-          );
-          await this.assetsRepository.updateAssetCurrentValue(merged.id, value);
+          const context = await this.logAdditionalPurchase(merged, incoming);
+          const value = await this.upsertCurrentValuation(merged, context);
           return { asset: merged, currentValue: value };
         }
       }
@@ -575,6 +570,37 @@ export class AssetsService {
       householdId: asset.householdId,
       assetId: asset.id,
       amount: newValue - oldValue,
+      isoDate: today,
+      note,
+    });
+    return { moneyEventId: eventId, valuationDate: today };
+  }
+
+  /**
+   * Log quantity merged into an existing market position as an
+   * `asset_purchase`. It is deliberately neutral because this form does not
+   * select a source wallet; the amount is the added position's cost basis and
+   * `toAssetId` links the event to the resulting asset.
+   */
+  private async logAdditionalPurchase(
+    asset: Asset,
+    incoming: NonNullable<Asset['marketPosition']>,
+  ): Promise<ValuationContext> {
+    const today = this.todayIso();
+    const eventId = this.assetsRepository.createId('event');
+    const purchaseAmount = Math.max(
+      0,
+      incoming.quantity * (incoming.purchasePrice ?? 0),
+    );
+    const quantityLabel = new Intl.NumberFormat('vi-VN', {
+      maximumFractionDigits: 8,
+    }).format(incoming.quantity);
+    const note = `Mua thêm ${quantityLabel} ${incoming.unit || 'đơn vị'} ${incoming.symbol}`;
+    await this.assetsRepository.insertAssetPurchaseEvent({
+      id: eventId,
+      householdId: asset.householdId,
+      assetId: asset.id,
+      amount: purchaseAmount,
       isoDate: today,
       note,
     });
