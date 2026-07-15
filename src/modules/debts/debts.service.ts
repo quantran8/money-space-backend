@@ -191,7 +191,9 @@ export class DebtsService {
         if (debt.receivedToAssetId) {
           await this.moneyEventsService.createMoneyEvent(householdId, {
             amount: debt.originalAmount,
-            note: debt.note ? `Vay: ${debt.name} — ${debt.note}` : `Vay: ${debt.name}`,
+            note: debt.note
+              ? `Vay: ${debt.name} — ${debt.note}`
+              : `Vay: ${debt.name}`,
             isoDate: debt.borrowedAt ?? AS_OF,
             type: 'debt_update',
             category: 'debt',
@@ -384,9 +386,13 @@ export class DebtsService {
     if (!borrowEvent || borrowEvent.isoDate === next.borrowedAt) {
       return;
     }
-    await this.moneyEventsService.updateMoneyEvent(householdId, borrowEvent.id, {
-      isoDate: next.borrowedAt,
-    });
+    await this.moneyEventsService.updateMoneyEvent(
+      householdId,
+      borrowEvent.id,
+      {
+        isoDate: next.borrowedAt,
+      },
+    );
   }
 
   /** Auditable scalar fields, for before/after diffing in the audit log. */

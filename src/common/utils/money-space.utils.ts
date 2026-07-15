@@ -271,10 +271,7 @@ export function computeCurrentValue(
       return fx === null ? 0 : quantity * quote.price * fx;
     }
 
-    if (
-      typeof purchasePrice === 'number' &&
-      Number.isFinite(purchasePrice)
-    ) {
+    if (typeof purchasePrice === 'number' && Number.isFinite(purchasePrice)) {
       const fx = fxRateToVnd(fxRates, quoteCurrency);
       return fx === null ? 0 : quantity * purchasePrice * fx;
     }

@@ -110,11 +110,7 @@ export class PrismaAssetsRepository
     });
 
     return asset
-      ? mapAsset(
-          asset,
-          asset.marketPositions[0],
-          asset.calculationTerms[0],
-        )
+      ? mapAsset(asset, asset.marketPositions[0], asset.calculationTerms[0])
       : undefined;
   }
 
@@ -353,6 +349,22 @@ export class PrismaAssetsRepository
     await this.prisma.assetValueHistory.create({
       data: { id: valuation.id, ...data },
     });
+  }
+
+  async hasMarketValuationOnDate(
+    householdId: string,
+    valuationDate: string,
+  ): Promise<boolean> {
+    const date = this.toDate(valuationDate) ?? undefined;
+    const count = await this.prisma.assetValueHistory.count({
+      where: {
+        householdId,
+        valuationDate: date,
+        valuationMethod: 'market_price_api',
+        deletedAt: null,
+      },
+    });
+    return count > 0;
   }
 
   async findAssetValueHistoryByMoneyEvent(

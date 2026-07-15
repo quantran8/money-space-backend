@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { AssetsService } from '../assets/assets.service';
 import { AS_OF } from '../../common/seed/money-space.seed';
 import {
   computeCurrentValue,
@@ -18,9 +19,18 @@ export class DashboardService {
     @Inject(DASHBOARD_REPOSITORY)
     private readonly dashboardRepository: DashboardRepository,
     private readonly marketData: MarketDataService,
+    private readonly assets: AssetsService,
   ) {}
 
   async getDashboard(householdId: string) {
+    // Fire-and-forget: the first dashboard hit of the day for a household kicks
+    // off a market-price refresh in the background (deduped + gated to once/day
+    // inside the service). We do NOT await it — this response returns today's
+    // cached values immediately; the refreshed prices land for the next load.
+    void this.assets
+      .refreshMarketValuationsIfStale(householdId)
+      .catch(() => undefined);
+
     const [
       household,
       householdAssets,

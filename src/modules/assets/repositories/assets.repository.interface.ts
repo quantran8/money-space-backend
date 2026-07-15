@@ -63,6 +63,15 @@ export interface AssetsRepository {
   ): Promise<AssetValueHistory | undefined>;
   insertAssetValueHistory(valuation: AssetValueHistory): Promise<void>;
   /**
+   * Whether any market-priced valuation point already exists for this household
+   * on the given date — the gate for the once-per-day dashboard-triggered
+   * refresh, so a household is re-priced at most once per day.
+   */
+  hasMarketValuationOnDate(
+    householdId: string,
+    valuationDate: string,
+  ): Promise<boolean>;
+  /**
    * The active valuation record a given money event produced for a given asset,
    * if any. One event can touch several assets (a transfer values both wallets),
    * so this is keyed on both. Used to update the exact record when an event is

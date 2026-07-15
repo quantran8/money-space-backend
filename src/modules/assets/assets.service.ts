@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
@@ -52,6 +53,10 @@ export class AssetsService {
     private readonly snapshots: SnapshotsService,
     private readonly marketData: MarketDataService,
   ) {}
+
+  private readonly logger = new Logger(AssetsService.name);
+  /** Households with a dashboard-triggered refresh in flight, to de-dup concurrent hits. */
+  private readonly refreshInFlight = new Set<string>();
 
   async listAssets(householdId: string) {
     const household = await this.assetsRepository.assertHousehold(householdId);
@@ -116,12 +121,7 @@ export class AssetsService {
     );
     await this.prisma.runInTransaction(async () => {
       for (const asset of marketAssets) {
-        const value = computeCurrentValue(
-          asset,
-          marketPrices,
-          fxRates,
-          AS_OF,
-        );
+        const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
         await this.assetsRepository.insertAssetValueHistory({
           id: this.assetsRepository.createId('valuation'),
           assetId: asset.id,
@@ -138,7 +138,49 @@ export class AssetsService {
     for (const asset of marketAssets) {
       await this.snapshots.onAssetChanged(householdId, asset.id);
     }
-    return { householdId, refreshed: marketAssets.length, asOf: this.todayIso() };
+    return {
+      householdId,
+      refreshed: marketAssets.length,
+      asOf: this.todayIso(),
+    };
+  }
+
+  /**
+   * Once-per-day, dashboard-triggered price refresh. Called fire-and-forget when
+   * a household opens the dashboard: if its market assets were not already
+   * repriced today it runs {@link refreshMarketValuations}, otherwise it no-ops.
+   * De-duplicates concurrent dashboard hits with an in-process in-flight guard so
+   * two tabs loading at once don't double-refresh. Never throws — callers do not
+   * await it; failures are logged and the dashboard still returns cached prices.
+   */
+  async refreshMarketValuationsIfStale(
+    householdId: string,
+  ): Promise<{ refreshed: number; skipped: boolean } | undefined> {
+    if (this.refreshInFlight.has(householdId)) {
+      return { refreshed: 0, skipped: true };
+    }
+    this.refreshInFlight.add(householdId);
+    try {
+      const alreadyRefreshed =
+        await this.assetsRepository.hasMarketValuationOnDate(
+          householdId,
+          this.todayIso(),
+        );
+      if (alreadyRefreshed) {
+        return { refreshed: 0, skipped: true };
+      }
+      const result = await this.refreshMarketValuations(householdId);
+      return { refreshed: result.refreshed, skipped: false };
+    } catch (error) {
+      this.logger.error(
+        `Daily market refresh failed for household ${householdId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return undefined;
+    } finally {
+      this.refreshInFlight.delete(householdId);
+    }
   }
 
   async getAssetSnapshots(householdId: string) {
@@ -420,7 +462,8 @@ export class AssetsService {
       liquidity: payload.liquidity ?? current.liquidity,
       currency: payload.currency ?? current.currency,
       note: payload.note ?? current.note,
-      areaSqm: payload.areaSqm !== undefined ? payload.areaSqm : current.areaSqm,
+      areaSqm:
+        payload.areaSqm !== undefined ? payload.areaSqm : current.areaSqm,
       manualValue:
         payload.manualValue !== undefined
           ? payload.manualValue
@@ -943,7 +986,9 @@ export class AssetsService {
       const currentArea = asset.areaSqm;
       const soldArea = sale.sellAll ? currentArea : (sale.quantitySold ?? 0);
       if (soldArea > currentArea) {
-        throw new BadRequestException('Area sold exceeds the current property area');
+        throw new BadRequestException(
+          'Area sold exceeds the current property area',
+        );
       }
       next.areaSqm = sale.sellAll ? 0 : Math.max(0, currentArea - soldArea);
       const currentValue = asset.manualValue ?? 0;
@@ -955,7 +1000,10 @@ export class AssetsService {
       const current = asset.calculationTerm.principalAmount;
       const sold = sale.sellAll ? current : (sale.valueSold ?? 0);
       const remaining = sale.sellAll ? 0 : Math.max(0, current - sold);
-      next.calculationTerm = { ...asset.calculationTerm, principalAmount: remaining };
+      next.calculationTerm = {
+        ...asset.calculationTerm,
+        principalAmount: remaining,
+      };
       if (remaining <= 0) fullySold = true;
     } else {
       // Manual asset: reduce the stored value by the sold portion.
@@ -1013,7 +1061,8 @@ export class AssetsService {
     } else if (asset.type === 'bond' && asset.calculationTerm) {
       next.calculationTerm = {
         ...asset.calculationTerm,
-        principalAmount: asset.calculationTerm.principalAmount + (sale.valueSold ?? 0),
+        principalAmount:
+          asset.calculationTerm.principalAmount + (sale.valueSold ?? 0),
       };
     } else {
       next.manualValue = (asset.manualValue ?? 0) + (sale.valueSold ?? 0);

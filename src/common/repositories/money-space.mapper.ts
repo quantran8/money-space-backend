@@ -201,9 +201,7 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
           // the cached market price rather than reading the position as free.
           purchasePrice:
             (position.purchasePrice ?? position.purchase_price) != null
-              ? numberFromDb(
-                  position.purchasePrice ?? position.purchase_price,
-                )
+              ? numberFromDb(position.purchasePrice ?? position.purchase_price)
               : undefined,
           lastPrice:
             (position.lastPrice ?? position.last_price) != null
