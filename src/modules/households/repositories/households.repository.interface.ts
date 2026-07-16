@@ -20,5 +20,6 @@ export interface HouseholdsRepository {
   /** Households where the given user is a member. */
   getHouseholdsForUser(userId: string): Promise<Household[]>;
   createHousehold(input: CreateHouseholdInput): Promise<Household>;
+  setDisplayCurrency(householdId: string, currency: string): Promise<void>;
   countMembers(householdId?: string): Promise<number>;
 }

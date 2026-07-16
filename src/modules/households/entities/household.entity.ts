@@ -9,6 +9,8 @@ export interface HouseholdConfig {
   /** Money-event category CODE auto-selected in the create form. May point at a
    *  system code or one of the household's own custom codes. Undefined = none. */
   defaultEventCategoryCode?: string;
+  /** Currency used to format household money throughout the client. */
+  displayCurrency?: 'VND' | 'USD' | 'EUR';
 }
 
 export interface Household {

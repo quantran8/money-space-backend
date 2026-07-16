@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
@@ -26,5 +34,13 @@ export class HouseholdsController {
   @Get(':householdId')
   getHousehold(@Param('householdId') householdId: string) {
     return this.householdsService.getHousehold(householdId);
+  }
+
+  @Patch(':householdId/config')
+  updateConfig(
+    @Param('householdId') householdId: string,
+    @Body() payload: { currency?: string },
+  ) {
+    return this.householdsService.updateConfig(householdId, payload);
   }
 }

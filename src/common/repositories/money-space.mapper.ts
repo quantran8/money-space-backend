@@ -106,16 +106,25 @@ function mapHouseholdConfig(value: unknown): HouseholdConfig {
   if (typeof defaultCode === 'string' && defaultCode.length > 0) {
     config.defaultEventCategoryCode = defaultCode;
   }
+  const displayCurrency = source.displayCurrency;
+  if (
+    displayCurrency === 'VND' ||
+    displayCurrency === 'USD' ||
+    displayCurrency === 'EUR'
+  ) {
+    config.displayCurrency = displayCurrency;
+  }
   return config;
 }
 
 export function mapHousehold(row: DbRow): Household {
+  const config = mapHouseholdConfig(row.config);
   return {
     id: row.id,
     name: row.name,
-    currency: row.currency,
+    currency: config.displayCurrency ?? row.currency,
     updateFrequency: row.updateFrequency ?? row.update_frequency,
-    config: mapHouseholdConfig(row.config),
+    config,
     createdBy: row.createdById ?? row.created_by,
     createdAt: row.createdAt ?? row.created_at,
   };

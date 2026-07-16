@@ -5,6 +5,7 @@ import { HOUSEHOLDS_REPOSITORY } from './repositories/households.repository.inte
 import type { HouseholdsRepository } from './repositories/households.repository.interface';
 
 const ALLOWED_FREQUENCIES = ['weekly', 'monthly', 'manual'] as const;
+const ALLOWED_CURRENCIES = ['VND', 'USD', 'EUR'] as const;
 
 @Injectable()
 export class HouseholdsService {
@@ -58,5 +59,21 @@ export class HouseholdsService {
       ownerName: user.displayName ?? user.fullName,
       inviteEmail: inviteEmail || null,
     });
+  }
+
+  async updateConfig(householdId: string, payload: { currency?: string }) {
+    await this.householdsRepository.assertHousehold(householdId);
+    if (
+      !ALLOWED_CURRENCIES.includes(
+        payload.currency as (typeof ALLOWED_CURRENCIES)[number],
+      )
+    ) {
+      throw new BadRequestException('currency must be VND, USD, or EUR');
+    }
+    await this.householdsRepository.setDisplayCurrency(
+      householdId,
+      payload.currency!,
+    );
+    return this.householdsRepository.assertHousehold(householdId);
   }
 }

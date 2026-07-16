@@ -132,4 +132,17 @@ export class PrismaHouseholdsRepository
       where: { householdId },
     });
   }
+
+  async setDisplayCurrency(
+    householdId: string,
+    currency: string,
+  ): Promise<void> {
+    await this.prisma.$executeRaw`
+      UPDATE households
+      SET config = COALESCE(config, '{}'::jsonb)
+        || jsonb_build_object('displayCurrency', ${currency}::text)
+      WHERE id = ${householdId}::uuid
+        AND deleted_at IS NULL
+    `;
+  }
 }
