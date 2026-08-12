@@ -9,7 +9,11 @@ import { MarketDataModule } from './market-data/market-data.module';
 import { MembersModule } from './members/members.module';
 import { MoneyEventCategoriesModule } from './money-event-categories/money-event-categories.module';
 import { MoneyEventsModule } from './money-events/money-events.module';
-import { PaymentsModule } from './payments/payments.module';
+import { CashflowEventsModule } from './cashflow-events/cashflow-events.module';
+import { ForecastModule } from './forecast/forecast.module';
+import { AttentionModule } from './attention/attention.module';
+import { InvitesModule } from './invites/invites.module';
+import { ProtectedReservesModule } from './protected-reserves/protected-reserves.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
 
 @Module({
@@ -23,7 +27,11 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MoneyEventCategoriesModule,
     MoneyEventsModule,
     GoalsModule,
-    PaymentsModule,
+    CashflowEventsModule,
+    ProtectedReservesModule,
+    ForecastModule,
+    AttentionModule,
+    InvitesModule,
     MarketDataModule,
     SnapshotsModule,
   ],
@@ -37,7 +45,11 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MoneyEventCategoriesModule,
     MoneyEventsModule,
     GoalsModule,
-    PaymentsModule,
+    CashflowEventsModule,
+    ProtectedReservesModule,
+    ForecastModule,
+    AttentionModule,
+    InvitesModule,
     MarketDataModule,
     SnapshotsModule,
   ],

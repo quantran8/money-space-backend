@@ -5,13 +5,20 @@ import { SnapshotsService } from './snapshots.service';
 import { SNAPSHOTS_REPOSITORY } from './repositories/snapshots.repository.interface';
 import { PrismaSnapshotsRepository } from './repositories/prisma-snapshots.repository';
 import { MarketDataModule } from '../market-data/market-data.module';
+import { AttentionModule } from '../attention/attention.module';
+import { ForecastModule } from '../forecast/forecast.module';
 
-// NOTE: does NOT import AssetsModule — snapshots reads assets via its own
-// repository + the pure `computeCurrentValue` util, so this stays a low-level
-// module that AssetsModule/MoneyEventsModule/DebtsModule can import one-way to
-// call the auto-snapshot hooks without a dependency cycle.
+/**
+ * Reads assets through its own repository + the pure `computeCurrentValue`
+ * util rather than through AssetsService, so this stays free of AssetsModule.
+ *
+ * Imports Forecast + Attention one-way, to freeze the foresight columns and the
+ * stored-attention count. Nothing imports SnapshotsModule any more: the
+ * auto-snapshot hooks that Assets/Debts/MoneyEvents used to call were retired,
+ * and their now-dead injections went with them.
+ */
 @Module({
-  imports: [CommonModule, MarketDataModule],
+  imports: [CommonModule, MarketDataModule, ForecastModule, AttentionModule],
   controllers: [SnapshotsController],
   providers: [
     SnapshotsService,

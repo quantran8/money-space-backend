@@ -7,7 +7,7 @@ import {
   mapHousehold,
   mapMoneyEvent,
   mapSnapshot,
-  mapUpcomingPayment,
+  mapCashflowEvent,
 } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
@@ -18,7 +18,7 @@ import { FinancialGoal } from '../../goals/entities/financial-goal.entity';
 import { Household } from '../../households/entities/household.entity';
 import { FxRate } from '../../market-data/entities/fx-rate.entity';
 import { MoneyEvent } from '../../money-events/entities/money-event.entity';
-import { UpcomingPayment } from '../../payments/entities/upcoming-payment.entity';
+import { CashflowEvent } from '../../cashflow-events/entities/cashflow-event.entity';
 import { DashboardRepository } from './dashboard.repository.interface';
 
 @Injectable()
@@ -73,15 +73,20 @@ export class PrismaDashboardRepository
     return items.map((item) => mapAttentionItem(item));
   }
 
-  async findUpcomingPaymentsByHousehold(
+  async findCashflowEventsByHousehold(
     householdId: string,
-  ): Promise<UpcomingPayment[]> {
-    const payments = await this.prisma.upcomingPayment.findMany({
-      where: { householdId, deletedAt: null },
-      orderBy: { dueDate: 'asc' },
+  ): Promise<CashflowEvent[]> {
+    const rows = await this.prisma.cashflowEvent.findMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        // Only what still owes money — a completed/cancelled event is history.
+        status: { notIn: ['completed', 'cancelled'] },
+      },
+      orderBy: { expectedDate: 'asc' },
     });
 
-    return payments.map((payment) => mapUpcomingPayment(payment));
+    return rows.map((row) => mapCashflowEvent(row));
   }
 
   async findFinancialGoalsByHousehold(

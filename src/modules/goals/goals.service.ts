@@ -1,7 +1,17 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
-import { FinancialGoal } from './entities/financial-goal.entity';
+import {
+  FinancialGoal,
+  NO_TARGET_DATE,
+} from './entities/financial-goal.entity';
 import { toGoalCard } from '../../common/utils/money-space.utils';
+import { todayInTimeZone } from '../../common/utils/clock';
+import { projectGoal } from './domain/goal-projection';
 import type { CreateFinancialGoalDto } from './dto/create-financial-goal.dto';
 import type { UpdateFinancialGoalDto } from './dto/update-financial-goal.dto';
 import { GOALS_REPOSITORY } from './repositories/goals.repository.interface';
@@ -15,11 +25,35 @@ export class GoalsService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async listFinancialGoals(householdId: string) {
+  /**
+   * `?include=projection` attaches each goal's projection (§26C) to the list.
+   *
+   * Opt-in rather than always-on: the Goals screen needs it, the goal picker in
+   * a form does not, and projecting N goals the caller will not render is work
+   * nobody asked for.
+   *
+   * The projection is computed HERE, from the pure `projectGoal` in this
+   * module's own `domain/`, rather than by calling ForecastService — Forecast
+   * imports Goals, so the reverse edge would be a cycle.
+   */
+  async listFinancialGoals(householdId: string, include?: string) {
     await this.goalsRepository.assertHousehold(householdId);
     const goals =
       await this.goalsRepository.findFinancialGoalsByHousehold(householdId);
-    const items = goals.map((goal) => toGoalCard(goal));
+
+    const wantsProjection = (include ?? '')
+      .split(',')
+      .map((part) => part.trim())
+      .includes('projection');
+    const asOfDate = todayInTimeZone();
+
+    const items = goals.map((goal) => ({
+      ...toGoalCard(goal),
+      ...(wantsProjection
+        ? { projection: this.projectionFor(goal, asOfDate) }
+        : {}),
+    }));
+
     return {
       householdId,
       items,
@@ -28,7 +62,30 @@ export class GoalsService {
   }
 
   async getFinancialGoal(householdId: string, goalId: string) {
-    return toGoalCard(await this.ensureFinancialGoal(householdId, goalId));
+    const goal = await this.ensureFinancialGoal(householdId, goalId);
+    return {
+      ...toGoalCard(goal),
+      projection: this.projectionFor(goal, todayInTimeZone()),
+    };
+  }
+
+  /** One goal's projection, shaped for `projectGoal`. */
+  private projectionFor(goal: FinancialGoal, asOfDate: string) {
+    return projectGoal({
+      goalId: goal.id,
+      targetAmount: goal.targetAmount,
+      currentAmount: goal.currentAmount,
+      plannedMonthlyContribution: goal.plannedMonthlyContribution,
+      // `NO_TARGET_DATE` is a wire sentinel, not a date. Passing it straight
+      // through would make every undated goal look like it was due on the
+      // string "No deadline".
+      targetDate:
+        goal.targetDate && goal.targetDate !== NO_TARGET_DATE
+          ? goal.targetDate
+          : null,
+      status: 'active',
+      asOfDate,
+    });
   }
 
   async createFinancialGoal(
@@ -37,16 +94,33 @@ export class GoalsService {
   ) {
     // `insertFinancialGoal` asserts the household exists (and needs its row to
     // resolve `createdById`), so we don't assert it a second time here.
+    const currentAmount = payload.currentAmount ?? 0;
+    if (currentAmount < 0) {
+      throw new BadRequestException('currentAmount cannot be negative');
+    }
+    const plannedMonthlyContribution =
+      payload.plannedMonthlyContribution ?? null;
+    if (
+      plannedMonthlyContribution !== null &&
+      plannedMonthlyContribution < 0
+    ) {
+      throw new BadRequestException(
+        'plannedMonthlyContribution cannot be negative',
+      );
+    }
+
     const goal: FinancialGoal = {
       id: this.goalsRepository.createId('goal'),
       householdId,
       name: payload.name.trim(),
-      // Derived from goal_contribution events; a brand-new goal has none yet.
-      currentAmount: 0,
+      // Accepted on create so onboarding can record savings that predate the
+      // app. After this, only goal_contribution events may move it.
+      currentAmount,
       targetAmount: payload.targetAmount,
+      plannedMonthlyContribution,
       priority: payload.priority,
       note: payload.note?.trim() ?? '',
-      deadline: payload.deadline ?? 'No deadline',
+      targetDate: payload.targetDate ?? NO_TARGET_DATE,
     };
 
     await this.goalsRepository.insertFinancialGoal(goal);
@@ -59,17 +133,29 @@ export class GoalsService {
     payload: UpdateFinancialGoalDto,
   ) {
     const goal = await this.ensureFinancialGoal(householdId, goalId);
+    if (
+      payload.plannedMonthlyContribution != null &&
+      payload.plannedMonthlyContribution < 0
+    ) {
+      throw new BadRequestException(
+        'plannedMonthlyContribution cannot be negative',
+      );
+    }
     const next: FinancialGoal = {
       ...goal,
       ...payload,
       id: goal.id,
       householdId: goal.householdId,
       name: payload.name?.trim() ?? goal.name,
-      // Derived; keep the value read from the DB, never take it from the payload.
+      // Never taken from the payload: only a goal_contribution money event may
+      // move progress, so the stored total can't drift from the event history.
+      // `UpdateFinancialGoalDto` omits the field, this is the runtime guard.
       currentAmount: goal.currentAmount,
       targetAmount: payload.targetAmount ?? goal.targetAmount,
+      plannedMonthlyContribution:
+        payload.plannedMonthlyContribution ?? goal.plannedMonthlyContribution,
       note: payload.note?.trim() ?? goal.note,
-      deadline: payload.deadline ?? goal.deadline,
+      targetDate: payload.targetDate ?? goal.targetDate,
       priority: payload.priority ?? goal.priority,
     };
 

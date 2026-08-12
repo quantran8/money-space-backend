@@ -12,7 +12,7 @@ export interface DebtsRepository {
   updateDebt(debtId: string, debt: Debt): Promise<void>;
   deleteDebt(debtId: string): Promise<void>;
   upsertDebtInterestPeriods(debt: Debt): Promise<void>;
-  deleteUpcomingPaymentsByDebt(debtId: string): Promise<void>;
+  deleteCashflowEventsByDebt(debtId: string): Promise<void>;
   /**
    * Close the latest open interest period at `effectiveDate` — used to append a
    * new rate stage from that date without wiping the historical stages.

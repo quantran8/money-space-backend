@@ -4,90 +4,136 @@ The periodic net-worth snapshot model that backs the dashboard trend and the "is
 
 ## Snapshots
 
-A `Snapshot` is a periodic (weekly/monthly) net-worth snapshot of a household. It persists totals:
-- `totalLiquid`, `totalSavings`, `totalLongTermAssets`, `totalDebt`, `upcomingDueAmount`, `attentionCount`.
-- `status` (`good | attention | tight | insufficient_data`) and `sourceMode`
-  (`manual | calculated | mixed`) are **DERIVED at read time** — from the totals +
-  attentionCount, and from the child valuation methods respectively. They are
-  **not stored columns** (dropped in migration `..._drop_dead_columns`): storing
-  them would go stale if the derivation rule changed, and nothing wrote them.
-- `createdById` is nullable (`ON DELETE SET NULL`) — a snapshot outlives the
-  member who created it.
+A `Snapshot` is a deliberately-taken frozen picture of a household. It persists:
+
+**Balance-sheet totals:** `totalLiquid`, `totalSavings`, `totalLongTermAssets`,
+`totalDebt`, `upcomingDueAmount`, `attentionCount`.
+
+**Foresight context (v3.1, spec §10):** `protectedReserveAmount`,
+`forecastHorizonDays`, `upcomingIncomeAmount`, `upcomingOutgoingAmount`,
+`lowestProjectedBalance`, `flexibleMoney`.
+
+The last two are **nullable and legitimately negative**. §10 explicitly forbids a
+`>= 0` CHECK on them: a projected shortfall is the single most important thing a
+snapshot can record, and a clamp would erase exactly the fact the product exists
+to surface. NULL means "this snapshot predates the foresight columns" — carried
+through as NULL rather than coerced to 0, because "we didn't record this" and "it
+was zero" are different facts and only one of them is honest.
+
+`financialState` (`on_track | watch | tight | incomplete`) and `sourceMode`
+(`manual | calculated | mixed`) are **DERIVED at read time**, not stored — so
+changing the derivation rule cannot leave old rows asserting something the
+current code disagrees with.
+
+`createdById` is nullable (`ON DELETE SET NULL`) — a snapshot outlives the
+member who created it.
+
+### A snapshot's financial state ≠ the live one
+
+Live state comes from a full forecast run
+(`forecast/domain/financial-state.ts`). A snapshot has no forecast to re-run, by
+design: re-running today's engine over yesterday's row would produce a number
+that changes every time you look at it — the opposite of what a snapshot is for.
+
+So `snapshots/domain/snapshot-financial-state.ts` derives the same four codes
+from the six frozen columns. It is a separate, smaller function on purpose:
+pretending we have inputs we don't would be worse than admitting the reduced set.
+Both share `FINANCIAL_STATE_THRESHOLDS`, so history and today can never disagree
+about what "tight" means.
+
+The old `deriveSnapshotStatus` (`good | attention | tight | insufficient_data`)
+was **removed**. It judged a snapshot on net worth and whether liquid cash
+covered what was due — a balance-sheet reading from before the product had a
+forecast. The two rules disagree on the same household: positive net worth with a
+shortfall on the 15th reads `good` under the old rule and `tight` under the new
+one.
 
 ## SnapshotAssetValue
 
-Denormalizes **each asset's value/type/liquidity/visibility at snapshot time** (unique per `[snapshotId, assetId]`). This is what the dashboard's `assetTrend` reads.
+Denormalizes **each asset's value/type/liquidity/visibility at snapshot time**
+(unique per `[snapshotId, assetId]`), plus its **classification** —
+`financial_nature`, `holder_member_id`, `privacy_owner_member_id` (§17). This is
+what the dashboard's `assetTrend` reads.
 
-## Auto-snapshot (system-written, per-day, granular)
+Lines are read back from the LINE, never re-read through the asset: the asset may
+have been reclassified since, and a past snapshot must keep meaning what it meant.
 
-Snapshots are written **automatically by the system** whenever net worth changes
-— there is NO manual create endpoint (POST removed; only GET list/detail remain).
-`SnapshotsService` exposes three hooks, called AFTER the triggering write's
-transaction commits:
-- `onAssetChanged(householdId, assetId)` — asset create/update/sale: upsert that
-  asset's snapshot line (or remove it if it's no longer active, e.g. fully sold).
-- `onAssetRemoved(householdId, assetId)` — asset delete: drop its line.
-- `onHouseholdChanged(householdId)` — debt / non-asset money-event: totals only.
+## Snapshots are append-only, created deliberately (v3.1)
 
-**Per-day upsert**: each hook calls `ensureTodaySnapshot(householdId, today)` —
-"today" in the household timezone (default `Asia/Ho_Chi_Minh`; a `timezone`
-column can come later). One live snapshot per household per day, enforced by the
-partial unique index `snapshots (household_id, snapshot_date) WHERE deleted_at IS
-NULL` (migration `..._snapshot_one_per_day`). First change of the day CREATES the
-parent + **seeds a FULL child set** for every active asset; later changes are
-**granular** (upsert/remove just the affected asset's line).
+Snapshots are created by **`POST /snapshots`**. They are frozen pictures: once
+written, nothing rewrites them.
 
-**Totals = SUM of children, always.** `recomputeSnapshotTotals` sets the parent
-`total_liquid/savings/long_term` from `SELECT liquidity, SUM(value) … GROUP BY
-liquidity` over the CURRENT child rows (+ household-level debt/upcoming/attention),
-so the parent can never diverge from its children regardless of granular edits.
+**The auto-snapshot hooks were REMOVED in the v3.1 alignment.** `SnapshotsService`
+used to expose `onAssetChanged` / `onAssetRemoved` / `onHouseholdChanged`, which
+fired after every asset/debt/money-event write, upserted "today's snapshot" and
+recomputed its totals from the current child rows.
+
+Why they had to go:
+
+- They **contradicted what a snapshot is**. Spec §26: *"snapshot đã tạo thì không
+  đổi ngầm"*. A snapshot that keeps changing all day is not a frozen picture.
+  `total_debt` in particular was re-read live on every recompute, so an unrelated
+  debt edit could rewrite yesterday's *and* today's picture.
+- They **failed silently**. Each hook was `try/catch`ed and swallowed its error,
+  so a break showed up as snapshots quietly going stale — the worst failure mode.
+- They **couldn't carry the v3.1 foresight columns**. Filling
+  `lowest_projected_balance` / `flexible_money` needs a full forecast run (three
+  extra queries plus occurrence expansion) — unacceptable on a latency-tuned
+  write path that was budgeted to ~5 round-trips.
+
+Removed with them: `ensureTodaySnapshot`, `upsertAssetLine`, `removeAssetLine`,
+`recomputeSnapshotTotals`, and the partial unique index
+`snapshots (household_id, snapshot_date) WHERE deleted_at IS NULL` — a household
+may now snapshot as often as it likes, so a per-day constraint would reject
+legitimate writes rather than protect anything. Double-tap protection lives in
+the service instead (reject a second snapshot within 60s).
+
+Existing rows are kept; provenance is already distinguishable via the audit
+action (`snapshot.auto_created` vs `snapshot.created`).
+
+**What did NOT regress:** the dashboard never read snapshots for the live
+picture — it computes net worth on the fly (`DashboardService` +
+`getOutstandingDebtTotal`). The only consumers of per-day rows were the
+`assetTrend` chart and `GET /assets/snapshots`, so the trend simply gets coarser
+until a scheduled snapshot job (driven by `households.update_frequency`) lands.
+That is honest: a "trend" built from silently-mutating rows was never trustworthy.
+
+### The write itself: 3 statements, 1 transaction
+
+Everything expensive — valuing assets, running the forecast, totalling debt,
+counting attention — happens **outside** the transaction. The transaction is
+`insert snapshots` → `snapshotAssetValue.createMany(lines)` → `audit`.
+
+An interactive transaction holds one connection open on the direct
+(session-mode) client. Doing the reads inside it is how the old auto-snapshot
+path used to die with *"Transaction not found"* on a slow household.
+
+Totals are summed from the **same lines that get frozen**, so the header figure
+and the per-asset breakdown cannot disagree — the exact failure mode of the
+retired hooks, which recomputed totals from a separate live query.
+
+Rate limit: one snapshot per 60s per household (`ConflictException`). Not a
+business rule — a double-tap guard, since each snapshot writes a row per asset.
 
 **Reads materialized `currentValue`**: the snapshot repository values assets via
-its OWN reader (`getActiveAssetLines` + the pure `computeCurrentValue` util), NOT
-`AssetsService` — so `SnapshotsModule` imports only `CommonModule` and the
-asset/money-event/debt modules import IT one-way (no dependency cycle). Safe
-because every write-flow already refreshed `assets.current_value` via
-`upsertCurrentValuation` in the just-committed transaction.
+its OWN reader (`getClassifiedAssetLines` + the pure `computeCurrentValue` util),
+NOT `AssetsService` — so no dependency cycle forms.
 
-**Round-trip budget (latency-sensitive)**: the hot path (a same-day, non-seed
-write) is tuned to ~5 sequential DB round-trips, which matters when the DB is
-far (e.g. Supabase Tokyo ≈ 540ms/round-trip from a distant dev machine):
-- The hooks do NOT wrap their steps in `runInTransaction` — every step is an
-  idempotent upsert/recompute, self-healing on the next write, so a tx would
-  only add an open+commit round-trip on the session pooler.
-- `ensureTodaySnapshot` has a non-transactional fast-path SELECT; it opens a tx
-  (to seed parent+children atomically) ONLY on the first write of the day.
-- `toLine` skips `loadPricing` (2 queries) for `manual`/`formula_calculated`
-  assets — only `market_priced` needs market prices / fx rates — and runs
-  pricing (when needed) concurrently with the valuation-lineage lookup.
-- `recomputeSnapshotTotals` is ONE `$executeRaw` UPDATE with correlated
-  subqueries (child SUM-per-liquidity + debt/upcoming/attention), not groupBy +
-  3 aggregates + update.
-
-**Safety rails**: hooks run OUTSIDE the primary transaction and are `try/catch`ed
-— an auto-snapshot failure logs and is swallowed, never breaking (already
-committed) the asset/debt/event write. `isInTransaction()` guard: when a service
-calls another's write inside its own tx (e.g. `createDebt` → `createMoneyEvent`),
-the inner hook skips and the outermost caller fires the snapshot once (avoids
-double-fire + reading uncommitted state). Money-event hooks refresh each linked
-wallet's line (wallets change value via `applyWalletEffects`); accrual fires one
-hook per deposit/wallet after its per-period transactions. Audit action
-`snapshot.auto_created`, actor NULL (system). No debounce v1 — per-day upsert is
-idempotent; repeated same-day writes just rewrite the same values.
-
-**Live vs. historical**: the dashboard header net worth is computed on the fly
-(`DashboardService`, using `getOutstandingDebtTotal` — the old hardcoded
-`totalDebt = 18_000_000` is gone), NOT read from the latest snapshot. The
-`assetTrend` reads the frozen `snapshots` rows.
+`getClassifiedAssetLines` replaced `getActiveAssetLines`, which hardcoded
+`visibilityLevel: 'detail'` on every line. Harmless while snapshots were internal
+bookkeeping; fatal once §17 freezes classification, since it would have recorded
+every private asset as shared — permanently.
 
 ## Immutability invariant
 
-**Snapshots before today are immutable.** Only TODAY's snapshot is mutated
-(granular upsert / recompute) until the day rolls over; days `< today` are never
-touched (`ensureTodaySnapshot` keys strictly on `snapshot_date = today`). Editing
-an old valuation therefore can't rewrite past snapshots. Enforced by omission:
-no update/delete endpoints on snapshot rows/lines; `snapshot_asset_values` are
-hard-deleted only within today's snapshot during granular removal.
+**A created snapshot never changes.** There are no update/delete endpoints on
+snapshot rows or lines, and nothing mutates them after creation. Editing an old
+valuation cannot rewrite a past snapshot.
+
+This is also why `snapshot_asset_values` freezes the asset's **classification**
+(`financial_nature`, `holder_member_id`, `privacy_owner_member_id`) alongside its
+value — otherwise re-marking an asset `personal_private` would silently change
+what every past snapshot meant. See [[shared-calculation-and-privacy]].
 
 ## AttentionItem
 
@@ -97,12 +143,17 @@ An alert/notification, kept calm and non-judgmental (see [[domain-overview]] ton
   lifecycle — there is **no `deletedAt`** (dismissed = gone; a second delete flag
   would conflict). Queries exclude `dismissed` (or filter to `open`) instead of a
   soft-delete filter.
-- **polymorphic link**: `relatedObjectType` ∈ asset / upcoming_payment / financial_goal / snapshot / money_event / debt, plus `relatedObjectId`.
+- **polymorphic link**: `relatedObjectType` ∈ asset / cashflow_event / financial_goal / snapshot / money_event / debt, plus `relatedObjectId`.
 - **Attention is centralized here.** The old denormalized `is_attention_needed` /
   `is_large_event` flags on `money_events` and `is_attention_needed` on
   `upcoming_payments` were dropped — they were unread or pure-derived mirrors, and
-  three sources of truth disagree. `upcoming_payments.attention_level` stays (it
-  carries the "important" flag that `PaymentStatus` can't express).
+  three sources of truth disagree. `cashflow_events.attention_level` stays (it
+  carries the "important" flag that the status enum can't express).
+
+**v3.1 rewrote how attention works.** Most signals are now DERIVED from the
+forecast at read time and never stored; dismissals of derived signals are stored
+as tombstones. See [[attention-items]] — that file is the source of truth, and
+this section covers only the table.
 
 ## AuditLog
 
@@ -110,10 +161,15 @@ Append-only per-household action log (actor, action string, entityType/id, JSON 
 
 ## Where it lives in code
 
-- **backend**: schema entities `Snapshot`, `SnapshotAssetValue`, `AttentionItem`, `AuditLog`; read via `src/modules/dashboard/`.
+- **backend**: `src/modules/snapshots/` (`POST`/`GET`, `domain/snapshot-financial-state.ts`),
+  `src/modules/attention/`; schema entities `Snapshot`, `SnapshotAssetValue`,
+  `AttentionItem`, `AuditLog`.
 - **frontend-web**: consumed by `src/features/dashboard/` (asset trend, attention list).
 - **mobile-app**: to be ported.
 
 ## Enums
 
-`SnapshotStatus = good | attention | tight | insufficient_data`, `SnapshotSourceMode = manual | calculated | mixed`, `AttentionItemStatus = open | seen | resolved | dismissed`, `AttentionLevel = normal | important | urgent`.
+`FinancialState = on_track | watch | tight | incomplete` (replaces the removed
+`SnapshotStatus`), `SnapshotSourceMode = manual | calculated | mixed`,
+`AttentionItemStatus = open | seen | resolved | dismissed`,
+`AttentionLevel = normal | important | urgent`.

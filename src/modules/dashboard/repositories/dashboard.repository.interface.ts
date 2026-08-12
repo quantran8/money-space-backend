@@ -5,7 +5,7 @@ import type { FinancialGoal } from '../../goals/entities/financial-goal.entity';
 import type { Household } from '../../households/entities/household.entity';
 import type { FxRate } from '../../market-data/entities/fx-rate.entity';
 import type { MoneyEvent } from '../../money-events/entities/money-event.entity';
-import type { UpcomingPayment } from '../../payments/entities/upcoming-payment.entity';
+import type { CashflowEvent } from '../../cashflow-events/entities/cashflow-event.entity';
 
 export const DASHBOARD_REPOSITORY = Symbol('DASHBOARD_REPOSITORY');
 
@@ -14,9 +14,7 @@ export interface DashboardRepository {
   findAssetsByHousehold(householdId: string): Promise<Asset[]>;
   getFxRates(): Promise<FxRate[]>;
   getAttentionItems(householdId?: string): Promise<AttentionItem[]>;
-  findUpcomingPaymentsByHousehold(
-    householdId: string,
-  ): Promise<UpcomingPayment[]>;
+  findCashflowEventsByHousehold(householdId: string): Promise<CashflowEvent[]>;
   findFinancialGoalsByHousehold(householdId: string): Promise<FinancialGoal[]>;
   findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]>;
   getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]>;

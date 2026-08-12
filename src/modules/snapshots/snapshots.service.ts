@@ -1,15 +1,30 @@
-import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { PrismaService } from '../../database/prisma/prisma.service';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { todayInTimeZone } from '../../common/utils/clock';
+import { computeFlexibleMoney } from '../forecast/domain/flexible-money';
+import { runForecast } from '../forecast/domain/forecast';
+import { ForecastService } from '../forecast/forecast.service';
+import { AttentionService } from '../attention/attention.service';
 import {
   SNAPSHOTS_REPOSITORY,
   type SnapshotsRepository,
 } from './repositories/snapshots.repository.interface';
 
-// Default household timezone until households carry their own. "Today" for the
-// per-day snapshot is computed in this zone so the day boundary matches how a
-// Vietnamese-first user perceives it (a change at 1am should land on that date,
-// not the previous UTC day).
-const DEFAULT_TZ = 'Asia/Ho_Chi_Minh';
+/**
+ * How often a household may take a snapshot.
+ *
+ * Not a business rule — a double-tap guard. Two snapshots seconds apart are
+ * never intentional, and each one writes a row per asset.
+ */
+const MIN_SECONDS_BETWEEN_SNAPSHOTS = 60;
+
+/** Horizon frozen into a snapshot when the caller doesn't choose one. */
+const DEFAULT_SNAPSHOT_HORIZON_DAYS = 30;
 
 @Injectable()
 export class SnapshotsService {
@@ -18,7 +33,8 @@ export class SnapshotsService {
   constructor(
     @Inject(SNAPSHOTS_REPOSITORY)
     private readonly snapshotsRepository: SnapshotsRepository,
-    private readonly prisma: PrismaService,
+    private readonly forecast: ForecastService,
+    private readonly attention: AttentionService,
   ) {}
 
   async listSnapshots(householdId: string) {
@@ -39,103 +55,111 @@ export class SnapshotsService {
     return snapshot;
   }
 
-  // --- Auto-snapshot hooks ---------------------------------------------------
-  //
-  // Each hook upserts TODAY's snapshot for the household, then recomputes its
-  // totals from the current child rows. They are called AFTER the triggering
-  // write's transaction has committed. Two safety rails:
-  //   1. `isInTransaction()` guard — if a service calls another service's write
-  //      inside its own transaction (e.g. createDebt → createMoneyEvent), the
-  //      inner hook skips; the outermost caller fires the snapshot once.
-  //   2. try/catch — a snapshot failure must never break the primary operation
-  //      (already committed) nor surface an error; it is logged and swallowed.
+  /**
+   * Take a snapshot (spec §26).
+   *
+   * **A snapshot is append-only and never silently changes.** That is the whole
+   * point of it, and it is exactly what the retired auto-hooks got wrong: they
+   * upserted "today's row" after every asset/debt/money-event write, so a
+   * snapshot kept moving after it was taken — and re-read `total_debt` live, so
+   * an unrelated debt edit could rewrite yesterday's picture.
+   *
+   * The shape of this method is load-bearing. Steps 1–6 (valuing assets,
+   * running the forecast, totalling debt, counting attention) all run OUTSIDE
+   * the transaction; the transaction is three statements. An interactive
+   * transaction holds one connection open on the direct client, and doing the
+   * reads inside it is how the old path used to die with "Transaction not
+   * found" on a slow household.
+   */
+  async createSnapshot(
+    householdId: string,
+    payload: { note?: string; horizonDays?: number } = {},
+    userId?: string | null,
+  ) {
+    await this.snapshotsRepository.assertHousehold(householdId);
 
-  /** Asset created/updated/sold → upsert its line (or remove it if no longer active). */
-  async onAssetChanged(householdId: string, assetId: string): Promise<void> {
-    if (this.prisma.isInTransaction()) return;
-    try {
-      // No transaction: every step is an idempotent upsert/recompute, so a
-      // partial failure is self-healing on the next write. Skipping the tx
-      // avoids an open+commit round-trip on the session pooler and lets these
-      // single-statement queries run on the faster transaction-mode pooler.
-      const snapshotId = await this.snapshotsRepository.ensureTodaySnapshot(
-        householdId,
-        this.today(),
-      );
-      const line = await this.snapshotsRepository.getActiveAssetLine(
-        householdId,
-        assetId,
-      );
-      if (line) {
-        await this.snapshotsRepository.upsertAssetLine(
-          snapshotId,
-          householdId,
-          line,
+    // 1. Rate limit. A snapshot writes a row per asset, and two taken seconds
+    //    apart are always a double-tap, never a decision.
+    const lastCreatedAt =
+      await this.snapshotsRepository.getLastSnapshotCreatedAt(householdId);
+    if (lastCreatedAt) {
+      const secondsSince = (Date.now() - lastCreatedAt.getTime()) / 1000;
+      if (secondsSince < MIN_SECONDS_BETWEEN_SNAPSHOTS) {
+        throw new ConflictException(
+          `A snapshot was taken ${Math.round(secondsSince)}s ago. Wait ${
+            MIN_SECONDS_BETWEEN_SNAPSHOTS - Math.round(secondsSince)
+          }s.`,
         );
-      } else {
-        await this.snapshotsRepository.removeAssetLine(snapshotId, assetId);
       }
-      await this.snapshotsRepository.recomputeSnapshotTotals(
-        snapshotId,
-        householdId,
-      );
-    } catch (e) {
-      this.logger.error(
-        `auto-snapshot onAssetChanged failed (household=${householdId}, asset=${assetId})`,
-        e as Error,
-      );
     }
+
+    const asOfDate = todayInTimeZone();
+    const horizonDays = this.forecast.parseHorizon(
+      payload.horizonDays ?? DEFAULT_SNAPSHOT_HORIZON_DAYS,
+    );
+
+    // 2–5. Everything expensive, concurrently, and all outside the transaction.
+    const [lines, totalDebt, forecastInput, attentionCount] = await Promise.all([
+      this.snapshotsRepository.getClassifiedAssetLines(householdId, asOfDate),
+      this.snapshotsRepository.getOutstandingDebtTotal(householdId),
+      this.forecast.loadInput(householdId, horizonDays, asOfDate),
+      // Stored items ONLY. A derived count isn't reproducible — it depends on a
+      // forecast that will have moved by the time anyone reads this back, so
+      // freezing it would put a number in the row that nothing can ever
+      // recompute or verify.
+      this.attention.countOpenStoredItems(householdId),
+    ]);
+
+    const forecast = runForecast(forecastInput);
+    const flexible = computeFlexibleMoney(forecast);
+
+    // 6. Totals by liquidity, from the SAME lines that get frozen — so the
+    //    header figure and the per-asset breakdown can never disagree.
+    const totals = { usable_now: 0, not_immediately_usable: 0, long_term: 0 };
+    for (const line of lines) {
+      if (line.liquidity in totals) {
+        totals[line.liquidity as keyof typeof totals] += line.value;
+      }
+    }
+
+    const id = this.snapshotsRepository.createId('snapshot');
+
+    // 7. The write: three statements, one transaction.
+    await this.snapshotsRepository.createSnapshot({
+      id,
+      householdId,
+      snapshotDate: asOfDate,
+      totalLiquid: totals.usable_now,
+      totalSavings: totals.not_immediately_usable,
+      totalLongTermAssets: totals.long_term,
+      totalDebt,
+      upcomingDueAmount: forecast.totals.requiredOutgoingAmount,
+      attentionCount,
+      protectedReserveAmount: forecast.protectedReserveAmount,
+      forecastHorizonDays: horizonDays,
+      upcomingIncomeAmount: forecast.totals.upcomingIncomeAmount,
+      upcomingOutgoingAmount: forecast.totals.upcomingOutgoingAmount,
+      // Frozen as-is. Negative is the signal, not an error to sanitise (§10).
+      lowestProjectedBalance: forecast.lowestProjectedBalance,
+      flexibleMoney: flexible.flexibleMoneyToday,
+      note: payload.note?.trim() || null,
+      createdById: userId ?? null,
+      lines,
+    });
+
+    this.logger.log(
+      `snapshot.created household=${householdId} lines=${lines.length} horizon=${horizonDays}`,
+    );
+
+    // 8. Read it back so the caller gets exactly what was stored — including
+    //    the derived financial state — rather than a hand-built echo that could
+    //    drift from the row.
+    return this.getSnapshot(householdId, id);
   }
 
-  /** Asset deleted → drop its line from today's snapshot. */
-  async onAssetRemoved(householdId: string, assetId: string): Promise<void> {
-    if (this.prisma.isInTransaction()) return;
-    try {
-      const snapshotId = await this.snapshotsRepository.ensureTodaySnapshot(
-        householdId,
-        this.today(),
-      );
-      await this.snapshotsRepository.removeAssetLine(snapshotId, assetId);
-      await this.snapshotsRepository.recomputeSnapshotTotals(
-        snapshotId,
-        householdId,
-      );
-    } catch (e) {
-      this.logger.error(
-        `auto-snapshot onAssetRemoved failed (household=${householdId}, asset=${assetId})`,
-        e as Error,
-      );
-    }
-  }
-
-  /** Household-level change (debt, non-asset money event) → recompute totals only. */
-  async onHouseholdChanged(householdId: string): Promise<void> {
-    if (this.prisma.isInTransaction()) return;
-    try {
-      const snapshotId = await this.snapshotsRepository.ensureTodaySnapshot(
-        householdId,
-        this.today(),
-      );
-      await this.snapshotsRepository.recomputeSnapshotTotals(
-        snapshotId,
-        householdId,
-      );
-    } catch (e) {
-      this.logger.error(
-        `auto-snapshot onHouseholdChanged failed (household=${householdId})`,
-        e as Error,
-      );
-    }
-  }
-
-  /** Today's date (YYYY-MM-DD) in the household timezone. */
-  private today(): string {
-    // en-CA formats as YYYY-MM-DD; the timeZone option shifts the day boundary.
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone: DEFAULT_TZ,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(new Date());
-  }
+  // The auto-snapshot hooks (onAssetChanged / onAssetRemoved /
+  // onHouseholdChanged) were REMOVED in the v3.1 alignment — see the comment on
+  // `createSnapshot` for what they did wrong. Snapshots are now taken
+  // deliberately, and the live dashboard never read them anyway: it computes
+  // net worth on the fly.
 }

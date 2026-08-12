@@ -289,11 +289,11 @@ export class PrismaDebtsRepository
     });
   }
 
-  async deleteUpcomingPaymentsByDebt(debtId: string): Promise<void> {
-    // Deleting a debt removes the repayment records it generated. Soft-delete
+  async deleteCashflowEventsByDebt(debtId: string): Promise<void> {
+    // Deleting a debt removes the repayment events it generated. Soft-delete
     // (set `deleted_at`) to match every other delete in the app; only rows not
     // already deleted are touched.
-    await this.prisma.upcomingPayment.updateMany({
+    await this.prisma.cashflowEvent.updateMany({
       where: { debtId, deletedAt: null },
       data: { deletedAt: new Date() },
     });

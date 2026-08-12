@@ -5,11 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
-import { AS_OF } from '../../common/seed/money-space.seed';
+import { todayInTimeZone } from '../../common/utils/clock';
 import { MoneyEventsService } from '../money-events/money-events.service';
-import { PaymentsService } from '../payments/payments.service';
-import { SnapshotsService } from '../snapshots/snapshots.service';
-import type { CreateUpcomingPaymentDto } from '../payments/dto/create-upcoming-payment.dto';
+import { CashflowEventsService } from '../cashflow-events/cashflow-events.service';
+import type { CreateCashflowEventDto } from '../cashflow-events/dto/create-cashflow-event.dto';
 import type { CreateDebtDto } from './dto/create-debt.dto';
 import type { ListDebtsQuery } from './dto/list-debts.query';
 import type { UpdateDebtDto } from './dto/update-debt.dto';
@@ -59,27 +58,10 @@ export class DebtsService {
     private readonly debtsRepository: DebtsRepository,
     private readonly prisma: PrismaService,
     private readonly moneyEventsService: MoneyEventsService,
-    private readonly paymentsService: PaymentsService,
-    private readonly snapshots: SnapshotsService,
+    private readonly cashflowEventsService: CashflowEventsService,
   ) {}
 
-  /**
-   * Auto-snapshot after a debt write commits: recompute totals (total_debt
-   * changed) and refresh the received-to wallet's line if the debt credited one.
-   * A `onHouseholdChanged`/`onAssetChanged` here also covers the wallet moves
-   * done by the nested `createMoneyEvent` calls, whose own hooks skipped because
-   * they ran inside this debt transaction (isInTransaction).
-   */
-  private async snapshotAfterDebt(
-    householdId: string,
-    receivedToAssetId?: string | null,
-  ): Promise<void> {
-    if (receivedToAssetId) {
-      await this.snapshots.onAssetChanged(householdId, receivedToAssetId);
-    } else {
-      await this.snapshots.onHouseholdChanged(householdId);
-    }
-  }
+
 
   async listDebts(householdId: string, query?: ListDebtsQuery) {
     await this.debtsRepository.assertHousehold(householdId);
@@ -194,7 +176,7 @@ export class DebtsService {
             note: debt.note
               ? `Vay: ${debt.name} — ${debt.note}`
               : `Vay: ${debt.name}`,
-            isoDate: debt.borrowedAt ?? AS_OF,
+            isoDate: debt.borrowedAt ?? todayInTimeZone(),
             type: 'debt_update',
             category: 'debt',
             // `debt_update` defaults to outflow; borrowed money comes IN, so
@@ -211,7 +193,6 @@ export class DebtsService {
       },
       { timeout: 15000, maxWait: 10000 },
     );
-    await this.snapshotAfterDebt(householdId, debt.receivedToAssetId);
     return debt;
   }
 
@@ -221,7 +202,7 @@ export class DebtsService {
    * per-period amount (`fixedPaymentAmount`, else `minimumPaymentAmount`).
    *
    * Due dates step from the first period after `borrowedAt` (defaulting to
-   * `AS_OF`) by the frequency, and stop at `expectedFinalDueDate` when set —
+   * today) by the frequency, and stop at `expectedFinalDueDate` when set —
    * otherwise we cap at `MAX_GENERATED_INSTALLMENTS` so an open-ended debt does
    * not spawn an unbounded number of rows. Meant to run inside the debt-create
    * transaction; each `createUpcomingPayment` joins it.
@@ -237,20 +218,25 @@ export class DebtsService {
       return;
     }
 
-    const start = debt.borrowedAt ?? AS_OF;
+    const start = debt.borrowedAt ?? todayInTimeZone();
     const finalDue = debt.expectedFinalDueDate;
-    const payments: CreateUpcomingPaymentDto[] = [];
+    const events: CreateCashflowEventDto[] = [];
     for (let index = 1; index <= MAX_GENERATED_INSTALLMENTS; index += 1) {
       const dueDate = addMonthsIso(start, stepMonths * index);
       if (finalDue && dueDate > finalDue) {
         break;
       }
-      payments.push({
+      events.push({
         name: `Tra no: ${debt.name}`,
         amount,
-        dueDate,
+        // A scheduled repayment is money LEAVING on a known date under a
+        // contract: outgoing, required, and confirmed. That combination is what
+        // makes it count toward obligation coverage in the forecast.
+        direction: 'outgoing',
+        requirement: 'required',
+        certainty: 'confirmed',
+        expectedDate: dueDate,
         debtId: debt.id,
-        status: 'normal',
       });
       // No explicit end date: generate a single next-due reminder rather than a
       // full open-ended schedule.
@@ -261,8 +247,11 @@ export class DebtsService {
 
     // One bulk insert instead of a round-trip per installment — keeps the
     // debt-create transaction short.
-    if (payments.length > 0) {
-      await this.paymentsService.createUpcomingPayments(householdId, payments);
+    if (events.length > 0) {
+      await this.cashflowEventsService.createCashflowEvents(
+        householdId,
+        events,
+      );
     }
   }
 
@@ -309,7 +298,6 @@ export class DebtsService {
         await this.debtsRepository.updateDebt(debtId, next);
         await this.debtsRepository.upsertDebtInterestPeriods(next);
       });
-      await this.snapshotAfterDebt(householdId, next.receivedToAssetId);
       return next;
     }
 
@@ -347,7 +335,6 @@ export class DebtsService {
         events,
       );
     }
-    await this.snapshotAfterDebt(householdId, next.receivedToAssetId);
     return result;
   }
 
@@ -593,7 +580,7 @@ export class DebtsService {
 
         // Repayment-amount change → only the future unpaid reminders.
         if (fixedPaymentChanged) {
-          await this.paymentsService.updateUnpaidUpcomingPaymentAmounts(
+          await this.cashflowEventsService.updateOpenCashflowEventAmounts(
             householdId,
             debt.id,
             effectiveDate,
@@ -631,7 +618,7 @@ export class DebtsService {
     // transaction so they land (or roll back) together, sequentially since they
     // share the transaction's connection:
     //   - the debt row + its terms / interest periods,
-    //   - the repayment upcoming-payments generated from its schedule,
+    //   - the repayment cashflow events generated from its schedule,
     //   - the money events linked to it (the borrow inflow and any repayments),
     //     each of which reverses its own wallet effect as it is deleted (so the
     //     credit the borrow put into the receiving wallet is undone) — keeping
@@ -639,7 +626,7 @@ export class DebtsService {
     await this.prisma.runInTransaction(
       async () => {
         await this.debtsRepository.deleteDebt(debtId);
-        await this.debtsRepository.deleteUpcomingPaymentsByDebt(debtId);
+        await this.debtsRepository.deleteCashflowEventsByDebt(debtId);
         await this.moneyEventsService.deleteMoneyEventsByDebt(
           householdId,
           debtId,
@@ -650,7 +637,6 @@ export class DebtsService {
       // default to avoid aborting mid-write and stranding the connection.
       { timeout: 30000, maxWait: 10000 },
     );
-    await this.snapshotAfterDebt(householdId, debt.receivedToAssetId);
     return {
       deleted: true,
       debtId,

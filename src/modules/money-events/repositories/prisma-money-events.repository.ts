@@ -276,6 +276,30 @@ export class PrismaMoneyEventsRepository
     `;
   }
 
+  async adjustGoalCurrentAmount(
+    householdId: string,
+    goalId: string,
+    delta: number,
+  ): Promise<void> {
+    // `financial_goals.current_amount` is a REAL column and the source of truth
+    // for goal progress (spec §20). It is only trustworthy while every
+    // contribution maintains it, so this runs inside the SAME transaction as
+    // the money event that caused it — create passes a positive delta, delete
+    // the negative, edit the difference.
+    //
+    // Floored at 0 in the same statement (GREATEST) so reversing a contribution
+    // that was partly spent elsewhere can't drive progress negative.
+    await this.prisma.$executeRaw`
+      UPDATE financial_goals
+      SET current_amount = GREATEST(0, current_amount + ${delta}::numeric),
+          current_amount_updated_at = now(),
+          updated_at = now()
+      WHERE id = ${goalId}::uuid
+        AND household_id = ${householdId}::uuid
+        AND deleted_at IS NULL
+    `;
+  }
+
   async findDebtRepaymentInfo(
     householdId: string,
     debtId: string,
@@ -302,25 +326,29 @@ export class PrismaMoneyEventsRepository
     afterDate: string,
     delta: number,
   ): Promise<void> {
-    // The "next" installment is the earliest still-unpaid upcoming payment due
-    // on or after the repayment date. `paid` rows are settled history; anything
-    // else (unpaid / pending_confirmation / overdue / postponed) is still owed.
-    const next = await this.prisma.upcomingPayment.findFirst({
+    // The "next" installment is the earliest still-open cashflow event expected
+    // on or after the repayment date. `completed`/`cancelled` are settled
+    // history; anything else (expected / pending_confirmation / overdue /
+    // postponed) is still owed.
+    //
+    // NOTE the status values changed with the v3.1 rename: the old filter was
+    // `status != 'paid'`, and 'paid' no longer exists.
+    const next = await this.prisma.cashflowEvent.findFirst({
       where: {
         householdId,
         debtId,
         deletedAt: null,
-        status: { not: 'paid' },
-        dueDate: { gte: this.toDate(afterDate) ?? undefined },
+        status: { notIn: ['completed', 'cancelled'] },
+        expectedDate: { gte: this.toDate(afterDate) ?? undefined },
       },
-      orderBy: { dueDate: 'asc' },
+      orderBy: { expectedDate: 'asc' },
       select: { id: true, amount: true },
     });
     if (!next) {
       return;
     }
     const nextAmount = Math.max(0, Number(next.amount) + delta);
-    await this.prisma.upcomingPayment.update({
+    await this.prisma.cashflowEvent.update({
       where: { id: next.id },
       data: { amount: nextAmount },
     });

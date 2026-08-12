@@ -52,6 +52,14 @@ export interface AssetsRepository {
   }): Promise<void>;
   updateAsset(assetId: string, asset: Asset): Promise<void>;
   updateAssetCurrentValue(assetId: string, value: number): Promise<void>;
+  /**
+   * Bump `value_updated_at` on the given assets (all active ones when the list
+   * is empty) without changing any value. Returns how many rows were touched.
+   */
+  confirmAssetsUnchanged(
+    householdId: string,
+    assetIds: string[],
+  ): Promise<number>;
   deleteAsset(assetId: string): Promise<void>;
   findAssetValueHistoryByAsset(
     householdId: string,

@@ -31,6 +31,30 @@ export class AssetsController {
     return this.assetsService.getAssetSnapshots(householdId);
   }
 
+  /**
+   * How old the household's recorded values are (04 §12). A read — every
+   * member may see how much to trust the numbers they are being shown.
+   */
+  @Get('data-freshness')
+  getDataFreshness(@Param('householdId') householdId: string) {
+    return this.assetsService.getDataFreshness(householdId);
+  }
+
+  /**
+   * "I checked — nothing changed." Bumps freshness without writing a value.
+   *
+   * Declared BEFORE `:assetId` routes would matter for GETs; kept adjacent to
+   * `data-freshness` because the two are one interaction in the UI.
+   */
+  @RequireCapability('edit')
+  @Post('confirm-unchanged')
+  confirmAssetsUnchanged(
+    @Param('householdId') householdId: string,
+    @Body() payload: { assetIds?: string[] },
+  ) {
+    return this.assetsService.confirmAssetsUnchanged(householdId, payload);
+  }
+
   @Get(':assetId')
   getAssetDetail(
     @Param('householdId') householdId: string,

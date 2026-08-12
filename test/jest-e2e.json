@@ -5,5 +5,7 @@
   "testRegex": ".e2e-spec.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
-  }
+  },
+  "//": "jose ships ESM only. pnpm's nested .pnpm store means the default transformIgnorePatterns (/node_modules/) matches it, so it reaches jest untransformed and dies on `export {`. Whitelist it for transformation.",
+  "transformIgnorePatterns": ["/node_modules/.pnpm/(?!jose@)"]
 }

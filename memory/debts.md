@@ -114,3 +114,21 @@ Deleting a debt removes **everything the debt created**, in one transaction (rai
 ## Enums
 
 `LenderType = relative | bank_institution | other` (the sole debt classification — `DebtType` was dropped), `DebtStatus = active | paid_off | paused | overdue | cancelled`, `PaymentFrequency = none | monthly | quarterly | yearly`, `InterestCalc = fixed | reducing`.
+
+## Deliberate deviation from spec v3.1
+
+Spec §19A lists a 6-value `lender_type` (`family | friend | bank |
+credit_institution | company | other`) plus a separate 8-value `debt_type`. **We
+keep the 3-value `LenderType` and no `debt_type`, on purpose.**
+
+The 3 buckets are not cosmetic — they *drive behaviour*
+(`isFixedScheduleLender`, `assertLenderTerms`, `adjustNextUnpaidPayment`).
+Expanding to 6 would mean re-deriving "is this a fixed-schedule lender" across
+`debts.service.ts`, `money-events.service.ts` and `debt.entity.ts` for no product
+gain, and the reverse mapping is lossy (`other` → `company` or `other`?).
+
+More fundamentally, **debts are not part of the v3.1 core model at all**: v3.1
+expresses obligations as `cashflow_events`, and debts are listed under "keep if
+already built, not an MVP expansion focus" (§36). Spending the alignment budget
+here would degrade working logic. Revisit only if the debt feature itself is
+reworked. See [[cashflow-events]].

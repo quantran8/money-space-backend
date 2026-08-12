@@ -30,7 +30,7 @@ export class MoneyEventsController {
   /**
    * Monthly thu/chi/net aggregate for the events summary card. Declared before
    * the `:eventId` route so "summary" isn't captured as an event id. `month` is
-   * `YYYY-MM`; omitted → the current AS_OF month.
+   * `YYYY-MM`; omitted → the current month.
    */
   @Get('summary')
   getMoneyEventsSummary(

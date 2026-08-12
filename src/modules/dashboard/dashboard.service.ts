@@ -1,13 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { AssetsService } from '../assets/assets.service';
-import { AS_OF } from '../../common/seed/money-space.seed';
+import { todayInTimeZone } from '../../common/utils/clock';
 import {
   computeCurrentValue,
   computeLiquidityTotals,
   formatDateLabel,
   toGoalCard,
   toMoneyEventCard,
-  toPaymentCard,
 } from '../../common/utils/money-space.utils';
 import { DASHBOARD_REPOSITORY } from './repositories/dashboard.repository.interface';
 import type { DashboardRepository } from './repositories/dashboard.repository.interface';
@@ -37,7 +36,7 @@ export class DashboardService {
       marketPrices,
       fxRates,
       attentionItems,
-      upcomingPayments,
+      cashflowEvents,
       financialGoals,
       moneyEvents,
       snapshots,
@@ -48,7 +47,7 @@ export class DashboardService {
       this.marketData.getMarketPrices(),
       this.dashboardRepository.getFxRates(),
       this.dashboardRepository.getAttentionItems(householdId),
-      this.dashboardRepository.findUpcomingPaymentsByHousehold(householdId),
+      this.dashboardRepository.findCashflowEventsByHousehold(householdId),
       this.dashboardRepository.findFinancialGoalsByHousehold(householdId),
       this.dashboardRepository.findMoneyEventsByHousehold(householdId),
       this.dashboardRepository.getSnapshotsByHousehold(householdId),
@@ -56,7 +55,7 @@ export class DashboardService {
     ]);
     const assets = householdAssets.map((asset) => ({
       ...asset,
-      currentValue: computeCurrentValue(asset, marketPrices, fxRates, AS_OF),
+      currentValue: computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone()),
     }));
 
     // Live "current net worth" is computed on the fly (never read from the
@@ -69,7 +68,7 @@ export class DashboardService {
       // All money values are raw numbers (VND); the client formats them for
       // display.
       snapshot: {
-        updatedAt: formatDateLabel(AS_OF),
+        updatedAt: formatDateLabel(todayInTimeZone()),
         liquid: totals.usable_now,
         liquidSplit: {
           cash: assets
@@ -84,7 +83,9 @@ export class DashboardService {
         netWorth: totals.totalAssets - totalDebt,
         attentionCount: attentionItems.length,
       },
-      payments: upcomingPayments.map((payment) => toPaymentCard(payment)),
+      // Raw cashflow events; the client renders them. The forecast
+      // endpoints (Phase 3) are what turn these into a timeline.
+      payments: cashflowEvents,
       goals: financialGoals.map((goal) => toGoalCard(goal)),
       assetGroups: [
         {
@@ -103,15 +104,14 @@ export class DashboardService {
           note: 'Vang, crypto, dau tu',
         },
       ],
+      // Levels are emitted as CODES (`normal | important | urgent`), never as
+      // Vietnamese labels. The client owns all copy — it has a hard i18n
+      // mandate, and a backend-rendered "Khẩn cấp" cannot be translated,
+      // restyled, or softened per §29's tone rules.
       attentionItems: attentionItems.map((item) => ({
         title: item.title,
         reason: item.reason,
-        level:
-          item.level === 'important'
-            ? 'Quan trọng'
-            : item.level === 'urgent'
-              ? 'Khẩn cấp'
-              : 'Cần trao đổi',
+        level: item.level,
       })),
       recentEvents: moneyEvents.map((event) => toMoneyEventCard(event)),
       assetTrend: snapshots.map((snapshot) => ({
@@ -123,13 +123,4 @@ export class DashboardService {
     };
   }
 
-  async listAttentionItems(householdId: string) {
-    await this.dashboardRepository.assertHousehold(householdId);
-    const items = await this.dashboardRepository.getAttentionItems(householdId);
-    return {
-      householdId,
-      items,
-      total: items.length,
-    };
-  }
 }

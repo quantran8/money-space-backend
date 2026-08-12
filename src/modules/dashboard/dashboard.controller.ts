@@ -10,8 +10,8 @@ export class DashboardController {
     return this.dashboardService.getDashboard(householdId);
   }
 
-  @Get('attention-items')
-  listAttentionItems(@Param('householdId') householdId: string) {
-    return this.dashboardService.listAttentionItems(householdId);
-  }
+  // `GET attention-items` moved to AttentionController. It lived here as a
+  // dashboard sub-resource, but v3.1 attention is `stored ∪ derived` computed
+  // off the forecast — a different dependency graph, and two handlers on the
+  // same path would have resolved by registration order.
 }

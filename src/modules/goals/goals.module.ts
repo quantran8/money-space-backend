@@ -15,6 +15,8 @@ import { PrismaGoalsRepository } from './repositories/prisma-goals.repository';
       useClass: PrismaGoalsRepository,
     },
   ],
-  exports: [GoalsService],
+  // GOALS_REPOSITORY is exported so ForecastModule can read goals for the
+  // projection without importing GoalsService (and without a cycle).
+  exports: [GoalsService, GOALS_REPOSITORY],
 })
 export class GoalsModule {}

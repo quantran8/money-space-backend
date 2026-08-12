@@ -6,7 +6,10 @@ import type {
   Debt,
   DebtInterestPeriod,
 } from '../../modules/debts/entities/debt.entity';
-import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.entity';
+import {
+  NO_TARGET_DATE,
+  type FinancialGoal,
+} from '../../modules/goals/entities/financial-goal.entity';
 import type {
   Household,
   HouseholdConfig,
@@ -15,7 +18,7 @@ import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { HouseholdMember } from '../../modules/members/entities/member.entity';
 import type { MoneyEventCategory } from '../../modules/money-event-categories/entities/money-event-category.entity';
 import type { MoneyEvent } from '../../modules/money-events/entities/money-event.entity';
-import type { UpcomingPayment } from '../../modules/payments/entities/upcoming-payment.entity';
+import type { CashflowEvent } from '../../modules/cashflow-events/entities/cashflow-event.entity';
 import { defaultPermissionForRole } from '../utils/money-space.utils';
 import { DbRow } from './prisma.repository';
 
@@ -65,7 +68,7 @@ export function dateOnly(value: unknown): string {
 }
 
 export function nullableDate(value: string | null | undefined) {
-  return value && value !== 'No deadline' ? value : null;
+  return value && value !== NO_TARGET_DATE ? value : null;
 }
 
 /**
@@ -191,6 +194,20 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
     currency: row.currency,
     note: row.note ?? '',
     status: row.status ?? 'active',
+    // The REAL last-valued stamp. Previously every read path substituted the
+    // seed constant `AS_OF`, which made every asset look equally fresh — and
+    // made the v3.1 freshness signal (04 §12) structurally unable to fire.
+    valueUpdatedAt:
+      (row.valueUpdatedAt ?? row.value_updated_at)
+        ? new Date(row.valueUpdatedAt ?? row.value_updated_at).toISOString()
+        : null,
+    // Classification axes (§11). Read here so privacy filtering and the
+    // holder-grouped views never have to re-query the row.
+    financialNature: row.financialNature ?? row.financial_nature ?? 'household',
+    visibilityLevel: row.visibilityLevel ?? row.visibility_level ?? 'detail',
+    holderMemberId: row.holderMemberId ?? row.holder_member_id ?? null,
+    privacyOwnerMemberId:
+      row.privacyOwnerMemberId ?? row.privacy_owner_member_id ?? null,
     soldAt:
       (row.soldAt ?? row.sold_at)
         ? dateOnly(row.soldAt ?? row.sold_at)
@@ -322,9 +339,18 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
     name: row.name,
     currentAmount: numberFromDb(row.currentAmount ?? row.current_amount),
     targetAmount: numberFromDb(row.targetAmount ?? row.target_amount),
+    plannedMonthlyContribution:
+      (row.plannedMonthlyContribution ?? row.planned_monthly_contribution) ==
+      null
+        ? null
+        : numberFromDb(
+            row.plannedMonthlyContribution ?? row.planned_monthly_contribution,
+          ),
     priority: row.priority,
     note: row.note ?? '',
-    deadline: row.deadline ? dateOnly(row.deadline) : 'No deadline',
+    targetDate: (row.targetDate ?? row.target_date)
+      ? dateOnly(row.targetDate ?? row.target_date)
+      : NO_TARGET_DATE,
   };
 }
 
@@ -422,43 +448,40 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
   };
 }
 
-export function mapUpcomingPayment(row: DbRow): UpcomingPayment {
+export function mapCashflowEvent(row: DbRow): CashflowEvent {
   return {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
     name: row.name,
     amount: numberFromDb(row.amount),
-    dueDate: dateOnly(row.dueDate ?? row.due_date),
-    owner: row.ownerMemberId ?? row.owner_member_id ?? 'Chua phan cong',
-    debtId: row.debtId ?? row.debt_id ?? undefined,
-    status: toUiPaymentStatus(
-      row.status,
-      row.attentionLevel ?? row.attention_level,
-    ),
+    direction: row.direction,
+    expectedDate: dateOnly(row.expectedDate ?? row.expected_date),
+    recurrence: row.recurrence,
+    recurrenceEndDate:
+      (row.recurrenceEndDate ?? row.recurrence_end_date)
+        ? dateOnly(row.recurrenceEndDate ?? row.recurrence_end_date)
+        : null,
+    // NULL is meaningful for incoming events (nothing "requires" money to
+    // arrive), so it must survive the mapping rather than defaulting.
+    requirement: row.requirement ?? null,
+    certainty: row.certainty ?? 'confirmed',
+    status: row.status,
+    attentionLevel: row.attentionLevel ?? row.attention_level ?? 'normal',
+    visibilityLevel: row.visibilityLevel ?? row.visibility_level ?? 'detail',
+    ownerMemberId: row.ownerMemberId ?? row.owner_member_id ?? null,
+    privacyOwnerMemberId:
+      row.privacyOwnerMemberId ?? row.privacy_owner_member_id ?? null,
+    debtId: row.debtId ?? row.debt_id ?? null,
+    financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? null,
+    plannedAssetId: row.plannedAssetId ?? row.planned_asset_id ?? null,
+    note: row.note ?? '',
+    lastCompletedAt: row.lastCompletedAt ?? row.last_completed_at ?? null,
+    lastCompletedById: row.lastCompletedById ?? row.last_completed_by ?? null,
+    lastCompletedAmount:
+      (row.lastCompletedAmount ?? row.last_completed_amount) == null
+        ? null
+        : numberFromDb(row.lastCompletedAmount ?? row.last_completed_amount),
+    lastCompletedAssetId:
+      row.lastCompletedAssetId ?? row.last_completed_asset_id ?? null,
   };
-}
-
-// `attentionLevel` carries the UI's "important" flag (PaymentStatus has no such
-// value), so it is a real stored input. `isAttentionNeeded` was a pure derived
-// mirror (= attentionLevel === 'important') and has been dropped.
-export function toPaymentStatusFields(status: UpcomingPayment['status']) {
-  if (status === 'pending') {
-    return { status: 'pending_confirmation', attentionLevel: 'normal' };
-  }
-
-  return {
-    status: 'unpaid',
-    attentionLevel: status === 'important' ? 'important' : 'normal',
-  };
-}
-
-function toUiPaymentStatus(
-  status: string,
-  attentionLevel: string,
-): UpcomingPayment['status'] {
-  if (status === 'pending_confirmation') {
-    return 'pending';
-  }
-
-  return attentionLevel === 'important' ? 'important' : 'normal';
 }

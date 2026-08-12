@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { GoalsService } from './goals.service';
 import type { CreateFinancialGoalDto } from './dto/create-financial-goal.dto';
@@ -16,9 +17,13 @@ import { RequireCapability } from '../auth/decorators/require-capability.decorat
 export class GoalsController {
   constructor(private readonly goalsService: GoalsService) {}
 
+  /** `?include=projection` attaches each goal's §26C projection. */
   @Get()
-  listFinancialGoals(@Param('householdId') householdId: string) {
-    return this.goalsService.listFinancialGoals(householdId);
+  listFinancialGoals(
+    @Param('householdId') householdId: string,
+    @Query('include') include?: string,
+  ) {
+    return this.goalsService.listFinancialGoals(householdId, include);
   }
 
   @Get(':goalId')

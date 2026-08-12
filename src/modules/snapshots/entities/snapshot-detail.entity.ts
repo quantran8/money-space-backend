@@ -1,7 +1,6 @@
-import type {
-  SnapshotStatus,
-  SnapshotSourceMode,
-} from '../../../common/utils/money-space.utils';
+import type { SnapshotSourceMode } from '../../../common/utils/money-space.utils';
+import type { FinancialState } from '../../forecast/domain/financial-state';
+import type { SnapshotFinancialStateReason } from '../domain/snapshot-financial-state';
 
 export interface SnapshotAssetLine {
   id: string;
@@ -15,6 +14,10 @@ export interface SnapshotAssetLine {
   valuationMethod?: string;
   valuationDate?: string;
   visibilityLevel: string;
+  /** Frozen classification (§17) — what this asset MEANT at snapshot time. */
+  financialNature: string;
+  holderMemberId?: string | null;
+  privacyOwnerMemberId?: string | null;
 }
 
 export interface SnapshotDetail {
@@ -27,8 +30,23 @@ export interface SnapshotDetail {
   totalDebt: number;
   upcomingDueAmount: number;
   attentionCount: number;
-  // Derived at read time, not stored (see money-space.utils).
-  status: SnapshotStatus;
+
+  // --- frozen foresight context (§10) -------------------------------------
+  protectedReserveAmount: number;
+  forecastHorizonDays: number;
+  upcomingIncomeAmount: number;
+  upcomingOutgoingAmount: number;
+  /** Nullable (pre-v3.1 snapshots) and legitimately negative. */
+  lowestProjectedBalance: number | null;
+  flexibleMoney: number | null;
+
+  /**
+   * Derived at read time from the frozen columns, never stored — so changing
+   * the derivation rule can't leave old rows asserting something the current
+   * code disagrees with.
+   */
+  financialState: FinancialState;
+  financialStateReasons: SnapshotFinancialStateReason[];
   sourceMode: SnapshotSourceMode;
   note?: string;
   createdAt: string;

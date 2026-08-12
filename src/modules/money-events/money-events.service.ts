@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
-import { AS_OF } from '../../common/seed/money-space.seed';
+import { todayInTimeZone } from '../../common/utils/clock';
 import { AssetsService } from '../assets/assets.service';
 import type { Asset } from '../assets/entities/asset.entity';
 import { MoneyEvent } from './entities/money-event.entity';
@@ -19,7 +19,6 @@ import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
 import { MONEY_EVENTS_REPOSITORY } from './repositories/money-events.repository.interface';
 import type { MoneyEventsRepository } from './repositories/money-events.repository.interface';
-import { SnapshotsService } from '../snapshots/snapshots.service';
 
 @Injectable()
 export class MoneyEventsService {
@@ -28,28 +27,9 @@ export class MoneyEventsService {
     private readonly moneyEventsRepository: MoneyEventsRepository,
     private readonly prisma: PrismaService,
     private readonly assetsService: AssetsService,
-    private readonly snapshots: SnapshotsService,
   ) {}
 
-  /**
-   * Auto-snapshot after a money-event write commits. Refreshes each linked
-   * wallet's line (they may have changed value), or falls back to a totals-only
-   * recompute when no asset is linked. No-op when called inside a transaction
-   * (nested under debt/payment) — the outermost caller fires it.
-   */
-  private async snapshotAfterEvent(
-    householdId: string,
-    assetIds: Array<string | undefined | null>,
-  ): Promise<void> {
-    const linked = [...new Set(assetIds.filter((id): id is string => !!id))];
-    if (linked.length === 0) {
-      await this.snapshots.onHouseholdChanged(householdId);
-      return;
-    }
-    for (const assetId of linked) {
-      await this.snapshots.onAssetChanged(householdId, assetId);
-    }
-  }
+
 
   async listMoneyEvents(householdId: string, query?: ListMoneyEventsQuery) {
     await this.moneyEventsRepository.assertHousehold(householdId);
@@ -99,12 +79,12 @@ export class MoneyEventsService {
    * the same rule `deriveDirection` encodes. `amount` is summed by `direction`
    * (not by sign) so it stays correct regardless of how the amount is stored.
    *
-   * `month` defaults to the household's current AS_OF month when omitted, so a
+   * `month` defaults to the current month when omitted, so a
    * caller can ask for "this month" without computing the date itself.
    */
   async getMoneyEventsSummary(householdId: string, month?: string) {
     await this.moneyEventsRepository.assertHousehold(householdId);
-    const targetMonth = month ?? AS_OF.slice(0, 7);
+    const targetMonth = month ?? todayInTimeZone().slice(0, 7);
 
     // Aggregated in one grouped query + one count, instead of fetching the whole
     // ledger and summing in memory. `neutral` events (asset revaluations,
@@ -273,13 +253,12 @@ export class MoneyEventsService {
         // any over/under payment. The borrow inflow is a debt_update *inflow* and
         // is excluded — it raises the wallet, it must not pay the debt down.
         await this.applyDebtRepaymentEffects(householdId, event, -1);
+        // A goal_contribution moves the goal's stored progress forward. Same
+        // transaction as the event itself (spec §19/§20) — see the method.
+        await this.applyGoalContributionEffects(householdId, event, 1);
       },
       { timeout: 30000, maxWait: 10000 },
     );
-    await this.snapshotAfterEvent(householdId, [
-      event.fromAssetId,
-      event.toAssetId,
-    ]);
     return toMoneyEventCard(event);
   }
 
@@ -321,7 +300,7 @@ export class MoneyEventsService {
 
   /**
    * Materialize the interest payouts that have come due on one saving deposit as
-   * of `AS_OF`, creating a money event (+ dated valuation) per period.
+   * of today, creating a money event (+ dated valuation) per period.
    *
    * - `monthly`: one `income` event per elapsed month.
    * - `end_of_term`: a single event of the full-term interest, once matured.
@@ -365,7 +344,7 @@ export class MoneyEventsService {
       return 0;
     }
 
-    const periods = computeSavingInterestPeriods(term, AS_OF);
+    const periods = computeSavingInterestPeriods(term, todayInTimeZone());
     if (periods.length === 0) {
       return 0;
     }
@@ -438,18 +417,6 @@ export class MoneyEventsService {
       credited += 1;
     }
 
-    // The nested createMoneyEvent calls ran inside per-period transactions, so
-    // their snapshot hooks skipped (isInTransaction). Fire once here, after all
-    // commits: the deposit changed value, and a wallet destination was credited.
-    if (credited > 0) {
-      await this.snapshots.onAssetChanged(householdId, assetId);
-      if (toWallet && term.receivingWalletId) {
-        await this.snapshots.onAssetChanged(
-          householdId,
-          term.receivingWalletId,
-        );
-      }
-    }
 
     return credited;
   }
@@ -562,7 +529,6 @@ export class MoneyEventsService {
         },
         { timeout: 30000, maxWait: 10000 },
       );
-      await this.snapshotAfterEvent(householdId, [assetId]);
       // `next.amount` was overwritten with the new diff in the DB — reflect that
       // in the returned card so the client sees the persisted diff.
       return toMoneyEventCard({ ...next, amount: newDelta });
@@ -585,6 +551,9 @@ export class MoneyEventsService {
         // — so an amount/link change nets out to exactly the new state. Reversal
         // uses the ORIGINAL event's amount/debt; the re-apply uses the new one.
         await this.applyDebtRepaymentEffects(householdId, event, 1);
+        // Reverse the OLD contribution before re-applying the new one below, so
+        // an amount change (or a re-link to a different goal) nets out exactly.
+        await this.applyGoalContributionEffects(householdId, event, -1);
         // Clear this event's old history points before re-applying: the edit may
         // have moved it to a different asset set, and `apply` only writes points
         // for the NEW assets — so any point on a dropped asset would otherwise be
@@ -594,16 +563,11 @@ export class MoneyEventsService {
         await this.applyWalletEffects(next, 'apply');
         await this.applySaleEffects(next);
         await this.applyDebtRepaymentEffects(householdId, next, -1);
+        await this.applyGoalContributionEffects(householdId, next, 1);
       },
       { timeout: 30000, maxWait: 10000 },
     );
     // Union of old + new linked wallets — an edit can move the event between them.
-    await this.snapshotAfterEvent(householdId, [
-      event.fromAssetId,
-      event.toAssetId,
-      next.fromAssetId,
-      next.toAssetId,
-    ]);
     return toMoneyEventCard(next);
   }
 
@@ -626,6 +590,8 @@ export class MoneyEventsService {
         // Deleting a repayment restores the debt's outstanding and un-rebalances
         // the next installment it had shifted.
         await this.applyDebtRepaymentEffects(householdId, event, 1);
+        // Deleting a contribution takes the goal's progress back down.
+        await this.applyGoalContributionEffects(householdId, event, -1);
         // The reversal above re-touched this event's linked valuation points
         // (same event id). Removing the event should remove those points from
         // history entirely, so soft-delete them last.
@@ -633,10 +599,6 @@ export class MoneyEventsService {
       },
       { timeout: 30000, maxWait: 10000 },
     );
-    await this.snapshotAfterEvent(householdId, [
-      event.fromAssetId,
-      event.toAssetId,
-    ]);
     return {
       deleted: true,
       eventId,
@@ -652,6 +614,42 @@ export class MoneyEventsService {
     return this.moneyEventsRepository.findMoneyEventsByDebt(
       householdId,
       debtId,
+    );
+  }
+
+  /**
+   * Apply (`sign = +1`) or reverse (`sign = -1`) a contribution's effect on its
+   * goal's stored `currentAmount`.
+   *
+   * `financial_goals.current_amount` is a REAL column and the source of truth
+   * for goal progress (spec §20) — deliberately not derived from these events,
+   * because a household arrives with savings that predate the app and there is
+   * no honest event to invent for them.
+   *
+   * That makes THIS function the thing keeping the column honest. An earlier
+   * stored column was dropped precisely because nothing incremented it on
+   * contribution and nothing reversed it on delete, so it drifted. Every path
+   * that writes a `goal_contribution` must call this inside the same
+   * transaction: create applies, delete reverses, edit reverses-then-applies.
+   *
+   * No-op for events that are not goal contributions.
+   */
+  private async applyGoalContributionEffects(
+    householdId: string,
+    event: {
+      type: string;
+      financialGoalId?: string | null;
+      amount: number;
+    },
+    sign: 1 | -1,
+  ): Promise<void> {
+    if (event.type !== 'goal_contribution' || !event.financialGoalId) {
+      return;
+    }
+    await this.moneyEventsRepository.adjustGoalCurrentAmount(
+      householdId,
+      event.financialGoalId,
+      sign * event.amount,
     );
   }
 
@@ -738,7 +736,7 @@ export class MoneyEventsService {
     await this.moneyEventsRepository.adjustNextUnpaidPayment(
       householdId,
       debtId,
-      (event as { isoDate?: string }).isoDate ?? AS_OF,
+      (event as { isoDate?: string }).isoDate ?? todayInTimeZone(),
       sign * -overpayment,
     );
   }

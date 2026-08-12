@@ -36,49 +36,18 @@ export class PrismaGoalsRepository
     return mapHousehold(household);
   }
 
-  /**
-   * `current_amount` is NOT stored — it is the live sum of the goal's
-   * `goal_contribution` money events. Storing it as a cache drifted (nothing
-   * incremented it on contribution, nothing reversed it on delete), so we
-   * derive it on read. One grouped aggregate covers all of a household's goals.
-   */
-  private async contributionTotals(
-    householdId: string,
-  ): Promise<Map<string, number>> {
-    const grouped = await this.prisma.moneyEvent.groupBy({
-      by: ['financialGoalId'],
-      where: {
-        householdId,
-        deletedAt: null,
-        eventType: 'goal_contribution',
-        financialGoalId: { not: null },
-      },
-      _sum: { amount: true },
-    });
-    const totals = new Map<string, number>();
-    for (const row of grouped) {
-      if (row.financialGoalId) {
-        totals.set(row.financialGoalId, Number(row._sum.amount ?? 0));
-      }
-    }
-    return totals;
-  }
-
   async findFinancialGoalsByHousehold(
     householdId: string,
   ): Promise<FinancialGoal[]> {
-    const [goals, totals] = await Promise.all([
-      this.prisma.financialGoal.findMany({
-        where: { householdId, deletedAt: null },
-        orderBy: { createdAt: 'asc' },
-      }),
-      this.contributionTotals(householdId),
-    ]);
+    // `current_amount` is a real column (spec §20) maintained transactionally by
+    // MoneyEventsService, so a plain read is the source of truth — no aggregate
+    // over goal_contribution events, and no second round-trip.
+    const goals = await this.prisma.financialGoal.findMany({
+      where: { householdId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
 
-    return goals.map((goal) => ({
-      ...mapFinancialGoal(goal),
-      currentAmount: totals.get(goal.id) ?? 0,
-    }));
+    return goals.map((goal) => mapFinancialGoal(goal));
   }
 
   async findFinancialGoalById(
@@ -92,20 +61,7 @@ export class PrismaGoalsRepository
       return undefined;
     }
 
-    const contributed = await this.prisma.moneyEvent.aggregate({
-      where: {
-        householdId,
-        deletedAt: null,
-        eventType: 'goal_contribution',
-        financialGoalId: goalId,
-      },
-      _sum: { amount: true },
-    });
-
-    return {
-      ...mapFinancialGoal(goal),
-      currentAmount: Number(contributed._sum.amount ?? 0),
-    };
+    return mapFinancialGoal(goal);
   }
 
   async insertFinancialGoal(goal: FinancialGoal): Promise<void> {
@@ -113,21 +69,28 @@ export class PrismaGoalsRepository
     // household row in one statement. If the household doesn't exist (or is
     // soft-deleted) the SELECT yields no row, nothing is inserted, and we
     // surface a 404 — matching the previous assertHousehold behaviour.
-    const deadline = this.toDate(nullableDate(goal.deadline));
+    const targetDate = this.toDate(nullableDate(goal.targetDate));
 
     // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills it
     // on ORM writes, but a raw INSERT must set it explicitly.
-    // current_amount is derived (Σ goal_contribution), never written here.
+    //
+    // `current_amount` IS written here: create is the one moment the caller may
+    // set it, so onboarding can record savings that predate the app. Every
+    // later change goes through a goal_contribution money event.
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO financial_goals
-        (id, household_id, name, target_amount,
-         deadline, priority, note, created_by, updated_at)
+        (id, household_id, name, target_amount, current_amount,
+         current_amount_updated_at, planned_monthly_contribution,
+         target_date, priority, note, created_by, updated_at)
       SELECT
         ${goal.id}::uuid,
         h.id,
         ${goal.name},
         ${goal.targetAmount}::numeric,
-        ${deadline}::date,
+        ${goal.currentAmount}::numeric,
+        CASE WHEN ${goal.currentAmount}::numeric > 0 THEN now() ELSE NULL END,
+        ${goal.plannedMonthlyContribution}::numeric,
+        ${targetDate}::date,
         ${goal.priority}::"GoalPriority",
         ${goal.note},
         h.created_by,
@@ -153,8 +116,11 @@ export class PrismaGoalsRepository
       data: {
         name: goal.name,
         targetAmount: goal.targetAmount,
-        // current_amount is derived (Σ goal_contribution), never written.
-        deadline: this.toDate(nullableDate(goal.deadline)),
+        plannedMonthlyContribution: goal.plannedMonthlyContribution,
+        // `currentAmount` is deliberately absent: only a goal_contribution
+        // money event may move progress (see MoneyEventsService), so a plain
+        // goal edit must never rewrite it.
+        targetDate: this.toDate(nullableDate(goal.targetDate)),
         priority: goal.priority,
         note: goal.note,
       } as any,

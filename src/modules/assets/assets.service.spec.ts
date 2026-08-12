@@ -3,7 +3,6 @@ import type { Asset } from './entities/asset.entity';
 import type { AssetValueHistory } from './entities/asset-value-history.entity';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import type { PrismaService } from '../../database/prisma/prisma.service';
-import type { SnapshotsService } from '../snapshots/snapshots.service';
 import type { MarketDataService } from '../market-data/market-data.service';
 
 describe('AssetsService', () => {
@@ -63,13 +62,6 @@ describe('AssetsService', () => {
         return Promise.resolve();
       },
     );
-    let snapshotAssetId: string | undefined;
-    const onAssetChanged = jest.fn(
-      (_householdId: string, assetId: string): Promise<void> => {
-        snapshotAssetId = assetId;
-        return Promise.resolve();
-      },
-    );
     const repository = {
       createId,
       findActiveMarketAssetBySymbol: jest.fn().mockResolvedValue(existing),
@@ -82,16 +74,12 @@ describe('AssetsService', () => {
     const prisma = {
       runInTransaction: jest.fn(async (work: () => Promise<unknown>) => work()),
     } as unknown as PrismaService;
-    const snapshots = {
-      onAssetChanged,
-    } as unknown as SnapshotsService;
     const marketData = {
       getMarketPrices: jest.fn().mockResolvedValue([]),
     } as unknown as MarketDataService;
     const service = new AssetsService(
       repository,
       prisma,
-      snapshots,
       marketData,
     );
 
@@ -126,6 +114,5 @@ describe('AssetsService', () => {
     expect(recordedValuation?.id).toBe('valuation-purchase');
     expect(recordedValuation?.assetId).toBe(existing.id);
     expect(recordedValuation?.moneyEventId).toBe('event-purchase');
-    expect(snapshotAssetId).toBe(existing.id);
   });
 });

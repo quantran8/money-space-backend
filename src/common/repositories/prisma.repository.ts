@@ -49,7 +49,7 @@ export abstract class PrismaRepository {
     return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
   }
 
-  protected asUuid(value: string | undefined): string | null {
+  protected asUuid(value: string | null | undefined): string | null {
     if (!value) {
       return null;
     }

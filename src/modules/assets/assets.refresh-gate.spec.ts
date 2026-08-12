@@ -1,7 +1,6 @@
 import { AssetsService } from './assets.service';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import type { PrismaService } from '../../database/prisma/prisma.service';
-import type { SnapshotsService } from '../snapshots/snapshots.service';
 import type { MarketDataService } from '../market-data/market-data.service';
 
 describe('AssetsService.refreshMarketValuationsIfStale', () => {
@@ -16,16 +15,12 @@ describe('AssetsService.refreshMarketValuationsIfStale', () => {
     const prisma = {
       runInTransaction: jest.fn(async (work: () => Promise<unknown>) => work()),
     } as unknown as PrismaService;
-    const snapshots = {
-      onAssetChanged: jest.fn().mockResolvedValue(undefined),
-    } as unknown as SnapshotsService;
     const marketData = {
       getMarketPrices: jest.fn().mockResolvedValue([]),
     } as unknown as MarketDataService;
     const service = new AssetsService(
       repository,
       prisma,
-      snapshots,
       marketData,
     );
     return { service, repository, marketData };

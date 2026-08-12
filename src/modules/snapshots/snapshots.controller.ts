@@ -1,8 +1,14 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { SnapshotsService } from './snapshots.service';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthUser } from '../auth/entities/auth-user.entity';
+import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
-// Snapshots are written automatically by the system (see SnapshotsService auto
-// hooks) — there is no manual create endpoint. Read-only here.
+/**
+ * Snapshots are append-only: created deliberately here, never updated. There is
+ * no PATCH and no DELETE by design — a snapshot that can be edited is not a
+ * snapshot (§26).
+ */
 @Controller('api/households/:householdId/snapshots')
 export class SnapshotsController {
   constructor(private readonly snapshotsService: SnapshotsService) {}
@@ -18,5 +24,15 @@ export class SnapshotsController {
     @Param('snapshotId') snapshotId: string,
   ) {
     return this.snapshotsService.getSnapshot(householdId, snapshotId);
+  }
+
+  @RequireCapability('edit')
+  @Post()
+  create(
+    @Param('householdId') householdId: string,
+    @Body() payload: { note?: string; horizonDays?: number },
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.snapshotsService.createSnapshot(householdId, payload, user?.id);
   }
 }

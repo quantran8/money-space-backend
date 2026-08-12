@@ -10,13 +10,13 @@ import { PrismaService } from '../../../database/prisma/prisma.service';
 import {
   computeCurrentValue,
   deriveSnapshotSourceMode,
-  deriveSnapshotStatus,
 } from '../../../common/utils/money-space.utils';
-import { AS_OF } from '../../../common/seed/money-space.seed';
+import { deriveSnapshotFinancialState } from '../domain/snapshot-financial-state';
 import { Household } from '../../households/entities/household.entity';
 import { SnapshotDetail } from '../entities/snapshot-detail.entity';
 import { MarketDataService } from '../../market-data/market-data.service';
 import {
+  CreateSnapshotInput,
   SnapshotAssetLine,
   SnapshotsRepository,
 } from './snapshots.repository.interface';
@@ -55,13 +55,6 @@ export class PrismaSnapshotsRepository
     return Number(agg._sum.outstandingAmount ?? 0);
   }
 
-  async getUpcomingDueTotal(householdId: string): Promise<number> {
-    const agg = await this.prisma.upcomingPayment.aggregate({
-      where: { householdId, deletedAt: null, status: 'unpaid' },
-      _sum: { amount: true },
-    });
-    return Number(agg._sum.amount ?? 0);
-  }
 
   async getOpenAttentionCount(householdId: string): Promise<number> {
     return this.prisma.attentionItem.count({
@@ -79,21 +72,6 @@ export class PrismaSnapshotsRepository
     return {
       marketPrices: prices,
       fxRates: rates.map((r) => mapFxRate(r)),
-    };
-  }
-
-  private async valuationLineage(assetId: string) {
-    const v = await this.prisma.assetValueHistory.findFirst({
-      where: { assetId, deletedAt: null },
-      orderBy: { valuationDate: 'desc' },
-    });
-    if (!v) return {};
-    return {
-      valuationId: v.id,
-      valuationMethod: (v as any).valuationMethod as string | undefined,
-      valuationDate: v.valuationDate
-        ? new Date(v.valuationDate).toISOString().slice(0, 10)
-        : undefined,
     };
   }
 
@@ -123,7 +101,7 @@ export class PrismaSnapshotsRepository
   private async latestLineageByAsset(
     householdId: string,
   ): Promise<Map<string, ReturnType<typeof this.lineageFromRow>>> {
-    const rows = await this.prisma.assetValueHistory.findMany({
+    const rows = await this.prisma.assetValuation.findMany({
       where: { householdId, deletedAt: null },
       orderBy: [{ assetId: 'asc' }, { valuationDate: 'desc' }],
       distinct: ['assetId'],
@@ -141,40 +119,21 @@ export class PrismaSnapshotsRepository
     return map;
   }
 
-  private async toLine(asset: any): Promise<SnapshotAssetLine> {
-    // Only market-priced assets need market prices / fx rates. Manual (cash,
-    // bank) and formula-calculated (savings) assets value from their own row,
-    // so skip the two pricing queries for them. Run pricing (when needed) and
-    // the valuation-lineage lookup concurrently instead of sequentially.
-    const needsPricing = asset.valuationMode === 'market_priced';
-    const [pricing, lineage] = await Promise.all([
-      needsPricing
-        ? this.loadPricing()
-        : Promise.resolve({ marketPrices: [], fxRates: [] }),
-      this.valuationLineage(asset.id),
-    ]);
-    const value = computeCurrentValue(
-      asset,
-      pricing.marketPrices,
-      pricing.fxRates,
-      AS_OF,
-    );
-    return {
-      assetId: asset.id,
-      assetName: asset.name,
-      assetType: asset.type,
-      liquidity: asset.liquidity,
-      value,
-      currency: asset.currency,
-      visibilityLevel: 'detail',
-      ...lineage,
-    };
-  }
-
-  async getActiveAssetLines(householdId: string): Promise<SnapshotAssetLine[]> {
-    // assets + pricing + per-asset valuation lineage all resolve concurrently
-    // as three queries. `lineageByAsset` batches what was previously one
-    // `findFirst` per asset (a 1+N inside this transaction).
+  /**
+   * Active assets valued as of `asOfDate`, carrying their REAL classification.
+   *
+   * Replaces `getActiveAssetLines`, which hardcoded `visibilityLevel: 'detail'`
+   * for every line. That was harmless while snapshots were an internal
+   * bookkeeping artifact, but §17 freezes classification INTO the snapshot — so
+   * the old shape would have recorded every private asset as shared, and the
+   * frozen record would say something untrue about the household forever.
+   *
+   * Three queries in parallel; the lineage lookup is batched (it was a 1+N).
+   */
+  async getClassifiedAssetLines(
+    householdId: string,
+    asOfDate: string,
+  ): Promise<SnapshotAssetLine[]> {
     const [assets, { marketPrices, fxRates }, lineageByAsset] =
       await Promise.all([
         this.prisma.asset.findMany({
@@ -195,213 +154,124 @@ export class PrismaSnapshotsRepository
         row.marketPositions[0],
         row.calculationTerms[0],
       );
-      const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
-      const lineage = lineageByAsset.get(asset.id) ?? {};
+      const raw = row as unknown as {
+        financialNature?: string;
+        visibilityLevel?: string;
+        holderMemberId?: string | null;
+        privacyOwnerMemberId?: string | null;
+      };
       lines.push({
         assetId: asset.id,
         assetName: asset.name,
         assetType: asset.type,
         liquidity: asset.liquidity,
-        value,
+        // Valued at the caller's `asOfDate`, not a hardcoded seed constant: a
+        // formula-calculated saving deposit accrues, so the date decides the
+        // number that gets frozen.
+        value: computeCurrentValue(asset, marketPrices, fxRates, asOfDate),
         currency: asset.currency,
-        visibilityLevel: 'detail',
-        ...lineage,
+        visibilityLevel: raw.visibilityLevel ?? 'detail',
+        financialNature: raw.financialNature ?? 'household',
+        holderMemberId: raw.holderMemberId ?? null,
+        privacyOwnerMemberId: raw.privacyOwnerMemberId ?? null,
+        ...(lineageByAsset.get(asset.id) ?? {}),
       });
     }
     return lines;
   }
 
-  async getActiveAssetLine(
-    householdId: string,
-    assetId: string,
-  ): Promise<SnapshotAssetLine | undefined> {
-    const row = await this.prisma.asset.findFirst({
-      where: { id: assetId, householdId, deletedAt: null, status: 'active' },
-      include: {
-        marketPositions: { where: { deletedAt: null }, take: 1 },
-        calculationTerms: { where: { deletedAt: null }, take: 1 },
-      },
+  async getLastSnapshotCreatedAt(householdId: string): Promise<Date | null> {
+    const row = await this.prisma.snapshot.findFirst({
+      where: { householdId, deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
     });
-    if (!row) return undefined;
-    const asset = mapAsset(
-      row,
-      row.marketPositions[0],
-      row.calculationTerms[0],
-    );
-    return this.toLine(asset);
+    return row?.createdAt ?? null;
+  }
+
+  /**
+   * The §26 write: three statements, one transaction.
+   *
+   * Everything expensive — valuing assets, running the forecast, totalling debt
+   * — already happened OUTSIDE this. An interactive transaction is one
+   * connection held open on the direct client; doing the reads inside it is how
+   * the old auto-snapshot path used to hit "Transaction not found".
+   */
+  async createSnapshot(input: CreateSnapshotInput): Promise<void> {
+    await this.runInTransaction(async (tx) => {
+      await tx.snapshot.create({
+        data: {
+          id: input.id,
+          householdId: input.householdId,
+          snapshotDate: new Date(`${input.snapshotDate}T00:00:00.000Z`),
+          totalLiquid: input.totalLiquid,
+          totalSavings: input.totalSavings,
+          totalLongTermAssets: input.totalLongTermAssets,
+          totalDebt: input.totalDebt,
+          upcomingDueAmount: input.upcomingDueAmount,
+          attentionCount: input.attentionCount,
+          protectedReserveAmount: input.protectedReserveAmount,
+          forecastHorizonDays: input.forecastHorizonDays,
+          upcomingIncomeAmount: input.upcomingIncomeAmount,
+          upcomingOutgoingAmount: input.upcomingOutgoingAmount,
+          // Pass NULL through as NULL, and negatives through unchanged: a
+          // projected shortfall is the single most important thing a snapshot
+          // can record (§10 forbids a `>= 0` CHECK on these two).
+          lowestProjectedBalance: input.lowestProjectedBalance,
+          flexibleMoney: input.flexibleMoney,
+          note: input.note ?? null,
+          createdById: input.createdById ?? null,
+        } as never,
+      });
+
+      // One bulk insert, not N — a household with 30 assets would otherwise
+      // hold the transaction open for 30 round-trips.
+      if (input.lines.length > 0) {
+        await tx.snapshotAssetValue.createMany({
+          data: input.lines.map((line) => ({
+            id: uuidv7(),
+            householdId: input.householdId,
+            snapshotId: input.id,
+            assetId: line.assetId,
+            assetName: line.assetName,
+            assetType: line.assetType,
+            liquidity: line.liquidity,
+            financialNature: line.financialNature,
+            holderMemberId: this.asUuid(line.holderMemberId ?? null),
+            privacyOwnerMemberId: this.asUuid(line.privacyOwnerMemberId ?? null),
+            value: line.value,
+            currency: line.currency,
+            valuationId: this.asUuid(line.valuationId ?? null),
+            valuationMethod: line.valuationMethod ?? null,
+            valuationDate: this.toDate(line.valuationDate ?? null),
+            visibilityLevel: line.visibilityLevel,
+          })) as never,
+        });
+      }
+
+      await tx.auditLog.create({
+        data: {
+          id: uuidv7(),
+          householdId: input.householdId,
+          actorId: this.asUuid(input.createdById ?? null),
+          action: 'snapshot.created',
+          entityType: 'snapshot',
+          entityId: input.id,
+          metadata: {
+            snapshotDate: input.snapshotDate,
+            assetLineCount: input.lines.length,
+            forecastHorizonDays: input.forecastHorizonDays,
+          },
+        } as never,
+      });
+    });
   }
 
   // --- Snapshot upsert (per-day, granular) -----------------------------------
 
-  async ensureTodaySnapshot(
-    householdId: string,
-    today: string,
-  ): Promise<string> {
-    // Fast path (the common case after the first write of the day): today's
-    // snapshot already exists, so a single non-transactional SELECT resolves it
-    // — no open+commit round-trip on the session pooler.
-    const already = await this.prisma.snapshot.findFirst({
-      where: {
-        householdId,
-        snapshotDate: this.toDate(today) ?? undefined,
-        deletedAt: null,
-      },
-      select: { id: true },
-    });
-    if (already) return already.id;
 
-    // First change today → create the parent + seed a FULL child set, atomically.
-    return this.runInTransaction(async (tx) => {
-      const existing = await tx.snapshot.findFirst({
-        where: {
-          householdId,
-          snapshotDate: this.toDate(today) ?? undefined,
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-      if (existing) return existing.id;
 
-      // First change today → create the parent + seed a FULL child set.
-      const lines = await this.getActiveAssetLines(householdId);
-      const snapshotId = uuidv7();
-      const inserted = await tx.$executeRaw`
-        INSERT INTO snapshots
-          (id, household_id, snapshot_date, total_liquid, total_savings,
-           total_long_term_assets, total_debt, upcoming_due_amount,
-           attention_count, created_by, created_at)
-        SELECT
-          ${snapshotId}::uuid, h.id, ${this.toDate(today)}::date,
-          0, 0, 0, 0, 0, 0, h.created_by, now()
-        FROM households h
-        WHERE h.id = ${householdId}::uuid AND h.deleted_at IS NULL
-        ON CONFLICT (household_id, snapshot_date) WHERE deleted_at IS NULL
-        DO NOTHING
-      `;
-      if (inserted === 0) {
-        // Either the household is missing, or a concurrent request won the
-        // insert. Re-select: a row means the race; none means missing household.
-        const raced = await tx.snapshot.findFirst({
-          where: {
-            householdId,
-            snapshotDate: this.toDate(today) ?? undefined,
-            deletedAt: null,
-          },
-          select: { id: true },
-        });
-        if (raced) return raced.id;
-        throw new NotFoundException(`Household "${householdId}" was not found`);
-      }
 
-      if (lines.length > 0) {
-        await tx.snapshotAssetValue.createMany({
-          data: lines.map((line) => ({
-            id: uuidv7(),
-            householdId,
-            snapshotId,
-            assetId: line.assetId,
-            assetName: line.assetName,
-            assetType: line.assetType as any,
-            liquidity: line.liquidity as any,
-            value: line.value,
-            currency: line.currency,
-            valuationId: line.valuationId ?? null,
-            valuationMethod: (line.valuationMethod ?? null) as any,
-            valuationDate: line.valuationDate
-              ? this.toDate(line.valuationDate)
-              : null,
-            visibilityLevel: line.visibilityLevel as any,
-          })),
-        });
-      }
-
-      await tx.$executeRaw`
-        INSERT INTO audit_logs
-          (id, household_id, actor_id, action, entity_type, entity_id, metadata, created_at)
-        SELECT ${uuidv7()}::uuid, h.id, NULL, 'snapshot.auto_created',
-               'snapshot', ${snapshotId}::uuid, '{}'::jsonb, now()
-        FROM households h WHERE h.id = ${householdId}::uuid AND h.deleted_at IS NULL
-      `;
-      await this.recomputeSnapshotTotals(snapshotId, householdId);
-      return snapshotId;
-    });
-  }
-
-  async upsertAssetLine(
-    snapshotId: string,
-    householdId: string,
-    line: SnapshotAssetLine,
-  ): Promise<void> {
-    await this.prisma.$executeRaw`
-      INSERT INTO snapshot_asset_values
-        (id, household_id, snapshot_id, asset_id, asset_name, asset_type,
-         liquidity, value, currency, valuation_id, valuation_method,
-         valuation_date, visibility_level, created_at)
-      VALUES (
-        ${uuidv7()}::uuid, ${householdId}::uuid, ${snapshotId}::uuid,
-        ${line.assetId}::uuid, ${line.assetName}, ${line.assetType}::"AssetType",
-        ${line.liquidity}::"AssetLiquidity", ${line.value}::numeric, ${line.currency},
-        ${line.valuationId ?? null}::uuid,
-        ${(line.valuationMethod ?? null) as any}::"AssetValuationMethod",
-        ${line.valuationDate ? this.toDate(line.valuationDate) : null}::date,
-        ${line.visibilityLevel}::"VisibilityLevel", now()
-      )
-      ON CONFLICT (snapshot_id, asset_id) DO UPDATE SET
-        asset_name = EXCLUDED.asset_name,
-        asset_type = EXCLUDED.asset_type,
-        liquidity = EXCLUDED.liquidity,
-        value = EXCLUDED.value,
-        currency = EXCLUDED.currency,
-        valuation_id = EXCLUDED.valuation_id,
-        valuation_method = EXCLUDED.valuation_method,
-        valuation_date = EXCLUDED.valuation_date,
-        visibility_level = EXCLUDED.visibility_level
-    `;
-  }
-
-  async removeAssetLine(snapshotId: string, assetId: string): Promise<void> {
-    await this.prisma.snapshotAssetValue.deleteMany({
-      where: { snapshotId, assetId },
-    });
-  }
-
-  async recomputeSnapshotTotals(
-    snapshotId: string,
-    householdId: string,
-  ): Promise<void> {
-    // Single round-trip: compute the child SUM-per-liquidity and the three
-    // household-level aggregates (debt / upcoming / attention) inside the
-    // UPDATE via correlated subqueries, so recompute is one statement instead
-    // of groupBy + 3 aggregates + update (was 3 round-trips).
-    await this.prisma.$executeRaw`
-      UPDATE snapshots SET
-        total_liquid = COALESCE((
-          SELECT SUM(value) FROM snapshot_asset_values
-          WHERE snapshot_id = ${snapshotId}::uuid AND liquidity = 'usable_now'
-        ), 0),
-        total_savings = COALESCE((
-          SELECT SUM(value) FROM snapshot_asset_values
-          WHERE snapshot_id = ${snapshotId}::uuid AND liquidity = 'not_immediately_usable'
-        ), 0),
-        total_long_term_assets = COALESCE((
-          SELECT SUM(value) FROM snapshot_asset_values
-          WHERE snapshot_id = ${snapshotId}::uuid AND liquidity = 'long_term'
-        ), 0),
-        total_debt = COALESCE((
-          SELECT SUM(outstanding_amount) FROM debts
-          WHERE household_id = ${householdId}::uuid AND deleted_at IS NULL AND status = 'active'
-        ), 0),
-        upcoming_due_amount = COALESCE((
-          SELECT SUM(amount) FROM upcoming_payments
-          WHERE household_id = ${householdId}::uuid AND deleted_at IS NULL AND status = 'unpaid'
-        ), 0),
-        attention_count = COALESCE((
-          SELECT COUNT(*) FROM attention_items
-          WHERE household_id = ${householdId}::uuid AND status = 'open'
-        ), 0)
-      WHERE id = ${snapshotId}::uuid
-    `;
-  }
 
   // Snapshots grow one row per day, so cap the list at the most recent window
   // (index-backed on householdId, snapshotDate DESC) rather than returning the
@@ -444,21 +314,31 @@ export class PrismaSnapshotsRepository
         ? new Date(v.valuationDate).toISOString().slice(0, 10)
         : undefined,
       visibilityLevel: v.visibilityLevel,
+      // Frozen classification (§17): read from the LINE, never re-read through
+      // the asset — the asset may have been reclassified since.
+      financialNature: v.financialNature ?? 'household',
+      holderMemberId: v.holderMemberId ?? null,
+      privacyOwnerMemberId: v.privacyOwnerMemberId ?? null,
     }));
 
-    const totalAssets =
-      Number(row.totalLiquid) +
-      Number(row.totalSavings) +
-      Number(row.totalLongTermAssets);
+    // Pre-v3.1 snapshots have no foresight context. NULL is carried through as
+    // NULL rather than coerced to 0 — "we didn't record this" and "it was
+    // zero" are different facts, and only one of them is honest.
+    const lowestProjectedBalance =
+      row.lowestProjectedBalance === null || row.lowestProjectedBalance === undefined
+        ? null
+        : Number(row.lowestProjectedBalance);
+    const flexibleMoney =
+      row.flexibleMoney === null || row.flexibleMoney === undefined
+        ? null
+        : Number(row.flexibleMoney);
+    const protectedReserveAmount = Number(row.protectedReserveAmount ?? 0);
 
-    // status/sourceMode are DERIVED, not stored (columns dropped in PR3).
-    const status = deriveSnapshotStatus({
-      totalAssets,
-      totalDebt: Number(row.totalDebt),
-      totalLiquid: Number(row.totalLiquid),
-      upcomingDueAmount: Number(row.upcomingDueAmount),
-      attentionCount: row.attentionCount,
-      assetCount: items.length,
+    const { state, reasons } = deriveSnapshotFinancialState({
+      lowestProjectedBalance,
+      flexibleMoney,
+      protectedReserveAmount,
+      assetLineCount: items.length,
     });
     const sourceMode = deriveSnapshotSourceMode(
       items.map((i: { valuationMethod?: string }) => i.valuationMethod),
@@ -474,7 +354,14 @@ export class PrismaSnapshotsRepository
       totalDebt: Number(row.totalDebt),
       upcomingDueAmount: Number(row.upcomingDueAmount),
       attentionCount: row.attentionCount,
-      status,
+      protectedReserveAmount,
+      forecastHorizonDays: Number(row.forecastHorizonDays ?? 30),
+      upcomingIncomeAmount: Number(row.upcomingIncomeAmount ?? 0),
+      upcomingOutgoingAmount: Number(row.upcomingOutgoingAmount ?? 0),
+      lowestProjectedBalance,
+      flexibleMoney,
+      financialState: state,
+      financialStateReasons: reasons,
       sourceMode,
       note: row.note ?? undefined,
       createdAt: new Date(row.createdAt).toISOString(),

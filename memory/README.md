@@ -45,13 +45,20 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [assets.md](assets.md) — assets feature (CRUD, liquidity buckets)
 - [asset-sale.md](asset-sale.md) — selling an asset (asset_sale money event, position reduction, status)
 - [debts.md](debts.md) — debts / liabilities & interest maths
-- [money-events.md](money-events.md) — money events + upcoming payments (unified events)
+- [money-events.md](money-events.md) — money events (what already happened)
+- [cashflow-events.md](cashflow-events.md) — expected future money in/out; the forecast's input
+- [forecast-and-flexible-money.md](forecast-and-flexible-money.md) — running balance, lowest projected balance, flexible money, financial state, what-if
 - [goals.md](goals.md) — financial goals & progress
-- [members-and-permissions.md](members-and-permissions.md) — roles, permissions, invites
+- [protected-reserves.md](protected-reserves.md) — money kept untouched; the forecast constraint
+- [attention-items.md](attention-items.md) — derived vs stored signals, dismissal tombstones
+- [data-freshness.md](data-freshness.md) — how old the picture is; confirm-unchanged
+- [members-and-permissions.md](members-and-permissions.md) — roles, permissions
+- [invites.md](invites.md) — joining a household; why accept is NOT household-scoped
 - [households-and-onboarding.md](households-and-onboarding.md) — household creation & onboarding
 - [dashboard.md](dashboard.md) — overview / status buckets
 - [snapshots-and-networth.md](snapshots-and-networth.md) — net-worth history & attention items
 - [market-data.md](market-data.md) — market prices & FX reference data
 - [money-formatting.md](money-formatting.md) — API returns raw numbers; client formats money
 - [settings-and-sharing.md](settings-and-sharing.md) — household config, reminders, sharing
+- [shared-calculation-and-privacy.md](shared-calculation-and-privacy.md) — what counts toward the shared picture (derived, not stored) + privacy ownership
 - [auth.md](auth.md) — authentication & session gating

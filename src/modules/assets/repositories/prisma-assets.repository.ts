@@ -264,6 +264,33 @@ export class PrismaAssetsRepository
     });
   }
 
+  /**
+   * Confirm the recorded value is still correct (spec 04 §12).
+   *
+   * Bumps `value_updated_at` WITHOUT touching `current_value` — that is the
+   * whole point. "I checked, it hasn't changed" is real information about
+   * freshness, and forcing the user to re-type the same number to express it
+   * would be busywork that also risks a typo.
+   *
+   * Scoped by household as well as id so a stray id from another household
+   * can't silently succeed.
+   */
+  async confirmAssetsUnchanged(
+    householdId: string,
+    assetIds: string[],
+  ): Promise<number> {
+    const result = await this.prisma.asset.updateMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        status: 'active',
+        ...(assetIds.length > 0 ? { id: { in: assetIds } } : {}),
+      },
+      data: { valueUpdatedAt: new Date() } as any,
+    });
+    return result.count;
+  }
+
   async deleteAsset(assetId: string): Promise<void> {
     await this.prisma.asset.updateMany({
       where: { id: assetId },
@@ -275,7 +302,7 @@ export class PrismaAssetsRepository
     householdId: string,
     assetId: string,
   ): Promise<AssetValueHistory[]> {
-    const valuations = await this.prisma.assetValueHistory.findMany({
+    const valuations = await this.prisma.assetValuation.findMany({
       where: { householdId, assetId, deletedAt: null },
       orderBy: { valuationDate: 'desc' },
     });
@@ -293,7 +320,7 @@ export class PrismaAssetsRepository
     // credit), and the caller would then overwrite that event's point — nulling
     // its `money_event_id` and clobbering its value. Matches the partial-unique
     // index `asset_value_history_asset_date_cache_unique`.
-    const valuation = await this.prisma.assetValueHistory.findFirst({
+    const valuation = await this.prisma.assetValuation.findFirst({
       where: {
         assetId,
         valuationDate: this.toDate(valuationDate) ?? undefined,
@@ -339,14 +366,14 @@ export class PrismaAssetsRepository
     } as any;
 
     if (existing) {
-      await this.prisma.assetValueHistory.update({
+      await this.prisma.assetValuation.update({
         where: { id: existing.id },
         data,
       });
       return;
     }
 
-    await this.prisma.assetValueHistory.create({
+    await this.prisma.assetValuation.create({
       data: { id: valuation.id, ...data },
     });
   }
@@ -356,7 +383,7 @@ export class PrismaAssetsRepository
     valuationDate: string,
   ): Promise<boolean> {
     const date = this.toDate(valuationDate) ?? undefined;
-    const count = await this.prisma.assetValueHistory.count({
+    const count = await this.prisma.assetValuation.count({
       where: {
         householdId,
         valuationDate: date,
@@ -371,7 +398,7 @@ export class PrismaAssetsRepository
     moneyEventId: string,
     assetId: string,
   ): Promise<AssetValueHistory | undefined> {
-    const valuation = await this.prisma.assetValueHistory.findFirst({
+    const valuation = await this.prisma.assetValuation.findFirst({
       where: { moneyEventId, assetId, deletedAt: null },
     });
 
@@ -381,14 +408,14 @@ export class PrismaAssetsRepository
   async deleteAssetValueHistoryByMoneyEvent(
     moneyEventId: string,
   ): Promise<void> {
-    await this.prisma.assetValueHistory.updateMany({
+    await this.prisma.assetValuation.updateMany({
       where: { moneyEventId, deletedAt: null },
       data: { deletedAt: new Date() },
     });
   }
 
   async deleteAssetValueHistory(assetId: string): Promise<void> {
-    await this.prisma.assetValueHistory.updateMany({
+    await this.prisma.assetValuation.updateMany({
       where: { assetId, deletedAt: null },
       data: { deletedAt: new Date() },
     });

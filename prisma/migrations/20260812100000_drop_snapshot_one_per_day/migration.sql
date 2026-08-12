@@ -1,0 +1,21 @@
+-- Snapshots become APPEND-ONLY (spec §26).
+--
+-- The one-live-snapshot-per-day unique index existed to give
+-- `ensureTodaySnapshot` an `ON CONFLICT` target for its upsert. That whole
+-- machinery is being retired: the auto-snapshot hooks rewrote *today's already
+-- created* snapshot on every asset/debt/money-event write, which directly
+-- contradicts §26 — "snapshot đã tạo thì không đổi ngầm". A snapshot that keeps
+-- changing after it was taken is not a frozen picture, and `total_debt` in
+-- particular was re-read live on every recompute.
+--
+-- With the hooks gone, snapshots are created deliberately by `POST /snapshots`,
+-- and a household may take as many as it likes — so a per-day unique constraint
+-- would now reject legitimate writes rather than protect anything.
+--
+-- Existing rows are kept. Provenance is already distinguishable through the
+-- audit log (`snapshot.auto_created` vs `snapshot.created`), so no new column.
+--
+-- Double-tap protection moves to the service (reject a second snapshot within
+-- 60s for the same household), which does not need an index.
+
+DROP INDEX IF EXISTS "snapshots_one_per_day";

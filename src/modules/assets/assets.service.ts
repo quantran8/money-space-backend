@@ -6,7 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
-import { AS_OF } from '../../common/seed/money-space.seed';
+import { todayInTimeZone } from '../../common/utils/clock';
+import { freshnessOf, staleAfterDaysFor } from '../../common/utils/freshness';
 import { Asset, AssetType } from './entities/asset.entity';
 
 /**
@@ -30,14 +31,13 @@ import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
 import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
-import { SnapshotsService } from '../snapshots/snapshots.service';
 import { MarketDataService } from '../market-data/market-data.service';
 
 /**
  * Ties a valuation write back to the money event that caused it, so the value
  * point lands in history linked to that event (and dated at the event's date).
  * Absent for changes with no event origin (a plain asset create/update writes
- * only the AS_OF cache row).
+ * only today's cache row).
  */
 export interface ValuationContext {
   moneyEventId?: string;
@@ -50,7 +50,6 @@ export class AssetsService {
     @Inject(ASSETS_REPOSITORY)
     private readonly assetsRepository: AssetsRepository,
     private readonly prisma: PrismaService,
-    private readonly snapshots: SnapshotsService,
     private readonly marketData: MarketDataService,
   ) {}
 
@@ -64,7 +63,7 @@ export class AssetsService {
 
     return {
       household,
-      asOf: AS_OF,
+      asOf: todayInTimeZone(),
       items,
       total: items.length,
     };
@@ -80,7 +79,7 @@ export class AssetsService {
 
     return {
       householdId,
-      asOf: AS_OF,
+      asOf: todayInTimeZone(),
       totals,
       groups: [
         {
@@ -121,7 +120,7 @@ export class AssetsService {
     );
     await this.prisma.runInTransaction(async () => {
       for (const asset of marketAssets) {
-        const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
+        const value = computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
         await this.assetsRepository.insertAssetValueHistory({
           id: this.assetsRepository.createId('valuation'),
           assetId: asset.id,
@@ -136,7 +135,6 @@ export class AssetsService {
       }
     });
     for (const asset of marketAssets) {
-      await this.snapshots.onAssetChanged(householdId, asset.id);
     }
     return {
       householdId,
@@ -192,6 +190,99 @@ export class AssetsService {
       householdId,
       items,
       total: items.length,
+    };
+  }
+
+  /**
+   * How old the household's picture is (spec 04 §12, §22).
+   *
+   * A v3.1 forecast is only as trustworthy as the balances it starts from, so
+   * the product says how stale those balances are — **without implying the
+   * household did anything wrong**. Every field here is a code or a number; the
+   * client writes the sentence.
+   *
+   * The cadence is the household's OWN `updateFrequency`. A household on
+   * `manual` never goes stale: they explicitly said "we'll update when we want
+   * to", and grading them against a schedule they never agreed to is exactly
+   * the nagging §29 rules out.
+   */
+  async getDataFreshness(householdId: string) {
+    const household = await this.assetsRepository.assertHousehold(householdId);
+    const asOfDate = todayInTimeZone();
+    const assets = (await this.getAssetRecords(householdId)).filter(
+      (asset) => asset.status === 'active',
+    );
+
+    const items = assets.map((asset) => {
+      const freshness = freshnessOf(
+        asOfDate,
+        asset.valueUpdatedAt,
+        household.updateFrequency,
+      );
+      return {
+        assetId: asset.id,
+        name: asset.name,
+        liquidity: asset.liquidity,
+        currentValue: asset.currentValue,
+        valueUpdatedAt: asset.valueUpdatedAt ?? null,
+        ...freshness,
+      };
+    });
+
+    const counts = { fresh: 0, aging: 0, stale: 0, unknown: 0 };
+    for (const item of items) {
+      counts[item.state] += 1;
+    }
+
+    // The oldest value is what actually bounds how much the whole picture can
+    // be trusted — one stale bank balance undermines the forecast regardless of
+    // how fresh everything else is.
+    const dated = items.filter((item) => item.daysSinceUpdate !== null);
+    const oldestDays = dated.length
+      ? Math.max(...dated.map((item) => item.daysSinceUpdate as number))
+      : null;
+
+    return {
+      householdId,
+      asOfDate,
+      updateFrequency: household.updateFrequency,
+      staleAfterDays: staleAfterDaysFor(household.updateFrequency),
+      counts,
+      oldestDaysSinceUpdate: oldestDays,
+      // A single flag the Home screen can act on without re-deriving the rule.
+      needsAttention: counts.stale > 0,
+      items,
+      total: items.length,
+    };
+  }
+
+  /**
+   * "I checked — nothing changed."
+   *
+   * Records freshness WITHOUT writing a value, and deliberately creates no
+   * valuation history point: nothing about the money changed, so inventing a
+   * history entry would put a fictional data point on the asset's chart.
+   *
+   * With no `assetIds`, confirms every active asset — the one-tap case from the
+   * freshness sheet, which is the whole reason this exists rather than making
+   * the user re-enter numbers they know are still right.
+   */
+  async confirmAssetsUnchanged(
+    householdId: string,
+    payload: { assetIds?: string[] } = {},
+  ) {
+    await this.assetsRepository.assertHousehold(householdId);
+    const assetIds = (payload.assetIds ?? []).filter(Boolean);
+    const confirmed = await this.assetsRepository.confirmAssetsUnchanged(
+      householdId,
+      assetIds,
+    );
+
+    return {
+      householdId,
+      confirmed,
+      confirmedAt: new Date().toISOString(),
+      scope: assetIds.length > 0 ? ('selected' as const) : ('all' as const),
     };
   }
 
@@ -320,7 +411,7 @@ export class AssetsService {
       currentQuantity > 0 ? currentValue / currentQuantity : 0;
 
     const points: Array<{ date: string; value: number }> = [
-      { date: AS_OF, value: currentValue },
+      { date: todayInTimeZone(), value: currentValue },
     ];
 
     let quantity = currentQuantity;
@@ -363,7 +454,7 @@ export class AssetsService {
       .filter((change) => change.amount !== 0);
 
     const points: Array<{ date: string; value: number }> = [
-      { date: AS_OF, value: currentValue },
+      { date: todayInTimeZone(), value: currentValue },
     ];
     let running = currentValue;
     for (let i = changes.length - 1; i >= 0; i -= 1) {
@@ -439,7 +530,6 @@ export class AssetsService {
       const currentValue = await this.writeInitialValuation(asset);
       return { asset, currentValue };
     });
-    await this.snapshots.onAssetChanged(householdId, result.asset.id);
     return this.toAssetRecord(result.asset, result.currentValue);
   }
 
@@ -501,7 +591,6 @@ export class AssetsService {
           : undefined;
       return this.upsertCurrentValuation(next, context);
     });
-    await this.snapshots.onAssetChanged(householdId, assetId);
     return this.toAssetRecord(next, currentValue);
   }
 
@@ -512,12 +601,12 @@ export class AssetsService {
   private async computeValueAsync(asset: Asset): Promise<number> {
     const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
-    return computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
+    return computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
   }
 
   /** Today's date (YYYY-MM-DD), the date a user's direct re-pricing is stamped
    *  with — the UI has no date picker, so a revaluation is "as of now". Kept
-   *  separate from the seed `AS_OF` constant (used for value computation). */
+   *  the same clock every valuation read uses. */
   private todayIso(): string {
     return new Date().toISOString().slice(0, 10);
   }
@@ -824,7 +913,7 @@ export class AssetsService {
       id: this.assetsRepository.createId('valuation'),
       assetId: asset.id,
       householdId: asset.householdId,
-      valuationDate: context.valuationDate ?? AS_OF,
+      valuationDate: context.valuationDate ?? todayInTimeZone(),
       value,
       currency: asset.currency,
       note: asset.note,
@@ -842,7 +931,6 @@ export class AssetsService {
       await this.assetsRepository.deleteAssetValueHistory(assetId);
       await this.assetsRepository.unlinkAssetFromMoneyEvents(assetId);
     });
-    await this.snapshots.onAssetRemoved(householdId, assetId);
     return {
       deleted: true,
       assetId,
@@ -1181,12 +1269,12 @@ export class AssetsService {
         asset,
         marketPrices,
         fxRates,
-        AS_OF,
+        todayInTimeZone(),
       );
       return {
         ...asset,
         currentValue,
-        valueUpdatedAt: AS_OF,
+        valueUpdatedAt: asset.valueUpdatedAt ?? null,
       };
     });
   }
@@ -1241,7 +1329,7 @@ export class AssetsService {
     return {
       ...asset,
       currentValue,
-      valueUpdatedAt: AS_OF,
+      valueUpdatedAt: asset.valueUpdatedAt ?? null,
     };
   }
 
@@ -1272,7 +1360,7 @@ export class AssetsService {
     // these reads run sequentially rather than concurrently on the same client.
     const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
-    const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
+    const value = computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
 
     // When the change came from a money event, append/update the history point
     // linked to that event (keyed on moneyEventId + assetId).
@@ -1281,7 +1369,7 @@ export class AssetsService {
         id: this.assetsRepository.createId('valuation'),
         assetId: asset.id,
         householdId: asset.householdId,
-        valuationDate: context.valuationDate ?? AS_OF,
+        valuationDate: context.valuationDate ?? todayInTimeZone(),
         value,
         currency: asset.currency,
         note: asset.note,
@@ -1299,20 +1387,20 @@ export class AssetsService {
 
   /**
    * Write the asset's starting value on create: one unlinked history point dated
-   * AS_OF plus the `current_value` cache. Unlike a re-pricing, creating an asset
+   * today plus the `current_value` cache. Unlike a re-pricing, creating an asset
    * logs NO money event (it moves no money), so this point carries no
    * `moneyEventId`. Runs inside the create transaction (shared connection).
    */
   private async writeInitialValuation(asset: Asset): Promise<number> {
     const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
-    const value = computeCurrentValue(asset, marketPrices, fxRates, AS_OF);
+    const value = computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
 
     await this.assetsRepository.insertAssetValueHistory({
       id: this.assetsRepository.createId('valuation'),
       assetId: asset.id,
       householdId: asset.householdId,
-      valuationDate: AS_OF,
+      valuationDate: todayInTimeZone(),
       value,
       currency: asset.currency,
       note: asset.note,

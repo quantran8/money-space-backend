@@ -19,10 +19,6 @@ import type {
   MoneyEvent,
   MoneyEventType,
 } from '../../modules/money-events/entities/money-event.entity';
-import type {
-  PaymentUiStatus,
-  UpcomingPayment,
-} from '../../modules/payments/entities/upcoming-payment.entity';
 
 const DEFAULT_PERMISSION_FOR_ROLE: Record<HouseholdRole, PermissionLevel> = {
   owner: 'admin',
@@ -451,37 +447,23 @@ export function computeLiquidityTotals(
   return totals;
 }
 
-export type SnapshotStatus =
-  'good' | 'attention' | 'tight' | 'insufficient_data';
 export type SnapshotSourceMode = 'manual' | 'calculated' | 'mixed';
 
-/**
- * Derive a snapshot's health status from its frozen totals. Not stored on the
- * row — computed here at read time so the thresholds can evolve without a
- * migration and can never go stale.
- */
-export function deriveSnapshotStatus(input: {
-  totalAssets: number;
-  totalDebt: number;
-  totalLiquid: number;
-  upcomingDueAmount: number;
-  attentionCount: number;
-  assetCount: number;
-}): SnapshotStatus {
-  if (input.assetCount === 0) {
-    return 'insufficient_data';
-  }
-  const netWorth = input.totalAssets - input.totalDebt;
-  // Can the household cover what's due soon from cash it can use now?
-  const liquidCoversDue = input.totalLiquid >= input.upcomingDueAmount;
-  if (netWorth <= 0 || !liquidCoversDue) {
-    return 'tight';
-  }
-  if (input.attentionCount > 0) {
-    return 'attention';
-  }
-  return 'good';
-}
+// `deriveSnapshotStatus` and its `good | attention | tight | insufficient_data`
+// enum were REMOVED in the v3.1 alignment.
+//
+// It judged a snapshot on net worth and whether liquid cash covered what was
+// due — a balance-sheet reading, taken before the product had a forecast.
+// v3.1's state is `on_track | watch | tight | incomplete` and comes from the
+// projected balance, so the two would have disagreed on the same household:
+// positive net worth with a shortfall on the 15th read as `good` under the old
+// rule and `tight` under the new one.
+//
+// Live state now comes from `forecast/domain/financial-state.ts`; a stored
+// snapshot's state comes from `snapshots/domain/snapshot-financial-state.ts`,
+// derived from its own frozen foresight columns. Both share
+// `FINANCIAL_STATE_THRESHOLDS`, so history and today can never disagree about
+// what "tight" means.
 
 /**
  * Derive the source mode from the valuation methods that fed the snapshot:
@@ -529,19 +511,6 @@ export function toMoneyEventCard(event: MoneyEvent) {
   };
 }
 
-export function toPaymentCard(payment: UpcomingPayment) {
-  // Raw numeric `amount`; the client formats it for display.
-  return {
-    id: payment.id,
-    name: payment.name,
-    amount: payment.amount,
-    due: formatDateLabel(payment.dueDate),
-    dueDate: payment.dueDate,
-    owner: payment.owner,
-    debtId: payment.debtId,
-    status: payment.status,
-  };
-}
 
 export function toGoalCard(goal: FinancialGoal) {
   // Raw numeric `currentAmount` / `targetAmount`; the client formats them.
@@ -550,15 +519,14 @@ export function toGoalCard(goal: FinancialGoal) {
     name: goal.name,
     currentAmount: goal.currentAmount,
     targetAmount: goal.targetAmount,
+    plannedMonthlyContribution: goal.plannedMonthlyContribution,
     progress: computeGoalProgress(goal),
     priority: goal.priority,
     note: goal.note,
-    deadline: goal.deadline,
+    targetDate: goal.targetDate,
+    // TRANSITIONAL alias for the pre-v3.1 client, which reads `deadline`.
+    // Remove once the frontend goals slice reads `targetDate` (plan Phase 8).
+    deadline: goal.targetDate,
   };
 }
 
-export function normalizePaymentStatus(
-  status: PaymentUiStatus | undefined,
-): PaymentUiStatus {
-  return status ?? 'normal';
-}

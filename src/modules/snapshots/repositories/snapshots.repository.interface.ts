@@ -14,58 +14,63 @@ export interface SnapshotAssetLine {
   valuationMethod?: string;
   valuationDate?: string;
   visibilityLevel: string;
+  /**
+   * Classification frozen alongside the value (§17). A later change to the
+   * asset's nature/holder/privacy must not silently rewrite what a past
+   * snapshot meant, so these travel WITH the line rather than being re-read
+   * through the asset when the snapshot is displayed.
+   */
+  financialNature: string;
+  holderMemberId?: string | null;
+  privacyOwnerMemberId?: string | null;
+}
+
+/** Everything `POST /snapshots` freezes beyond the per-asset lines. */
+export interface CreateSnapshotInput {
+  id: string;
+  householdId: string;
+  snapshotDate: string;
+  totalLiquid: number;
+  totalSavings: number;
+  totalLongTermAssets: number;
+  totalDebt: number;
+  upcomingDueAmount: number;
+  attentionCount: number;
+  protectedReserveAmount: number;
+  forecastHorizonDays: number;
+  upcomingIncomeAmount: number;
+  upcomingOutgoingAmount: number;
+  /** Nullable AND legitimately negative — a shortfall is the signal (§10). */
+  lowestProjectedBalance: number | null;
+  flexibleMoney: number | null;
+  note?: string | null;
+  createdById?: string | null;
+  lines: SnapshotAssetLine[];
 }
 
 export interface SnapshotsRepository {
   assertHousehold(householdId: string): Promise<Household>;
   createId(prefix: string): string;
-
-  /** SUM(debts.outstanding_amount) for active, non-deleted debts. */
+  /**
+   * Active assets valued as of `asOfDate`, carrying their REAL classification.
+   *
+   * Distinct from the legacy `getActiveAssetLines`, which hardcoded
+   * `visibilityLevel: 'detail'` — reusing that here would have frozen every
+   * private asset into the snapshot as if it were shared.
+   */
+  getClassifiedAssetLines(
+    householdId: string,
+    asOfDate: string,
+  ): Promise<SnapshotAssetLine[]>;
   getOutstandingDebtTotal(householdId: string): Promise<number>;
-  /** SUM(upcoming_payments.amount) for unpaid, non-deleted payments. */
-  getUpcomingDueTotal(householdId: string): Promise<number>;
-  /** Count of open attention items. */
-  getOpenAttentionCount(householdId: string): Promise<number>;
-
-  /** All active assets valued as snapshot line items (full seed set). */
-  getActiveAssetLines(householdId: string): Promise<SnapshotAssetLine[]>;
+  /** When the household last took a snapshot — backs the rate limit. */
+  getLastSnapshotCreatedAt(householdId: string): Promise<Date | null>;
   /**
-   * One active asset valued as a line, or `undefined` when it no longer counts
-   * (deleted / sold / not active) — the caller then removes its snapshot line.
+   * Insert the snapshot, its lines and the audit entry as ONE transaction.
+   * Exactly three statements: everything expensive (valuation, forecast) has
+   * already run outside it.
    */
-  getActiveAssetLine(
-    householdId: string,
-    assetId: string,
-  ): Promise<SnapshotAssetLine | undefined>;
-
-  /**
-   * Ensure today's (household-timezone) snapshot exists; seed a FULL set of
-   * per-asset line items on first creation. Idempotent — returns the existing
-   * snapshot id on subsequent calls the same day. Days before today are never
-   * touched (immutable).
-   */
-  ensureTodaySnapshot(householdId: string, today: string): Promise<string>;
-
-  /** Upsert one asset's frozen line (INSERT … ON CONFLICT (snapshot_id, asset_id)). */
-  upsertAssetLine(
-    snapshotId: string,
-    householdId: string,
-    line: SnapshotAssetLine,
-  ): Promise<void>;
-
-  /** Remove one asset's line from a snapshot (hard delete — child isn't soft-deleted). */
-  removeAssetLine(snapshotId: string, assetId: string): Promise<void>;
-
-  /**
-   * Recompute the parent totals from the CURRENT child rows (SUM … GROUP BY
-   * liquidity) plus household-level debt / upcoming / attention — so the parent
-   * totals always equal the sum of the children.
-   */
-  recomputeSnapshotTotals(
-    snapshotId: string,
-    householdId: string,
-  ): Promise<void>;
-
+  createSnapshot(input: CreateSnapshotInput): Promise<void>;
   listSnapshots(householdId: string): Promise<SnapshotDetail[]>;
   getSnapshotById(
     householdId: string,
