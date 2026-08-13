@@ -524,9 +524,6 @@ export function toGoalCard(goal: FinancialGoal) {
     priority: goal.priority,
     note: goal.note,
     targetDate: goal.targetDate,
-    // TRANSITIONAL alias for the pre-v3.1 client, which reads `deadline`.
-    // Remove once the frontend goals slice reads `targetDate` (plan Phase 8).
-    deadline: goal.targetDate,
   };
 }
 
