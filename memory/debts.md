@@ -4,13 +4,13 @@ Loans the household still owes, with repayment estimation. Related: [[money-even
 
 ## Overview
 
-CRUD over `Debt` (name, **lenderType**, lenderName, original/outstanding amount, borrowedAt, expectedFinalDueDate, status, owner member, optional `receivedToAsset` link).
+CRUD over `Debt` (name, **lenderType**, lenderName, original/outstanding amount, borrowedAt, `firstPaymentDate`, expectedFinalDueDate, status, owner member, optional `receivedToAsset` link).
 
 ## Lender type — the single classification (drives repayment rules)
 
 A debt is classified by **one** field, `lenderType` (the old dual `debtType` + `lenderType` was collapsed — migration `..._debt_lender_type_simplify` drops the `debt_type` column and its enum, and rewrites `LenderType` to three values). `isFixedScheduleLender(lenderType)` in the entity is the single predicate the rules key on:
 
-- **`bank_institution`** — a *fixed-schedule* loan. On create/update `DebtsService.assertLenderTerms` **requires** an interest rate (a positive `interestRate` or a period with one), an `expectedFinalDueDate` (its term), and a positive `fixedPaymentAmount` (else **400**). Its repayment money events are **locked**: the only sanctioned way to change what was paid is to update the debt record so the schedule recomputes.
+- **`bank_institution`** — a *fixed-schedule* loan. On create/update `DebtsService.assertLenderTerms` **requires** an interest rate (a positive `interestRate` or a period with one), an `expectedFinalDueDate` (its term), and a positive `fixedPaymentAmount` (else **400**). Any recurring monthly/quarterly/yearly schedule also requires `firstPaymentDate` as its cadence anchor. Its repayment money events are **locked**: the only sanctioned way to change what was paid is to update the debt record so the schedule recomputes.
 - **`relative`** / **`other`** — interest and a fixed term are **optional**. When the user sets an amount + schedule, editing (or creating/deleting) a repayment event **rebalances the next unpaid installment** by the over/under-payment (see below). All three terms are optional.
 
 The old 6-value LenderType migrated as: `family, friend → relative`; `bank, credit_institution → bank_institution`; `company, other → other`.
@@ -34,13 +34,13 @@ A debt links to the asset that received the money (`receivedToAssetId`). Borrowi
 
 When `receivedToAssetId` is set, `createDebt` **logs a money event** — an inflow `debt_update` event (`title: "Vay: <name>"`, `category: 'debt'`, `direction: 'inflow'` set explicitly because `debt_update` otherwise derives to outflow), linked to both `toAssetId` (the wallet) and `debtId`, dated `borrowedAt ?? AS_OF`. Via `MoneyEventsService.createMoneyEvent` (`DebtsModule` imports `MoneyEventsModule`). This single call both **puts the borrowed cash in the events timeline** and **credits the wallet** (net worth unchanged) — there is no separate `creditManualAsset` call.
 
-Independent of the wallet, `createDebt` **materializes the repayment schedule** (`createRepaymentSchedule`): when `paymentFrequency` is monthly/quarterly/yearly **and** a per-period amount exists (`fixedPaymentAmount`, else `minimumPaymentAmount`), it creates `UpcomingPayment` rows (`name: "Tra no: <name>"`, linked `debtId`) in **one bulk insert** via `PaymentsService.createUpcomingPayments` (`DebtsModule` imports `PaymentsModule`). Due dates step from `borrowedAt ?? AS_OF` by the frequency (`addMonthsIso`, clamps to month-end). With an `expectedFinalDueDate` it fills the schedule up to that date (capped at `MAX_GENERATED_INSTALLMENTS = 60`); without one it creates just the **next** due reminder. The whole `createDebt` transaction runs with a raised `timeout` (15s) and uses one bulk write for the schedule so it stays well under the interactive-transaction limit. `updateDebt` does **not** yet regenerate the schedule or adjust the wallet — **except** that a moved `borrowedAt` re-dates the borrow inflow event (see below).
+Independent of the wallet, `createDebt` **materializes the repayment schedule** (`createRepaymentSchedule`): when `paymentFrequency` is monthly/quarterly/yearly **and** a per-period amount exists (`fixedPaymentAmount`, else `minimumPaymentAmount`), it creates debt-linked `CashflowEvent` reminders in one bulk insert. Due dates start at the explicit `firstPaymentDate` and step by the frequency (`addMonthsIso`, clamps to month-end), so a date such as the 31st stays month-end where necessary and returns to the 31st in longer months. With an `expectedFinalDueDate` it fills the schedule up to that date (capped at `MAX_GENERATED_INSTALLMENTS = 60`); without one it creates just the next due reminder. Updating the name, cadence anchor, frequency, amount, or final date replaces only still-open reminders; completed repayments remain immutable history.
 
 ## Updating a debt: correction vs. effective-from-now
 
 **Repayment terms live directly on the `debts` row** (folded in from the former
 `debt_terms` table, which was a 1:1 singleton of derived values — migration
-`..._fold_debt_terms`): `payment_frequency`, `fixed_payment_amount`,
+`..._fold_debt_terms`): `payment_frequency`, `first_payment_date`, `fixed_payment_amount`,
 `minimum_payment_amount`, `interest_type`, `interest_calculation`.
 `repayment_type` / `has_interest` are derived on read. `insertDebt`/`updateDebt`
 persist these columns directly — there is no `upsertDebtTerms` anymore.

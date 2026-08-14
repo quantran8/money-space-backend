@@ -348,9 +348,10 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
           ),
     priority: row.priority,
     note: row.note ?? '',
-    targetDate: (row.targetDate ?? row.target_date)
-      ? dateOnly(row.targetDate ?? row.target_date)
-      : NO_TARGET_DATE,
+    targetDate:
+      (row.targetDate ?? row.target_date)
+        ? dateOnly(row.targetDate ?? row.target_date)
+        : NO_TARGET_DATE,
   };
 }
 
@@ -386,6 +387,10 @@ export function mapDebt(row: DbRow, period?: DbRow, periods?: DbRow[]): Debt {
     borrowedAt:
       (row.borrowedAt ?? row.borrowed_at)
         ? dateOnly(row.borrowedAt ?? row.borrowed_at)
+        : undefined,
+    firstPaymentDate:
+      (row.firstPaymentDate ?? row.first_payment_date)
+        ? dateOnly(row.firstPaymentDate ?? row.first_payment_date)
         : undefined,
     expectedFinalDueDate:
       (row.expectedFinalDueDate ?? row.expected_final_due_date)

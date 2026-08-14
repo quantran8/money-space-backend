@@ -44,6 +44,8 @@ export interface Debt {
   outstandingAmount: number;
   currency: string;
   borrowedAt?: string;
+  /** First contractual repayment date; anchors the recurring due-day cadence. */
+  firstPaymentDate?: string;
   expectedFinalDueDate?: string;
   status: DebtStatus;
   ownerMemberId?: string;

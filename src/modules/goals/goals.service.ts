@@ -37,9 +37,13 @@ export class GoalsService {
    * imports Goals, so the reverse edge would be a cycle.
    */
   async listFinancialGoals(householdId: string, include?: string) {
-    await this.goalsRepository.assertHousehold(householdId);
-    const goals =
-      await this.goalsRepository.findFinancialGoalsByHousehold(householdId);
+    // The guard does not feed the query, so running it serially just added a
+    // round-trip in front of every list call. `Promise.all` still rejects on
+    // the first failure, so the access check is unchanged.
+    const [, goals] = await Promise.all([
+      this.goalsRepository.assertHousehold(householdId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+    ]);
 
     const wantsProjection = (include ?? '')
       .split(',')
@@ -100,10 +104,7 @@ export class GoalsService {
     }
     const plannedMonthlyContribution =
       payload.plannedMonthlyContribution ?? null;
-    if (
-      plannedMonthlyContribution !== null &&
-      plannedMonthlyContribution < 0
-    ) {
+    if (plannedMonthlyContribution !== null && plannedMonthlyContribution < 0) {
       throw new BadRequestException(
         'plannedMonthlyContribution cannot be negative',
       );

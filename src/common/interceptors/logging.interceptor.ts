@@ -51,9 +51,7 @@ export class LoggingInterceptor implements NestInterceptor {
         next: (data) => {
           const ms = Date.now() - startedAt;
           this.logger.log(
-            `<-- ${method} ${url} ${response.statusCode} ${ms}ms ${this.serialize(
-              { response: sanitize(data) },
-            )}`,
+            `<-- ${method} ${url} ${response.statusCode} ${ms}ms ${this.describe(data)}`,
           );
         },
         error: (err: unknown) => {
@@ -71,6 +69,32 @@ export class LoggingInterceptor implements NestInterceptor {
     } catch {
       return '[unserializable]';
     }
+  }
+
+  /**
+   * Describe a response by SHAPE, not by content.
+   *
+   * This used to `sanitize()` (a recursive walk) and `JSON.stringify()` the
+   * entire response body on every request. A snapshots payload is up to 365
+   * snapshots × their per-asset value lines — thousands of objects walked and
+   * serialized twice, synchronously, on the single-threaded event loop. That
+   * cost is paid while every other in-flight request waits.
+   *
+   * Item count and payload size are what the log was actually useful for; the
+   * full body belongs in a debugger, not in every production log line.
+   */
+  private describe(data: unknown): string {
+    if (data === null || data === undefined) return '(empty)';
+    if (Array.isArray(data)) return `(array, ${data.length} items)`;
+    if (typeof data !== 'object') return `(${typeof data})`;
+
+    const record = data as Record<string, unknown>;
+    if (Array.isArray(record.items)) {
+      const total =
+        typeof record.total === 'number' ? record.total : record.items.length;
+      return `(items: ${record.items.length}, total: ${total})`;
+    }
+    return `(keys: ${Object.keys(record).length})`;
   }
 }
 

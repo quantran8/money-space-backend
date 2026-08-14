@@ -61,11 +61,13 @@ export class DebtsService {
     private readonly cashflowEventsService: CashflowEventsService,
   ) {}
 
-
-
   async listDebts(householdId: string, query?: ListDebtsQuery) {
-    await this.debtsRepository.assertHousehold(householdId);
-    let items = await this.debtsRepository.findDebtsByHousehold(householdId);
+    // Guard and query are independent — see the note in `goals.service.ts`.
+    const [, found] = await Promise.all([
+      this.debtsRepository.assertHousehold(householdId),
+      this.debtsRepository.findDebtsByHousehold(householdId),
+    ]);
+    let items = found;
 
     if (query?.status) {
       items = items.filter((debt) => debt.status === query.status);
@@ -121,6 +123,27 @@ export class DebtsService {
     }
   }
 
+  private assertRepaymentAnchor(debt: Debt): void {
+    const hasRecurringSchedule = Boolean(
+      REPAYMENT_STEP_MONTHS[debt.paymentFrequency ?? 'none'] &&
+      (debt.fixedPaymentAmount ?? debt.minimumPaymentAmount ?? 0) > 0,
+    );
+    if (hasRecurringSchedule && !debt.firstPaymentDate) {
+      throw new BadRequestException(
+        'A recurring debt schedule requires firstPaymentDate',
+      );
+    }
+    if (
+      debt.firstPaymentDate &&
+      debt.expectedFinalDueDate &&
+      debt.firstPaymentDate > debt.expectedFinalDueDate
+    ) {
+      throw new BadRequestException(
+        'firstPaymentDate cannot be after expectedFinalDueDate',
+      );
+    }
+  }
+
   async createDebt(householdId: string, payload: CreateDebtDto) {
     // `insertDebt` asserts the household exists (and needs its row to resolve
     // `createdById`), so we don't assert it a second time here.
@@ -134,6 +157,7 @@ export class DebtsService {
       outstandingAmount: payload.outstandingAmount,
       currency: payload.currency?.trim() || 'VND',
       borrowedAt: payload.borrowedAt,
+      firstPaymentDate: payload.firstPaymentDate,
       expectedFinalDueDate: payload.expectedFinalDueDate,
       status: payload.status ?? 'active',
       ownerMemberId: payload.ownerMemberId,
@@ -150,6 +174,7 @@ export class DebtsService {
 
     // A bank/institution loan must carry its fixed-schedule terms up front.
     this.assertLenderTerms(debt);
+    this.assertRepaymentAnchor(debt);
 
     // All writes for a debt (the debt row + its terms + interest periods, plus
     // crediting the wallet that received the borrowed money) must succeed or
@@ -201,8 +226,8 @@ export class DebtsService {
    * the debt has a recurring `paymentFrequency` (monthly/quarterly/yearly) and a
    * per-period amount (`fixedPaymentAmount`, else `minimumPaymentAmount`).
    *
-   * Due dates step from the first period after `borrowedAt` (defaulting to
-   * today) by the frequency, and stop at `expectedFinalDueDate` when set —
+   * Due dates step from the explicit `firstPaymentDate`, which anchors the
+   * contractual due day, and stop at `expectedFinalDueDate` when set —
    * otherwise we cap at `MAX_GENERATED_INSTALLMENTS` so an open-ended debt does
    * not spawn an unbounded number of rows. Meant to run inside the debt-create
    * transaction; each `createUpcomingPayment` joins it.
@@ -210,6 +235,7 @@ export class DebtsService {
   private async createRepaymentSchedule(
     householdId: string,
     debt: Debt,
+    fromDate?: string,
   ): Promise<void> {
     const MAX_GENERATED_INSTALLMENTS = 60;
     const stepMonths = REPAYMENT_STEP_MONTHS[debt.paymentFrequency ?? 'none'];
@@ -218,13 +244,21 @@ export class DebtsService {
       return;
     }
 
-    const start = debt.borrowedAt ?? todayInTimeZone();
+    // Legacy rows created before firstPaymentDate existed retain their old
+    // borrowedAt + one-period behaviour. New recurring schedules are validated
+    // to always carry the explicit anchor.
+    const start =
+      debt.firstPaymentDate ??
+      addMonthsIso(debt.borrowedAt ?? todayInTimeZone(), stepMonths);
     const finalDue = debt.expectedFinalDueDate;
     const events: CreateCashflowEventDto[] = [];
-    for (let index = 1; index <= MAX_GENERATED_INSTALLMENTS; index += 1) {
+    for (let index = 0; index < MAX_GENERATED_INSTALLMENTS; index += 1) {
       const dueDate = addMonthsIso(start, stepMonths * index);
       if (finalDue && dueDate > finalDue) {
         break;
+      }
+      if (fromDate && dueDate < fromDate) {
+        continue;
       }
       events.push({
         name: `Tra no: ${debt.name}`,
@@ -278,6 +312,7 @@ export class DebtsService {
       outstandingAmount: fields.outstandingAmount ?? debt.outstandingAmount,
       lenderType: fields.lenderType ?? debt.lenderType,
       borrowedAt: fields.borrowedAt ?? debt.borrowedAt,
+      firstPaymentDate: fields.firstPaymentDate ?? debt.firstPaymentDate,
       expectedFinalDueDate:
         fields.expectedFinalDueDate ?? debt.expectedFinalDueDate,
       status: fields.status ?? debt.status,
@@ -286,6 +321,7 @@ export class DebtsService {
     // The updated debt must still satisfy its lender's term requirements — this
     // also guards moving a debt into the bank_institution bucket.
     this.assertLenderTerms(next);
+    this.assertRepaymentAnchor(next);
 
     // A debt with no recorded money events yet keeps the simple direct-overwrite
     // behaviour — nothing to preserve, no mode prompt (see memory/debts.md).
@@ -297,6 +333,13 @@ export class DebtsService {
       await this.prisma.runInTransaction(async () => {
         await this.debtsRepository.updateDebt(debtId, next);
         await this.debtsRepository.upsertDebtInterestPeriods(next);
+        if (this.repaymentScheduleChanged(debt, next)) {
+          await this.cashflowEventsService.deleteOpenCashflowEventsByDebt(
+            householdId,
+            debtId,
+          );
+          await this.createRepaymentSchedule(householdId, next);
+        }
       });
       return next;
     }
@@ -391,6 +434,7 @@ export class DebtsService {
       lenderType: debt.lenderType,
       paymentFrequency: debt.paymentFrequency,
       fixedPaymentAmount: debt.fixedPaymentAmount,
+      firstPaymentDate: debt.firstPaymentDate,
       expectedFinalDueDate: debt.expectedFinalDueDate,
     };
   }
@@ -424,6 +468,13 @@ export class DebtsService {
         await this.debtsRepository.updateDebt(debt.id, next);
         // Delete-all + reinsert = "rewrite the schedule as if always true".
         await this.debtsRepository.upsertDebtInterestPeriods(next);
+        if (this.repaymentScheduleChanged(debt, next)) {
+          await this.cashflowEventsService.deleteOpenCashflowEventsByDebt(
+            householdId,
+            debt.id,
+          );
+          await this.createRepaymentSchedule(householdId, next);
+        }
         // A moved `borrowedAt` must re-date the borrow inflow event too.
         await this.resyncBorrowEventDate(householdId, debt, next, events);
         await this.debtsRepository.writeAuditLog(householdId, {
@@ -492,6 +543,7 @@ export class DebtsService {
     const fixedPaymentChanged =
       payload.fixedPaymentAmount !== undefined &&
       payload.fixedPaymentAmount !== debt.fixedPaymentAmount;
+    const scheduleChanged = this.repaymentScheduleChanged(debt, next);
 
     let action = 'debt.updated_effective';
     let loggedEventId: string | undefined;
@@ -578,8 +630,16 @@ export class DebtsService {
           );
         }
 
-        // Repayment-amount change → only the future unpaid reminders.
-        if (fixedPaymentChanged) {
+        // A cadence/anchor/term change replaces only still-open reminders from
+        // the effective date. Recorded repayments remain immutable history.
+        if (scheduleChanged) {
+          await this.cashflowEventsService.deleteOpenCashflowEventsByDebt(
+            householdId,
+            debt.id,
+            effectiveDate,
+          );
+          await this.createRepaymentSchedule(householdId, next, effectiveDate);
+        } else if (fixedPaymentChanged) {
           await this.cashflowEventsService.updateOpenCashflowEventAmounts(
             householdId,
             debt.id,
@@ -611,9 +671,19 @@ export class DebtsService {
     return next;
   }
 
+  private repaymentScheduleChanged(before: Debt, after: Debt): boolean {
+    return (
+      before.name !== after.name ||
+      before.paymentFrequency !== after.paymentFrequency ||
+      before.fixedPaymentAmount !== after.fixedPaymentAmount ||
+      before.firstPaymentDate !== after.firstPaymentDate ||
+      before.expectedFinalDueDate !== after.expectedFinalDueDate
+    );
+  }
+
   async deleteDebt(householdId: string, debtId: string) {
     // 404s when the debt (or its household) is absent before we mutate anything.
-    const debt = await this.ensureDebt(householdId, debtId);
+    await this.ensureDebt(householdId, debtId);
     // Deleting a debt removes everything the debt created, all in one
     // transaction so they land (or roll back) together, sequentially since they
     // share the transaction's connection:

@@ -123,8 +123,10 @@ export class PrismaCashflowEventsRepository
         // so the hot path never loads them, and re-asserted in the pure engine.
         ...SHARED_CALCULATION_VISIBILITY_WHERE,
         expectedDate: {
-          gte: this.toDate(addDaysIso(iso, -FORECAST_LOOKBACK_DAYS)) ?? undefined,
-          lte: this.toDate(addDaysIso(iso, FORECAST_LOOKAHEAD_DAYS)) ?? undefined,
+          gte:
+            this.toDate(addDaysIso(iso, -FORECAST_LOOKBACK_DAYS)) ?? undefined,
+          lte:
+            this.toDate(addDaysIso(iso, FORECAST_LOOKAHEAD_DAYS)) ?? undefined,
         },
       } as never,
       orderBy: { expectedDate: 'asc' },
@@ -301,6 +303,25 @@ export class PrismaCashflowEventsRepository
         expectedDate: { gte: this.toDate(fromDate) ?? undefined },
       } as never,
       data: { amount: newAmount },
+    });
+  }
+
+  async deleteOpenCashflowEventsByDebt(
+    householdId: string,
+    debtId: string,
+    fromDate?: string,
+  ): Promise<void> {
+    await this.prisma.cashflowEvent.updateMany({
+      where: {
+        householdId,
+        debtId,
+        deletedAt: null,
+        status: { in: [...LIVE_CASHFLOW_STATUSES] },
+        ...(fromDate
+          ? { expectedDate: { gte: this.toDate(fromDate) ?? undefined } }
+          : {}),
+      } as never,
+      data: { deletedAt: new Date() },
     });
   }
 }

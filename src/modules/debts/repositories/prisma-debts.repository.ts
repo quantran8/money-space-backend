@@ -77,6 +77,9 @@ export class PrismaDebtsRepository
     // soft-deleted) the SELECT yields no row, nothing is inserted, and we
     // surface a 404 — matching the previous assertHousehold behaviour.
     const borrowedAt = debt.borrowedAt ? this.toDate(debt.borrowedAt) : null;
+    const firstPaymentDate = debt.firstPaymentDate
+      ? this.toDate(debt.firstPaymentDate)
+      : null;
     const expectedFinalDueDate = debt.expectedFinalDueDate
       ? this.toDate(debt.expectedFinalDueDate)
       : null;
@@ -88,7 +91,7 @@ export class PrismaDebtsRepository
       INSERT INTO debts
         (id, household_id, name, lender_type, lender_name,
          original_amount, outstanding_amount, currency, borrowed_at,
-         expected_final_due_date, status, owner_member_id, received_to_asset_id,
+         first_payment_date, expected_final_due_date, status, owner_member_id, received_to_asset_id,
          note, payment_frequency, fixed_payment_amount, minimum_payment_amount,
          interest_type, interest_calculation, created_by, updated_at)
       SELECT
@@ -101,6 +104,7 @@ export class PrismaDebtsRepository
         ${debt.outstandingAmount}::numeric,
         ${debt.currency},
         ${borrowedAt}::date,
+        ${firstPaymentDate}::date,
         ${expectedFinalDueDate}::date,
         ${debt.status}::"DebtStatus",
         ${debt.ownerMemberId ?? null}::uuid,
@@ -136,6 +140,9 @@ export class PrismaDebtsRepository
         outstandingAmount: debt.outstandingAmount,
         currency: debt.currency,
         borrowedAt: debt.borrowedAt ? this.toDate(debt.borrowedAt) : null,
+        firstPaymentDate: debt.firstPaymentDate
+          ? this.toDate(debt.firstPaymentDate)
+          : null,
         expectedFinalDueDate: debt.expectedFinalDueDate
           ? this.toDate(debt.expectedFinalDueDate)
           : null,

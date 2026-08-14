@@ -38,8 +38,11 @@ export class SnapshotsService {
   ) {}
 
   async listSnapshots(householdId: string) {
-    await this.snapshotsRepository.assertHousehold(householdId);
-    const items = await this.snapshotsRepository.listSnapshots(householdId);
+    // Guard and query are independent — see the note in `goals.service.ts`.
+    const [, items] = await Promise.all([
+      this.snapshotsRepository.assertHousehold(householdId),
+      this.snapshotsRepository.listSnapshots(householdId),
+    ]);
     return { householdId, items, total: items.length };
   }
 
@@ -99,16 +102,18 @@ export class SnapshotsService {
     );
 
     // 2–5. Everything expensive, concurrently, and all outside the transaction.
-    const [lines, totalDebt, forecastInput, attentionCount] = await Promise.all([
-      this.snapshotsRepository.getClassifiedAssetLines(householdId, asOfDate),
-      this.snapshotsRepository.getOutstandingDebtTotal(householdId),
-      this.forecast.loadInput(householdId, horizonDays, asOfDate),
-      // Stored items ONLY. A derived count isn't reproducible — it depends on a
-      // forecast that will have moved by the time anyone reads this back, so
-      // freezing it would put a number in the row that nothing can ever
-      // recompute or verify.
-      this.attention.countOpenStoredItems(householdId),
-    ]);
+    const [lines, totalDebt, forecastInput, attentionCount] = await Promise.all(
+      [
+        this.snapshotsRepository.getClassifiedAssetLines(householdId, asOfDate),
+        this.snapshotsRepository.getOutstandingDebtTotal(householdId),
+        this.forecast.loadInput(householdId, horizonDays, asOfDate),
+        // Stored items ONLY. A derived count isn't reproducible — it depends on a
+        // forecast that will have moved by the time anyone reads this back, so
+        // freezing it would put a number in the row that nothing can ever
+        // recompute or verify.
+        this.attention.countOpenStoredItems(householdId),
+      ],
+    );
 
     const forecast = runForecast(forecastInput);
     const flexible = computeFlexibleMoney(forecast);

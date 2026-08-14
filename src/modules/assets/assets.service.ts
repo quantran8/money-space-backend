@@ -58,8 +58,14 @@ export class AssetsService {
   private readonly refreshInFlight = new Set<string>();
 
   async listAssets(householdId: string) {
-    const household = await this.assetsRepository.assertHousehold(householdId);
-    const items = await this.getAssetRecords(householdId);
+    // `assertHousehold` only guards; it does not feed `getAssetRecords`. Running
+    // it serially made every request pay an extra Singapore round-trip before
+    // the real work could even start. It still throws if the household is gone —
+    // `Promise.all` rejects on the first failure — so the guarantee is unchanged.
+    const [household, items] = await Promise.all([
+      this.assetsRepository.assertHousehold(householdId),
+      this.getAssetRecords(householdId),
+    ]);
 
     return {
       household,
@@ -70,8 +76,10 @@ export class AssetsService {
   }
 
   async getAssetSummary(householdId: string) {
-    await this.assetsRepository.assertHousehold(householdId);
-    const assets = await this.getAssetRecords(householdId);
+    const [, assets] = await Promise.all([
+      this.assetsRepository.assertHousehold(householdId),
+      this.getAssetRecords(householdId),
+    ]);
     // A sold/closed asset no longer contributes to net worth or the liquidity
     // buckets — it is kept only for history. See [[asset-sale]].
     const activeAssets = assets.filter((asset) => asset.status === 'active');
@@ -120,7 +128,12 @@ export class AssetsService {
     );
     await this.prisma.runInTransaction(async () => {
       for (const asset of marketAssets) {
-        const value = computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
+        const value = computeCurrentValue(
+          asset,
+          marketPrices,
+          fxRates,
+          todayInTimeZone(),
+        );
         await this.assetsRepository.insertAssetValueHistory({
           id: this.assetsRepository.createId('valuation'),
           assetId: asset.id,
@@ -134,8 +147,6 @@ export class AssetsService {
         await this.assetsRepository.updateAssetCurrentValue(asset.id, value);
       }
     });
-    for (const asset of marketAssets) {
-    }
     return {
       householdId,
       refreshed: marketAssets.length,
@@ -182,9 +193,10 @@ export class AssetsService {
   }
 
   async getAssetSnapshots(householdId: string) {
-    await this.assetsRepository.assertHousehold(householdId);
-    const items =
-      await this.assetsRepository.getSnapshotsByHousehold(householdId);
+    const [, items] = await Promise.all([
+      this.assetsRepository.assertHousehold(householdId),
+      this.assetsRepository.getSnapshotsByHousehold(householdId),
+    ]);
 
     return {
       householdId,
@@ -1360,7 +1372,12 @@ export class AssetsService {
     // these reads run sequentially rather than concurrently on the same client.
     const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
-    const value = computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
+    const value = computeCurrentValue(
+      asset,
+      marketPrices,
+      fxRates,
+      todayInTimeZone(),
+    );
 
     // When the change came from a money event, append/update the history point
     // linked to that event (keyed on moneyEventId + assetId).
@@ -1394,7 +1411,12 @@ export class AssetsService {
   private async writeInitialValuation(asset: Asset): Promise<number> {
     const marketPrices = await this.marketData.getMarketPrices();
     const fxRates = await this.assetsRepository.getFxRates();
-    const value = computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone());
+    const value = computeCurrentValue(
+      asset,
+      marketPrices,
+      fxRates,
+      todayInTimeZone(),
+    );
 
     await this.assetsRepository.insertAssetValueHistory({
       id: this.assetsRepository.createId('valuation'),

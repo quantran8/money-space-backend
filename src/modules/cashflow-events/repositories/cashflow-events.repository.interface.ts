@@ -57,4 +57,10 @@ export interface CashflowEventsRepository {
     fromDate: string,
     newAmount: number,
   ): Promise<void>;
+  /** Soft-delete still-open debt reminders, optionally from a date onward. */
+  deleteOpenCashflowEventsByDebt(
+    householdId: string,
+    debtId: string,
+    fromDate?: string,
+  ): Promise<void>;
 }

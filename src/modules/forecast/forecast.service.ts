@@ -4,7 +4,11 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
-import { addDaysIso, todayInTimeZone, type IsoDate } from '../../common/utils/clock';
+import {
+  addDaysIso,
+  todayInTimeZone,
+  type IsoDate,
+} from '../../common/utils/clock';
 import { runForecast } from './domain/forecast';
 import { computeFlexibleMoney } from './domain/flexible-money';
 import { deriveFinancialState } from './domain/financial-state';
@@ -104,9 +108,13 @@ export class ForecastService {
     horizonDays: number,
     asOfDate?: IsoDate,
   ): Promise<ForecastInput> {
-    await this.forecastRepository.assertHousehold(householdId);
-    const bundle =
-      await this.forecastRepository.loadForecastBundle(householdId);
+    // The guard and the bundle are independent — running them serially added a
+    // round-trip in front of every forecast, flexible-money and financial-state
+    // call. `Promise.all` still rejects if the household check fails.
+    const [, bundle] = await Promise.all([
+      this.forecastRepository.assertHousehold(householdId),
+      this.forecastRepository.loadForecastBundle(householdId),
+    ]);
     return {
       householdId,
       asOfDate: asOfDate ?? todayInTimeZone(),
@@ -120,7 +128,9 @@ export class ForecastService {
     horizonDays: number,
     asOfDate?: IsoDate,
   ): Promise<ForecastResult> {
-    return runForecast(await this.loadInput(householdId, horizonDays, asOfDate));
+    return runForecast(
+      await this.loadInput(householdId, horizonDays, asOfDate),
+    );
   }
 
   async flexibleMoney(
@@ -280,7 +290,11 @@ export class ForecastService {
   }
 
   /** The projection for one goal (§26C). */
-  async goalProjection(householdId: string, goalId: string, asOfDate?: IsoDate) {
+  async goalProjection(
+    householdId: string,
+    goalId: string,
+    asOfDate?: IsoDate,
+  ) {
     const goal = await this.goalsRepository.findFinancialGoalById(
       householdId,
       goalId,

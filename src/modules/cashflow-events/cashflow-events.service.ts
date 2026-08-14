@@ -197,7 +197,9 @@ export class CashflowEventsService {
       ...event,
       status: advancedTo === null || seriesFinished ? 'completed' : 'expected',
       expectedDate:
-        advancedTo !== null && !seriesFinished ? advancedTo : event.expectedDate,
+        advancedTo !== null && !seriesFinished
+          ? advancedTo
+          : event.expectedDate,
       lastCompletedAt: new Date().toISOString(),
       lastCompletedAmount: amount,
       lastCompletedAssetId: payload.assetId ?? null,
@@ -236,7 +238,8 @@ export class CashflowEventsService {
     return {
       event: next,
       moneyEvent,
-      advancedTo: next.expectedDate === event.expectedDate ? null : next.expectedDate,
+      advancedTo:
+        next.expectedDate === event.expectedDate ? null : next.expectedDate,
     };
   }
 
@@ -294,6 +297,18 @@ export class CashflowEventsService {
       debtId,
       fromDate,
       newAmount,
+    );
+  }
+
+  async deleteOpenCashflowEventsByDebt(
+    householdId: string,
+    debtId: string,
+    fromDate?: string,
+  ) {
+    await this.cashflowEventsRepository.deleteOpenCashflowEventsByDebt(
+      householdId,
+      debtId,
+      fromDate,
     );
   }
 

@@ -765,6 +765,7 @@ model Debt {
   outstandingAmount    Decimal                  @default(0) @map("outstanding_amount") @db.Decimal(14, 2)
   currency             String                   @default("VND")
   borrowedAt           DateTime?                @map("borrowed_at") @db.Date
+  firstPaymentDate     DateTime?                @map("first_payment_date") @db.Date
   expectedFinalDueDate DateTime?                @map("expected_final_due_date") @db.Date
   status               DebtStatus               @default(active)
   ownerMemberId        String?                  @map("owner_member_id") @db.Uuid
