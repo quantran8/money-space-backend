@@ -168,7 +168,6 @@ export function mapMember(
     name,
     email,
     initials: makeInitials(name || email),
-    role: row.role,
     joinedAt: row.joinedAt ?? row.joined_at,
     lastActive: row.updatedAt ?? row.updated_at,
     status: (row.status as 'active' | 'invited') ?? 'active',

@@ -87,7 +87,6 @@ export class PrismaHouseholdsRepository
           id: uuidv7(),
           householdId,
           userId: input.ownerId,
-          role: 'owner',
           joinedAt: now,
         } as any,
       });
@@ -101,7 +100,6 @@ export class PrismaHouseholdsRepository
             inviteeEmail: input.inviteEmail,
             token: randomUUID(),
             status: 'pending',
-            defaultRole: 'partner',
             expiresAt: new Date(now.getTime() + INVITE_TTL_MS),
           } as any,
         });

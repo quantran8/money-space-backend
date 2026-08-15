@@ -92,7 +92,6 @@ export class PrismaMembersRepository
           id: member.id,
           householdId: member.householdId,
           userId: member.profileId,
-          role: member.role,
           status: member.status ?? 'active',
           joinedAt: new Date(member.joinedAt),
         } as any,
@@ -116,7 +115,6 @@ export class PrismaMembersRepository
       await tx.householdMember.update({
         where: { id: memberId },
         data: {
-          role: member.role,
           status: member.status ?? undefined,
           joinedAt: new Date(member.joinedAt),
         } as any,

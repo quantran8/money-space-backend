@@ -8,7 +8,6 @@ import type { CalculationTerm } from '../../modules/assets/entities/calculation-
 import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.entity';
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
-import type { HouseholdRole } from '../../modules/members/entities/member.entity';
 
 /**
  * How much of a record the shared picture shows.

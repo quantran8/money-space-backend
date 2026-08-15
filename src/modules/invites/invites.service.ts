@@ -84,7 +84,6 @@ export class InvitesService {
       inviteePhone: phone || null,
       token: this.invitesRepository.createToken(),
       status: 'pending',
-      defaultRole: payload.defaultRole ?? 'partner',
       expiresAt: new Date(Date.now() + expiresInDays * DAY_MS).toISOString(),
       acceptedById: null,
       acceptedAt: null,
@@ -127,7 +126,6 @@ export class InvitesService {
     return {
       householdName: context.householdName,
       invitedByName: context.invitedByName,
-      defaultRole: invite.defaultRole,
       // Report `expired` rather than the stored `pending`: the row is only
       // updated lazily, so the timestamp is the truth, not the column.
       status:
@@ -163,7 +161,6 @@ export class InvitesService {
     return {
       householdId: result.householdId,
       memberId: result.memberId,
-      role: invite.defaultRole,
       alreadyMember: result.alreadyMember,
     };
   }

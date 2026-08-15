@@ -17,7 +17,6 @@ function invite(over: Partial<HouseholdInvite> = {}): HouseholdInvite {
     inviteePhone: null,
     token: 'tok-1',
     status: 'pending',
-    defaultRole: 'partner',
     expiresAt: new Date(Date.now() + 7 * DAY_MS).toISOString(),
     acceptedById: null,
     acceptedAt: null,
@@ -77,7 +76,6 @@ describe('InvitesService.previewInvite', () => {
 
     expect(Object.keys(preview).sort()).toEqual([
       'acceptable',
-      'defaultRole',
       'expiresAt',
       'householdName',
       'invitedByName',
@@ -111,7 +109,7 @@ describe('InvitesService.previewInvite', () => {
 });
 
 describe('InvitesService.acceptInvite', () => {
-  it('joins the household with the invited role', async () => {
+  it('joins the household as an equal member', async () => {
     const { service, invitesRepository } = setup();
 
     const result = await service.acceptInvite('tok-1', USER);
@@ -119,7 +117,6 @@ describe('InvitesService.acceptInvite', () => {
     expect(result).toEqual({
       householdId: 'hh-1',
       memberId: 'mem-1',
-      role: 'partner',
       alreadyMember: false,
     });
     expect(invitesRepository.acceptInvite).toHaveBeenCalledWith(
@@ -158,13 +155,12 @@ describe('InvitesService.acceptInvite', () => {
 });
 
 describe('InvitesService.createInvite', () => {
-  it('mints a token and defaults to a 14-day partner invite', async () => {
+  it('mints a token that expires in 14 days', async () => {
     const { service } = setup();
 
     const created = await service.createInvite('hh-1', {}, USER);
 
     expect(created.token).toBe('tok-new');
-    expect(created.defaultRole).toBe('partner');
     const days = Math.round(
       (new Date(created.expiresAt).getTime() - Date.now()) / DAY_MS,
     );

@@ -101,7 +101,6 @@ export class PrismaInvitesRepository
         ${invite.inviteePhone},
         ${invite.token},
         ${invite.status}::"InviteStatus",
-        ${invite.defaultRole}::"HouseholdRole",
         ${new Date(invite.expiresAt)}::timestamptz,
         now()
       FROM households h
@@ -178,9 +177,7 @@ export class PrismaInvitesRepository
           id: memberId,
           householdId: invite.householdId,
           userId: user.id,
-          role: invite.defaultRole,
-          // NULL is meaningful: it derives permission from the role, so a later
-          // change to the role's default reaches this member too.
+          // No role and no permission: whoever joins is an equal member.
           invitedById: invite.invitedById,
           joinedAt: new Date(),
         } as never,
@@ -206,7 +203,7 @@ export class PrismaInvitesRepository
           action: 'household.member_joined',
           entityType: 'household_member',
           entityId: memberId,
-          metadata: { inviteId: invite.id, role: invite.defaultRole },
+          metadata: { inviteId: invite.id },
         } as never,
       });
 
@@ -227,7 +224,6 @@ export class PrismaInvitesRepository
       inviteePhone: row.inviteePhone ?? null,
       token: row.token,
       status: row.status,
-      defaultRole: row.defaultRole,
       expiresAt: new Date(row.expiresAt).toISOString(),
       acceptedById: row.acceptedById ?? null,
       acceptedAt: row.acceptedAt

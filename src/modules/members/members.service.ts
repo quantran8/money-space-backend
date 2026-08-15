@@ -47,7 +47,6 @@ export class MembersService {
       email: payload.email.trim(),
       initials:
         payload.initials?.trim() || makeInitials(payload.name || payload.email),
-      role: payload.role,
       joinedAt: payload.joinedAt ?? new Date().toISOString(),
       lastActive: payload.lastActive ?? 'Vừa mời',
       status: payload.status ?? 'invited',
@@ -63,7 +62,6 @@ export class MembersService {
     payload: UpdateMemberDto,
   ) {
     const member = await this.ensureMember(householdId, memberId);
-    const nextRole = payload.role ?? member.role;
     const next: HouseholdMember = {
       ...member,
       ...payload,
@@ -76,7 +74,6 @@ export class MembersService {
         payload.initials?.trim() ||
         member.initials ||
         makeInitials(payload.name ?? payload.email ?? member.email),
-      role: nextRole,
     };
 
     await this.membersRepository.updateMember(memberId, next);
