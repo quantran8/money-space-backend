@@ -10,7 +10,6 @@ import {
 import { AssetsService } from './assets.service';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 @Controller('api/households/:householdId/assets')
 export class AssetsController {
@@ -46,7 +45,6 @@ export class AssetsController {
    * Declared BEFORE `:assetId` routes would matter for GETs; kept adjacent to
    * `data-freshness` because the two are one interaction in the UI.
    */
-  @RequireCapability('edit')
   @Post('confirm-unchanged')
   confirmAssetsUnchanged(
     @Param('householdId') householdId: string,
@@ -79,13 +77,11 @@ export class AssetsController {
     return this.assetsService.getAssetValueHistory(householdId, assetId);
   }
 
-  @RequireCapability('edit')
   @Post('refresh-valuations')
   refreshMarketValuations(@Param('householdId') householdId: string) {
     return this.assetsService.refreshMarketValuations(householdId);
   }
 
-  @RequireCapability('edit')
   @Post()
   createAsset(
     @Param('householdId') householdId: string,
@@ -94,7 +90,6 @@ export class AssetsController {
     return this.assetsService.createAsset(householdId, payload);
   }
 
-  @RequireCapability('edit')
   @Patch(':assetId')
   updateAsset(
     @Param('householdId') householdId: string,
@@ -104,7 +99,6 @@ export class AssetsController {
     return this.assetsService.updateAsset(householdId, assetId, payload);
   }
 
-  @RequireCapability('edit')
   @Delete(':assetId')
   deleteAsset(
     @Param('householdId') householdId: string,

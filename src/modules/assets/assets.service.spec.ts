@@ -77,11 +77,7 @@ describe('AssetsService', () => {
     const marketData = {
       getMarketPrices: jest.fn().mockResolvedValue([]),
     } as unknown as MarketDataService;
-    const service = new AssetsService(
-      repository,
-      prisma,
-      marketData,
-    );
+    const service = new AssetsService(repository, prisma, marketData);
 
     await service.createAsset('household-1', {
       name: 'BTC mua thêm',

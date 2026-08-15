@@ -19,10 +19,7 @@ import type { IsoDate } from '../../../common/utils/clock';
 import type { ForecastCashflowEvent, ForecastResult } from './forecast.types';
 
 export type WhatIfResultType =
-  | 'comfortable'
-  | 'watch'
-  | 'tight'
-  | 'not_covered';
+  'comfortable' | 'watch' | 'tight' | 'not_covered';
 
 /**
  * The spend, as the forecast sees it.

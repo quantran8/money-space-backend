@@ -52,13 +52,10 @@ describe('ForecastService.parseHorizon', () => {
     expect(service.parseHorizon(String(days))).toBe(days);
   });
 
-  it.each([['45'], ['0'], ['-1'], ['abc'], ['365']])(
-    'rejects %s',
-    (value) => {
-      const { service } = setup();
-      expect(() => service.parseHorizon(value)).toThrow(BadRequestException);
-    },
-  );
+  it.each([['45'], ['0'], ['-1'], ['abc'], ['365']])('rejects %s', (value) => {
+    const { service } = setup();
+    expect(() => service.parseHorizon(value)).toThrow(BadRequestException);
+  });
 });
 
 describe('ForecastService.whatIf', () => {
@@ -156,13 +153,16 @@ describe('ForecastService.whatIf', () => {
   });
 
   it('reports the time cost against a goal', async () => {
-    const { service } = setup({}, {
-      id: 'g1',
-      targetAmount: 1000 * M,
-      currentAmount: 600 * M,
-      plannedMonthlyContribution: 10 * M,
-      targetDate: 'No deadline',
-    });
+    const { service } = setup(
+      {},
+      {
+        id: 'g1',
+        targetAmount: 1000 * M,
+        currentAmount: 600 * M,
+        plannedMonthlyContribution: 10 * M,
+        targetDate: 'No deadline',
+      },
+    );
 
     const result = await service.whatIf('hh-1', { ...spend, goalId: 'g1' });
 
@@ -174,13 +174,16 @@ describe('ForecastService.whatIf', () => {
   });
 
   it('cannot express a time cost when the goal has no declared pace', async () => {
-    const { service } = setup({}, {
-      id: 'g1',
-      targetAmount: 1000 * M,
-      currentAmount: 600 * M,
-      plannedMonthlyContribution: null,
-      targetDate: 'No deadline',
-    });
+    const { service } = setup(
+      {},
+      {
+        id: 'g1',
+        targetAmount: 1000 * M,
+        currentAmount: 600 * M,
+        plannedMonthlyContribution: null,
+        targetDate: 'No deadline',
+      },
+    );
 
     const result = await service.whatIf('hh-1', { ...spend, goalId: 'g1' });
 

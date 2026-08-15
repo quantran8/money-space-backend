@@ -34,10 +34,7 @@ export class InviteTokensController {
   }
 
   @Post(':token/accept')
-  acceptInvite(
-    @Param('token') token: string,
-    @CurrentUser() user?: AuthUser,
-  ) {
+  acceptInvite(@Param('token') token: string, @CurrentUser() user?: AuthUser) {
     return this.invites.acceptInvite(token, user);
   }
 }

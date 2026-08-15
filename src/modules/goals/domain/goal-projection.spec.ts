@@ -46,15 +46,18 @@ describe('projectGoal — the divide-by-zero guard (§20)', () => {
     ['null', null],
     ['zero', 0],
     ['negative', -5 * M],
-  ])('returns no projected date when the contribution is %s', (_label, value) => {
-    const p = projectGoal(goal({ plannedMonthlyContribution: value }));
+  ])(
+    'returns no projected date when the contribution is %s',
+    (_label, value) => {
+      const p = projectGoal(goal({ plannedMonthlyContribution: value }));
 
-    expect(p.projectedCompletionDate).toBeNull();
-    expect(p.estimatedMonthsToGoal).toBeNull();
-    expect(p.reason).toBe('no_contribution');
-    // Progress is still shown — the user isn't left with nothing.
-    expect(p.progressPercent).toBe(60);
-  });
+      expect(p.projectedCompletionDate).toBeNull();
+      expect(p.estimatedMonthsToGoal).toBeNull();
+      expect(p.reason).toBe('no_contribution');
+      // Progress is still shown — the user isn't left with nothing.
+      expect(p.progressPercent).toBe(60);
+    },
+  );
 
   it('still reports a fully funded goal as complete with no contribution', () => {
     const p = projectGoal(

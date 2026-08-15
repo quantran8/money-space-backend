@@ -119,7 +119,7 @@ describe('AppModule integration', () => {
     // `then` must never be auto-stubbed: it would make the mock a thenable and
     // `await` on anything holding it would hang forever.
     const NEVER_STUB = new Set(['then', 'catch', 'finally']);
-    const autoStubbed = new Proxy(repositoryMock as Record<string, unknown>, {
+    const autoStubbed = new Proxy(repositoryMock, {
       get(target, prop) {
         if (typeof prop !== 'string' || NEVER_STUB.has(prop)) {
           return target[prop as string];

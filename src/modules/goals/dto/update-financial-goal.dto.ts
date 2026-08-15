@@ -6,5 +6,6 @@ import type { CreateFinancialGoalDto } from './create-financial-goal.dto';
  * column inside the same transaction. Allowing a direct edit here would let the
  * stored total silently diverge from the contribution history.
  */
-export interface UpdateFinancialGoalDto
-  extends Partial<Omit<CreateFinancialGoalDto, 'currentAmount'>> {}
+export interface UpdateFinancialGoalDto extends Partial<
+  Omit<CreateFinancialGoalDto, 'currentAmount'>
+> {}

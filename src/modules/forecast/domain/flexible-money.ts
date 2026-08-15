@@ -15,10 +15,7 @@
  */
 
 import type { IsoDate } from '../../../common/utils/clock';
-import type {
-  CalculationAssumption,
-  ForecastResult,
-} from './forecast.types';
+import type { CalculationAssumption, ForecastResult } from './forecast.types';
 
 export interface FlexibleMoneyResult {
   asOfDate: IsoDate;

@@ -33,6 +33,43 @@ export class HouseholdsService {
     };
   }
 
+  /**
+   * Delete the shared space. Irreversible from the app's point of view, which
+   * is exactly why it is one of the three creator-only operations.
+   */
+  async deleteHousehold(householdId: string, user: AuthUser) {
+    await this.householdsRepository.deleteHousehold(householdId, user.id);
+    return { deleted: true, householdId };
+  }
+
+  /**
+   * Hand the lifecycle safeguard to another member.
+   *
+   * Not a permission grant — there is only ever one steward, and the transfer
+   * moves it rather than widening it. It exists so that a creator who leaves
+   * cannot strand the household with nobody able to invite or remove anyone.
+   */
+  async transferSteward(
+    householdId: string,
+    payload: { toUserId?: string },
+    user: AuthUser,
+  ) {
+    const toUserId = payload.toUserId?.trim();
+    if (!toUserId) {
+      throw new BadRequestException('toUserId is required');
+    }
+    if (toUserId === user.id) {
+      throw new BadRequestException('You already hold this');
+    }
+
+    const household = await this.householdsRepository.transferSteward(
+      householdId,
+      toUserId,
+      user.id,
+    );
+    return household;
+  }
+
   async createHousehold(user: AuthUser, payload: CreateHouseholdDto) {
     const name = payload.name?.trim();
     if (!name) {

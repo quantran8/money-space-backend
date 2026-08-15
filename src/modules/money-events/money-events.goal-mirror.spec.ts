@@ -40,7 +40,7 @@ describe('MoneyEventsService — goal contribution mirror', () => {
       repository,
       {} as never,
       {} as never,
-      {} as never,
+      {},
     );
     return { service, adjustGoalCurrentAmount };
   }

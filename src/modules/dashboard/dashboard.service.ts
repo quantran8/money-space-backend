@@ -55,7 +55,12 @@ export class DashboardService {
     ]);
     const assets = householdAssets.map((asset) => ({
       ...asset,
-      currentValue: computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone()),
+      currentValue: computeCurrentValue(
+        asset,
+        marketPrices,
+        fxRates,
+        todayInTimeZone(),
+      ),
     }));
 
     // Live "current net worth" is computed on the fly (never read from the
@@ -122,5 +127,4 @@ export class DashboardService {
       })),
     };
   }
-
 }

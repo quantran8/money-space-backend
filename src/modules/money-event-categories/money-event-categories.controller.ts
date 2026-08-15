@@ -12,7 +12,6 @@ import { MoneyEventCategoriesService } from './money-event-categories.service';
 import type { CreateMoneyEventCategoryDto } from './dto/create-money-event-category.dto';
 import type { UpdateMoneyEventCategoryDto } from './dto/update-money-event-category.dto';
 import type { SetDefaultCategoryDto } from './dto/set-default-category.dto';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 @Controller('api/households/:householdId/money-event-categories')
 export class MoneyEventCategoriesController {
@@ -23,7 +22,6 @@ export class MoneyEventCategoriesController {
     return this.service.listCategories(householdId);
   }
 
-  @RequireCapability('edit')
   @Post()
   createCategory(
     @Param('householdId') householdId: string,
@@ -38,7 +36,6 @@ export class MoneyEventCategoriesController {
    * pointer, not a row flag). Declared before `:categoryId` so the fixed
    * "default" segment isn't captured as a category id.
    */
-  @RequireCapability('edit')
   @Put('default')
   setDefaultCategory(
     @Param('householdId') householdId: string,
@@ -47,7 +44,6 @@ export class MoneyEventCategoriesController {
     return this.service.setDefaultCategory(householdId, payload.code ?? null);
   }
 
-  @RequireCapability('edit')
   @Patch(':categoryId')
   updateCategory(
     @Param('householdId') householdId: string,
@@ -57,7 +53,6 @@ export class MoneyEventCategoriesController {
     return this.service.updateCategory(householdId, categoryId, payload);
   }
 
-  @RequireCapability('edit')
   @Delete(':categoryId')
   deleteCategory(
     @Param('householdId') householdId: string,

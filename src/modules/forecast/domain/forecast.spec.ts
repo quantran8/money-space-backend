@@ -20,7 +20,9 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
   };
 }
 
-function event(over: Partial<ForecastCashflowEvent> = {}): ForecastCashflowEvent {
+function event(
+  over: Partial<ForecastCashflowEvent> = {},
+): ForecastCashflowEvent {
   return {
     id: 'cf-1',
     name: 'Event',
@@ -116,7 +118,10 @@ describe('runForecast — starting balance', () => {
   });
 
   it.each([
-    ['personal_private nature', { financialNature: 'personal_private' as const }],
+    [
+      'personal_private nature',
+      { financialNature: 'personal_private' as const },
+    ],
     ['private visibility', { visibilityLevel: 'private' as const }],
   ])('excludes an asset with %s', (_label, patch) => {
     const result = runForecast(
@@ -250,7 +255,9 @@ describe('runForecast — status handling', () => {
 
   it('shows a postponed event but does not let it move the balance', () => {
     const result = runForecast(
-      input({ cashflowEvents: [event({ status: 'postponed', amount: 5 * M })] }),
+      input({
+        cashflowEvents: [event({ status: 'postponed', amount: 5 * M })],
+      }),
     );
 
     expect(result.timeline).toHaveLength(1);
@@ -359,9 +366,7 @@ describe('runForecast — reserve and assumptions', () => {
         protectedReserves: [
           { id: 'r1', name: 'Quy an toan', amount: 40 * M, status: 'active' },
         ],
-        cashflowEvents: [
-          event({ amount: 20 * M, expectedDate: '2026-08-20' }),
-        ],
+        cashflowEvents: [event({ amount: 20 * M, expectedDate: '2026-08-20' })],
       }),
     );
 
@@ -420,8 +425,16 @@ describe('runForecast — reserve and assumptions', () => {
     const result = runForecast(
       input({
         assets: [
-          asset({ assetId: 'fresh', value: 5 * M, valueUpdatedAt: '2026-08-10' }),
-          asset({ assetId: 'stale', value: 5 * M, valueUpdatedAt: '2026-01-01' }),
+          asset({
+            assetId: 'fresh',
+            value: 5 * M,
+            valueUpdatedAt: '2026-08-10',
+          }),
+          asset({
+            assetId: 'stale',
+            value: 5 * M,
+            valueUpdatedAt: '2026-01-01',
+          }),
         ],
       }),
     );
@@ -470,7 +483,11 @@ describe('runForecast — recurrence', () => {
         horizonDays: 60,
         assets: [asset({ value: 100 * M })],
         cashflowEvents: [
-          event({ amount: 10 * M, expectedDate: '2026-08-15', recurrence: 'monthly' }),
+          event({
+            amount: 10 * M,
+            expectedDate: '2026-08-15',
+            recurrence: 'monthly',
+          }),
         ],
       }),
     );
@@ -488,14 +505,20 @@ describe('runForecast — recurrence', () => {
     const result = runForecast(
       input({
         cashflowEvents: [
-          event({ recurrence: 'weekly', amount: 1 * M, expectedDate: '2026-08-15' }),
+          event({
+            recurrence: 'weekly',
+            amount: 1 * M,
+            expectedDate: '2026-08-15',
+          }),
         ],
       }),
     );
 
-    expect(result.timeline.filter((o) => o.isVirtual).length).toBeGreaterThan(0);
-    expect(result.timeline.every((o) => typeof o.occurrenceKey === 'string')).toBe(
-      true,
+    expect(result.timeline.filter((o) => o.isVirtual).length).toBeGreaterThan(
+      0,
     );
+    expect(
+      result.timeline.every((o) => typeof o.occurrenceKey === 'string'),
+    ).toBe(true);
   });
 });

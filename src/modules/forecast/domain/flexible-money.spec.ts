@@ -21,7 +21,9 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
   };
 }
 
-function event(over: Partial<ForecastCashflowEvent> = {}): ForecastCashflowEvent {
+function event(
+  over: Partial<ForecastCashflowEvent> = {},
+): ForecastCashflowEvent {
   return {
     id: 'cf',
     name: 'Event',
@@ -156,9 +158,7 @@ describe('computeFlexibleMoney — the horizon form', () => {
       protectedReserves: [
         { id: 'r', name: 'Quy an toan', amount: 10 * M, status: 'active' },
       ],
-      cashflowEvents: [
-        event({ amount: 30 * M, expectedDate: '2026-08-20' }),
-      ],
+      cashflowEvents: [event({ amount: 30 * M, expectedDate: '2026-08-20' })],
     });
 
     expect(result.lowestProjectedBalance).toBe(20 * M);

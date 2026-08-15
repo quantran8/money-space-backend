@@ -42,12 +42,14 @@ function forecastInput(over: Partial<ForecastInput> = {}): ForecastInput {
   };
 }
 
-function setup(options: {
-  stored?: StoredAttentionItem[];
-  dismissals?: DismissalTombstone[];
-  input?: Partial<ForecastInput>;
-  updateFrequency?: 'weekly' | 'monthly' | 'manual';
-} = {}) {
+function setup(
+  options: {
+    stored?: StoredAttentionItem[];
+    dismissals?: DismissalTombstone[];
+    input?: Partial<ForecastInput>;
+    updateFrequency?: 'weekly' | 'monthly' | 'manual';
+  } = {},
+) {
   const insertItem = jest.fn(async () => undefined);
   const attentionRepository = {
     assertHousehold: jest.fn(async () => ({
@@ -73,12 +75,14 @@ function setup(options: {
 
   return {
     service: new AttentionService(attentionRepository, forecast),
-    attentionRepository: attentionRepository as never as Record<string, jest.Mock>,
+    attentionRepository: attentionRepository as Record<string, jest.Mock>,
     insertItem,
   };
 }
 
-function storedItem(over: Partial<StoredAttentionItem> = {}): StoredAttentionItem {
+function storedItem(
+  over: Partial<StoredAttentionItem> = {},
+): StoredAttentionItem {
   return {
     id: 'stored-1',
     householdId: 'hh-1',

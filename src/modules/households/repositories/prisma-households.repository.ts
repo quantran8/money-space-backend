@@ -127,6 +127,91 @@ export class PrismaHouseholdsRepository
     return mapHousehold(household);
   }
 
+  /**
+   * Soft-delete the household and every membership in it.
+   *
+   * Memberships go too: `HouseholdAccessGuard` resolves access from a live
+   * membership row, so leaving them behind would keep the household reachable
+   * through every household-scoped route after it was "deleted".
+   *
+   * The audit row is written BEFORE the soft-deletes and deliberately survives
+   * them — `audit_logs` is append-only and never soft-deleted, so the deletion
+   * stays on the record even though what it refers to is gone.
+   */
+  async deleteHousehold(householdId: string, actorId: string): Promise<void> {
+    await this.runInTransaction(async (tx) => {
+      const now = new Date();
+
+      await tx.auditLog.create({
+        data: {
+          id: uuidv7(),
+          householdId,
+          actorId,
+          action: 'household.deleted',
+          entityType: 'household',
+          entityId: householdId,
+          metadata: {},
+        } as never,
+      });
+
+      await tx.householdMember.updateMany({
+        where: { householdId, deletedAt: null },
+        data: { deletedAt: now },
+      });
+
+      await tx.household.update({
+        where: { id: householdId },
+        data: { deletedAt: now },
+      });
+    });
+  }
+
+  /**
+   * Hand the lifecycle safeguard to another member.
+   *
+   * Without this, a creator who stops using the app leaves the household
+   * unable to invite or remove anyone, permanently — the one real hole in
+   * anchoring the safeguard on `created_by`. The target must be a LIVE member,
+   * otherwise the transfer would recreate the same lock-out it exists to
+   * prevent.
+   */
+  async transferSteward(
+    householdId: string,
+    toUserId: string,
+    actorId: string,
+  ): Promise<Household> {
+    return this.runInTransaction(async (tx) => {
+      const member = await tx.householdMember.findFirst({
+        where: { householdId, userId: toUserId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!member) {
+        throw new NotFoundException(
+          'That member is not part of this household',
+        );
+      }
+
+      const updated = await tx.household.update({
+        where: { id: householdId },
+        data: { createdById: toUserId } as never,
+      });
+
+      await tx.auditLog.create({
+        data: {
+          id: uuidv7(),
+          householdId,
+          actorId,
+          action: 'household.steward_transferred',
+          entityType: 'household',
+          entityId: householdId,
+          metadata: { toUserId },
+        } as never,
+      });
+
+      return mapHousehold(updated);
+    });
+  }
+
   async countMembers(householdId?: string): Promise<number> {
     return this.prisma.householdMember.count({
       where: { householdId },

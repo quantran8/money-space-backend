@@ -120,11 +120,17 @@ export class PrismaForecastRepository
         // hardcodes `visibilityLevel: 'detail'`; reusing that here would make
         // the privacy filter silently pass everything.
         financialNature:
-          (row as never as { financialNature: ForecastLiquidSource['financialNature'] })
-            .financialNature ?? 'household',
+          (
+            row as never as {
+              financialNature: ForecastLiquidSource['financialNature'];
+            }
+          ).financialNature ?? 'household',
         visibilityLevel:
-          (row as never as { visibilityLevel: ForecastLiquidSource['visibilityLevel'] })
-            .visibilityLevel ?? 'detail',
+          (
+            row as never as {
+              visibilityLevel: ForecastLiquidSource['visibilityLevel'];
+            }
+          ).visibilityLevel ?? 'detail',
         valueUpdatedAt:
           (row as never as { valueUpdatedAt: Date | null }).valueUpdatedAt
             ?.toISOString()
@@ -157,7 +163,7 @@ export class PrismaForecastRepository
         id: row.id,
         name: row.name,
         amount: numberFromDb(row.amount),
-        status: row.status as ForecastProtectedReserve['status'],
+        status: row.status,
       }),
     );
 

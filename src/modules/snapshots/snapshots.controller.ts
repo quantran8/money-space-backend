@@ -2,7 +2,6 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { SnapshotsService } from './snapshots.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 /**
  * Snapshots are append-only: created deliberately here, never updated. There is
@@ -26,7 +25,6 @@ export class SnapshotsController {
     return this.snapshotsService.getSnapshot(householdId, snapshotId);
   }
 
-  @RequireCapability('edit')
   @Post()
   create(
     @Param('householdId') householdId: string,

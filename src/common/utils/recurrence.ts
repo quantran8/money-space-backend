@@ -17,11 +17,7 @@
 import { addDaysIso, addMonthsIso, type IsoDate } from './clock';
 
 export type RecurrenceFrequency =
-  | 'once'
-  | 'weekly'
-  | 'monthly'
-  | 'quarterly'
-  | 'yearly';
+  'once' | 'weekly' | 'monthly' | 'quarterly' | 'yearly';
 
 /**
  * Runaway guard. A corrupt row (`weekly`, `expectedDate` in 1970) must not spin
@@ -122,7 +118,12 @@ export function expandOccurrences(
     // was never completed — handled by the clamp below, not dropped here.
     if (recurrence !== 'once' && expectedDate < asOfDate) {
       return [
-        { index: 0, date: asOfDate, isVirtual: false, wasClampedFromPast: true },
+        {
+          index: 0,
+          date: asOfDate,
+          isVirtual: false,
+          wasClampedFromPast: true,
+        },
       ];
     }
   }

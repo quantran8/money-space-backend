@@ -18,11 +18,7 @@ describe('AssetsService.refreshMarketValuationsIfStale', () => {
     const marketData = {
       getMarketPrices: jest.fn().mockResolvedValue([]),
     } as unknown as MarketDataService;
-    const service = new AssetsService(
-      repository,
-      prisma,
-      marketData,
-    );
+    const service = new AssetsService(repository, prisma, marketData);
     return { service, repository, marketData };
   }
 

@@ -57,40 +57,39 @@ function setup(
   const forecast = {
     parseHorizon: jest.fn((raw?: number) => raw ?? 30),
     loadInput: jest.fn(
-      async (householdId: string, horizonDays: number, asOfDate?: string) =>
-        ({
-          householdId,
-          asOfDate: asOfDate ?? '2026-08-13',
-          horizonDays,
-          assets: [
-            {
-              assetId: 'a1',
-              name: 'VCB',
-              value: 20 * M,
-              liquidity: 'usable_now',
-              financialNature: 'household',
-              visibilityLevel: 'detail',
-              valueUpdatedAt: asOfDate ?? '2026-08-13',
-            },
-          ],
-          cashflowEvents: [
-            {
-              id: 'e1',
-              name: 'Rent',
-              direction: 'outgoing',
-              amount: 25 * M,
-              expectedDate: '2026-08-15',
-              recurrence: 'once',
-              recurrenceEndDate: null,
-              requirement: 'required',
-              certainty: 'confirmed',
-              status: 'expected',
-              visibilityLevel: 'detail',
-            },
-          ],
-          protectedReserves: [],
-          ...options.input,
-        }) as ForecastInput,
+      async (householdId: string, horizonDays: number, asOfDate?: string) => ({
+        householdId,
+        asOfDate: asOfDate ?? '2026-08-13',
+        horizonDays,
+        assets: [
+          {
+            assetId: 'a1',
+            name: 'VCB',
+            value: 20 * M,
+            liquidity: 'usable_now',
+            financialNature: 'household',
+            visibilityLevel: 'detail',
+            valueUpdatedAt: asOfDate ?? '2026-08-13',
+          },
+        ],
+        cashflowEvents: [
+          {
+            id: 'e1',
+            name: 'Rent',
+            direction: 'outgoing',
+            amount: 25 * M,
+            expectedDate: '2026-08-15',
+            recurrence: 'once',
+            recurrenceEndDate: null,
+            requirement: 'required',
+            certainty: 'confirmed',
+            status: 'expected',
+            visibilityLevel: 'detail',
+          },
+        ],
+        protectedReserves: [],
+        ...options.input,
+      }),
     ),
   } as never;
 
@@ -100,8 +99,8 @@ function setup(
 
   return {
     service: new SnapshotsService(snapshotsRepository, forecast, attention),
-    snapshotsRepository: snapshotsRepository as never as Record<string, jest.Mock>,
-    attention: attention as never as Record<string, jest.Mock>,
+    snapshotsRepository: snapshotsRepository as Record<string, jest.Mock>,
+    attention: attention as Record<string, jest.Mock>,
     created,
   };
 }
@@ -199,8 +198,8 @@ describe('SnapshotsService.createSnapshot', () => {
 
     await service.createSnapshot('hh-1');
 
-    const writeMethods = Object.keys(snapshotsRepository).filter(
-      (name) => /update|delete|upsert|recompute/i.test(name),
+    const writeMethods = Object.keys(snapshotsRepository).filter((name) =>
+      /update|delete|upsert|recompute/i.test(name),
     );
     expect(writeMethods).toEqual([]);
     expect(snapshotsRepository.createSnapshot).toHaveBeenCalledTimes(1);

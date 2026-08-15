@@ -13,7 +13,11 @@
  * there is no `forecasts` table and there must not be one.
  */
 
-import { addDaysIso, daysBetweenIso, type IsoDate } from '../../../common/utils/clock';
+import {
+  addDaysIso,
+  daysBetweenIso,
+  type IsoDate,
+} from '../../../common/utils/clock';
 import { expandOccurrences } from '../../../common/utils/recurrence';
 import { isIncludedInSharedCalculation } from '../../../common/utils/shared-calculation';
 import type {
@@ -222,7 +226,10 @@ export function runForecast(input: ForecastInput): ForecastResult {
       if (occurrence.countedInBalance) {
         requiredOnlyBalance += occurrence.amount;
       }
-    } else if (occurrence.requirement === 'required' && occurrence.countedInBalance) {
+    } else if (
+      occurrence.requirement === 'required' &&
+      occurrence.countedInBalance
+    ) {
       requiredOnlyBalance -= occurrence.amount;
     }
     if (requiredOnlyBalance < 0) {

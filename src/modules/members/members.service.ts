@@ -91,9 +91,22 @@ export class MembersService {
   }
 
   async deleteMember(householdId: string, memberId: string) {
-    const member = await this.ensureMember(householdId, memberId);
-    if (member.role === 'owner') {
-      throw new BadRequestException('Owner member cannot be deleted');
+    // Anchored on `households.created_by`, not on a role column.
+    //
+    // This is structural, not cosmetic: the creator is the only member who can
+    // invite, remove, or delete, and the guard resolves that from a LIVE
+    // membership row. Removing the creator's row would therefore lock the
+    // household permanently — nobody could invite anyone, and nobody could
+    // remove the ghost. Refusing here is what makes that unreachable.
+    // Handing the role over is `POST /households/:householdId/transfer-steward`.
+    const [household, member] = await Promise.all([
+      this.membersRepository.assertHousehold(householdId),
+      this.ensureMember(householdId, memberId),
+    ]);
+    if (member.profileId === household.createdBy) {
+      throw new BadRequestException(
+        'The member who created this household cannot be removed. Transfer that first.',
+      );
     }
 
     await this.membersRepository.deleteMember(memberId);

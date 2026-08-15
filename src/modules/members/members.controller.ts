@@ -10,7 +10,7 @@ import {
 import { MembersService } from './members.service';
 import type { CreateMemberDto } from './dto/create-member.dto';
 import type { UpdateMemberDto } from './dto/update-member.dto';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
+import { RequireHouseholdCreator } from '../auth/decorators/require-household-creator.decorator';
 
 @Controller('api/households/:householdId/members')
 export class MembersController {
@@ -29,7 +29,7 @@ export class MembersController {
     return this.membersService.getMember(householdId, memberId);
   }
 
-  @RequireCapability('admin')
+  @RequireHouseholdCreator()
   @Post()
   createMember(
     @Param('householdId') householdId: string,
@@ -38,7 +38,8 @@ export class MembersController {
     return this.membersService.createMember(householdId, payload);
   }
 
-  @RequireCapability('admin')
+  // Ungated: with role and permission gone this only edits a member's name,
+  // email and initials — ordinary content, not a lifecycle change.
   @Patch(':memberId')
   updateMember(
     @Param('householdId') householdId: string,
@@ -48,7 +49,7 @@ export class MembersController {
     return this.membersService.updateMember(householdId, memberId, payload);
   }
 
-  @RequireCapability('admin')
+  @RequireHouseholdCreator()
   @Delete(':memberId')
   deleteMember(
     @Param('householdId') householdId: string,

@@ -29,8 +29,6 @@ export class MoneyEventsService {
     private readonly assetsService: AssetsService,
   ) {}
 
-
-
   async listMoneyEvents(householdId: string, query?: ListMoneyEventsQuery) {
     await this.moneyEventsRepository.assertHousehold(householdId);
 
@@ -416,7 +414,6 @@ export class MoneyEventsService {
       );
       credited += 1;
     }
-
 
     return credited;
   }

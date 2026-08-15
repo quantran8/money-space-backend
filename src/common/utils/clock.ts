@@ -22,7 +22,9 @@ export type IsoDate = string;
 export const DEFAULT_HOUSEHOLD_TZ = 'Asia/Ho_Chi_Minh';
 
 /** Today (`YYYY-MM-DD`) in the given timezone. The only clock read in the engines. */
-export function todayInTimeZone(timeZone: string = DEFAULT_HOUSEHOLD_TZ): IsoDate {
+export function todayInTimeZone(
+  timeZone: string = DEFAULT_HOUSEHOLD_TZ,
+): IsoDate {
   // en-CA formats as YYYY-MM-DD; the timeZone option shifts the day boundary.
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,

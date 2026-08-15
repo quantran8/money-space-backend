@@ -124,10 +124,7 @@ export function projectGoal(input: GoalProjectionInput): GoalProjection {
   // NEVER divide by a null/zero contribution. §20: with no declared
   // contribution, show progress only and invite the user to add one — inventing
   // a pace would fabricate a date.
-  if (
-    plannedMonthlyContribution === null ||
-    plannedMonthlyContribution <= 0
-  ) {
+  if (plannedMonthlyContribution === null || plannedMonthlyContribution <= 0) {
     return {
       ...base,
       monthsUntilTargetDate,

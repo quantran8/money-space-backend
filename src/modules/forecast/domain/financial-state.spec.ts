@@ -25,7 +25,9 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
   };
 }
 
-function event(over: Partial<ForecastCashflowEvent> = {}): ForecastCashflowEvent {
+function event(
+  over: Partial<ForecastCashflowEvent> = {},
+): ForecastCashflowEvent {
   return {
     id: 'cf',
     name: 'Event',
@@ -130,7 +132,9 @@ describe('deriveFinancialState — watch', () => {
 
   it('is watch when critical data is unconfirmed', () => {
     const result = derive({
-      cashflowEvents: [event({ status: 'pending_confirmation', amount: 1 * M })],
+      cashflowEvents: [
+        event({ status: 'pending_confirmation', amount: 1 * M }),
+      ],
     });
 
     expect(result.reasons).toContain('unconfirmed_critical_data');

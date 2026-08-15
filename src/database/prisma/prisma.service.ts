@@ -20,9 +20,7 @@ function sameEndpoint(a: string, b: string): boolean {
   try {
     const left = new URL(a);
     const right = new URL(b);
-    return (
-      left.host === right.host && left.pathname === right.pathname
-    );
+    return left.host === right.host && left.pathname === right.pathname;
   } catch {
     return a === b;
   }

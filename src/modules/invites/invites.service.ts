@@ -7,10 +7,7 @@ import {
 } from '@nestjs/common';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
 import type { CreateInviteDto } from './dto/create-invite.dto';
-import type {
-  HouseholdInvite,
-  InvitePreview,
-} from './entities/invite.entity';
+import type { HouseholdInvite, InvitePreview } from './entities/invite.entity';
 import { INVITES_REPOSITORY } from './repositories/invites.repository.interface';
 import type { InvitesRepository } from './repositories/invites.repository.interface';
 
@@ -134,7 +131,8 @@ export class InvitesService {
       defaultRole: invite.defaultRole,
       // Report `expired` rather than the stored `pending`: the row is only
       // updated lazily, so the timestamp is the truth, not the column.
-      status: expired && invite.status === 'pending' ? 'expired' : invite.status,
+      status:
+        expired && invite.status === 'pending' ? 'expired' : invite.status,
       expiresAt: invite.expiresAt,
       acceptable: invite.status === 'pending' && !expired,
     };

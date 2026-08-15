@@ -13,7 +13,6 @@ import type { CreateCashflowEventDto } from './dto/create-cashflow-event.dto';
 import type { UpdateCashflowEventDto } from './dto/update-cashflow-event.dto';
 import type { CompleteCashflowEventDto } from './dto/complete-cashflow-event.dto';
 import type { ListCashflowEventsQuery } from './dto/list-cashflow-events.query';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 /**
  * Replaces `/upcoming-payments` (spec §18). Not an alias — the payload shape
@@ -40,7 +39,6 @@ export class CashflowEventsController {
     return this.cashflowEvents.getCashflowEvent(householdId, eventId);
   }
 
-  @RequireCapability('edit')
   @Post()
   createCashflowEvent(
     @Param('householdId') householdId: string,
@@ -49,7 +47,6 @@ export class CashflowEventsController {
     return this.cashflowEvents.createCashflowEvent(householdId, payload);
   }
 
-  @RequireCapability('edit')
   @Patch(':eventId')
   updateCashflowEvent(
     @Param('householdId') householdId: string,
@@ -68,7 +65,6 @@ export class CashflowEventsController {
    * this advances `expectedDate` to the next occurrence rather than closing the
    * record — see the service.
    */
-  @RequireCapability('edit')
   @Post(':eventId/complete')
   completeCashflowEvent(
     @Param('householdId') householdId: string,
@@ -82,7 +78,6 @@ export class CashflowEventsController {
     );
   }
 
-  @RequireCapability('edit')
   @Post(':eventId/postpone')
   postponeCashflowEvent(
     @Param('householdId') householdId: string,
@@ -96,7 +91,6 @@ export class CashflowEventsController {
     );
   }
 
-  @RequireCapability('edit')
   @Post(':eventId/cancel')
   cancelCashflowEvent(
     @Param('householdId') householdId: string,
@@ -110,7 +104,6 @@ export class CashflowEventsController {
     );
   }
 
-  @RequireCapability('edit')
   @Delete(':eventId')
   deleteCashflowEvent(
     @Param('householdId') householdId: string,

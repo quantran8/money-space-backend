@@ -66,8 +66,9 @@ export class PrismaAttentionRepository
       select: { ruleCode: true, relatedObjectId: true },
     });
     return rows
-      .filter((row): row is { ruleCode: string; relatedObjectId: string | null } =>
-        Boolean(row.ruleCode),
+      .filter(
+        (row): row is { ruleCode: string; relatedObjectId: string | null } =>
+          Boolean(row.ruleCode),
       )
       .map((row) => ({
         ruleCode: row.ruleCode as DismissalTombstone['ruleCode'],
@@ -115,7 +116,11 @@ export class PrismaAttentionRepository
     await this.prisma.attentionItem.updateMany({
       // Only from `open`: re-seeing an already-resolved item must not reopen it.
       where: { id: itemId, status: 'open' },
-      data: { status: 'seen', seenAt: new Date(), seenById: this.asUuid(userId) },
+      data: {
+        status: 'seen',
+        seenAt: new Date(),
+        seenById: this.asUuid(userId),
+      },
     });
   }
 

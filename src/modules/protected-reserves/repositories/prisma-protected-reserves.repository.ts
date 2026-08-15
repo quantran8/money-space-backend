@@ -94,7 +94,11 @@ export class PrismaProtectedReservesRepository
     reserve: ProtectedReserve,
   ): Promise<void> {
     await this.prisma.protectedReserve.updateMany({
-      where: { id: reserveId, householdId: reserve.householdId, deletedAt: null },
+      where: {
+        id: reserveId,
+        householdId: reserve.householdId,
+        deletedAt: null,
+      },
       data: {
         name: reserve.name,
         amount: reserve.amount,

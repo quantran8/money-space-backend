@@ -27,7 +27,9 @@ export interface InvitesRepository {
   /** The household name + inviter name shown on the pre-accept screen. */
   findInviteContext(
     inviteId: string,
-  ): Promise<{ householdName: string; invitedByName: string | null } | undefined>;
+  ): Promise<
+    { householdName: string; invitedByName: string | null } | undefined
+  >;
   insertInvite(invite: HouseholdInvite): Promise<void>;
   revokeInvite(inviteId: string): Promise<void>;
   /**

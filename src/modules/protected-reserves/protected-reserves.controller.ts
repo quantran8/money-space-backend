@@ -10,7 +10,6 @@ import {
 import { ProtectedReservesService } from './protected-reserves.service';
 import type { CreateProtectedReserveDto } from './dto/create-protected-reserve.dto';
 import type { UpdateProtectedReserveDto } from './dto/update-protected-reserve.dto';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 @Controller('api/households/:householdId/protected-reserves')
 export class ProtectedReservesController {
@@ -29,7 +28,6 @@ export class ProtectedReservesController {
     return this.reserves.getProtectedReserve(householdId, reserveId);
   }
 
-  @RequireCapability('edit')
   @Post()
   createProtectedReserve(
     @Param('householdId') householdId: string,
@@ -38,7 +36,6 @@ export class ProtectedReservesController {
     return this.reserves.createProtectedReserve(householdId, payload);
   }
 
-  @RequireCapability('edit')
   @Patch(':reserveId')
   updateProtectedReserve(
     @Param('householdId') householdId: string,
@@ -52,7 +49,6 @@ export class ProtectedReservesController {
     );
   }
 
-  @RequireCapability('edit')
   @Delete(':reserveId')
   deleteProtectedReserve(
     @Param('householdId') householdId: string,

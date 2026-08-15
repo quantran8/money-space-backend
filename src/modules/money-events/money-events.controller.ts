@@ -12,7 +12,6 @@ import { MoneyEventsService } from './money-events.service';
 import type { CreateMoneyEventDto } from './dto/create-money-event.dto';
 import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 
 @Controller('api/households/:householdId/money-events')
@@ -48,7 +47,6 @@ export class MoneyEventsController {
     return this.moneyEventsService.getMoneyEvent(householdId, eventId);
   }
 
-  @RequireCapability('edit')
   @Post()
   createMoneyEvent(
     @Param('householdId') householdId: string,
@@ -83,7 +81,6 @@ export class MoneyEventsController {
     );
   }
 
-  @RequireCapability('edit')
   @Patch(':eventId')
   updateMoneyEvent(
     @Param('householdId') householdId: string,
@@ -97,7 +94,6 @@ export class MoneyEventsController {
     );
   }
 
-  @RequireCapability('edit')
   @Delete(':eventId')
   deleteMoneyEvent(
     @Param('householdId') householdId: string,

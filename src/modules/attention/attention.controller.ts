@@ -2,7 +2,6 @@ import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { AttentionService } from './attention.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 import type { StoredAttentionItem } from './entities/attention-item.entity';
 
 @Controller('api/households/:householdId/attention-items')
@@ -14,7 +13,6 @@ export class AttentionController {
     return this.attention.listAttentionItems(householdId);
   }
 
-  @RequireCapability('edit')
   @Post()
   flagAttentionItem(
     @Param('householdId') householdId: string,
@@ -45,7 +43,6 @@ export class AttentionController {
     return this.attention.markSeen(householdId, itemId, user?.id);
   }
 
-  @RequireCapability('edit')
   @Post(':itemId/resolve')
   markResolved(
     @Param('householdId') householdId: string,
@@ -55,7 +52,6 @@ export class AttentionController {
     return this.attention.markResolved(householdId, itemId, user?.id);
   }
 
-  @RequireCapability('edit')
   @Post(':itemId/dismiss')
   markDismissed(
     @Param('householdId') householdId: string,
@@ -70,7 +66,6 @@ export class AttentionController {
    * rule code + related object instead of an id. Separate route because a
    * derived id (`derived:…`) is not addressable as a resource.
    */
-  @RequireCapability('edit')
   @Post('dismiss-derived')
   dismissDerived(
     @Param('householdId') householdId: string,

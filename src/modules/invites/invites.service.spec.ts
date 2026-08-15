@@ -61,7 +61,7 @@ function setup(stored: HouseholdInvite | null = invite()) {
 
   return {
     service: new InvitesService(invitesRepository),
-    invitesRepository: invitesRepository as never as Record<string, jest.Mock>,
+    invitesRepository: invitesRepository as Record<string, jest.Mock>,
   };
 }
 

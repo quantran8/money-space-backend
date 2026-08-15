@@ -55,7 +55,6 @@ export class PrismaSnapshotsRepository
     return Number(agg._sum.outstandingAmount ?? 0);
   }
 
-
   async getOpenAttentionCount(householdId: string): Promise<number> {
     return this.prisma.attentionItem.count({
       where: { householdId, status: 'open' },
@@ -238,7 +237,9 @@ export class PrismaSnapshotsRepository
             liquidity: line.liquidity,
             financialNature: line.financialNature,
             holderMemberId: this.asUuid(line.holderMemberId ?? null),
-            privacyOwnerMemberId: this.asUuid(line.privacyOwnerMemberId ?? null),
+            privacyOwnerMemberId: this.asUuid(
+              line.privacyOwnerMemberId ?? null,
+            ),
             value: line.value,
             currency: line.currency,
             valuationId: this.asUuid(line.valuationId ?? null),
@@ -268,10 +269,6 @@ export class PrismaSnapshotsRepository
   }
 
   // --- Snapshot upsert (per-day, granular) -----------------------------------
-
-
-
-
 
   // Snapshots grow one row per day, so cap the list at the most recent window
   // (index-backed on householdId, snapshotDate DESC) rather than returning the
@@ -325,7 +322,8 @@ export class PrismaSnapshotsRepository
     // NULL rather than coerced to 0 — "we didn't record this" and "it was
     // zero" are different facts, and only one of them is honest.
     const lowestProjectedBalance =
-      row.lowestProjectedBalance === null || row.lowestProjectedBalance === undefined
+      row.lowestProjectedBalance === null ||
+      row.lowestProjectedBalance === undefined
         ? null
         : Number(row.lowestProjectedBalance);
     const flexibleMoney =

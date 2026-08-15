@@ -12,7 +12,6 @@ import type { CreateDebtDto } from './dto/create-debt.dto';
 import type { ListDebtsQuery } from './dto/list-debts.query';
 import type { UpdateDebtDto } from './dto/update-debt.dto';
 import { DebtsService } from './debts.service';
-import { RequireCapability } from '../auth/decorators/require-capability.decorator';
 
 @Controller('api/households/:householdId/debts')
 export class DebtsController {
@@ -34,7 +33,6 @@ export class DebtsController {
     return this.debtsService.getDebt(householdId, debtId);
   }
 
-  @RequireCapability('edit')
   @Post()
   createDebt(
     @Param('householdId') householdId: string,
@@ -43,7 +41,6 @@ export class DebtsController {
     return this.debtsService.createDebt(householdId, payload);
   }
 
-  @RequireCapability('edit')
   @Patch(':debtId')
   updateDebt(
     @Param('householdId') householdId: string,
@@ -53,7 +50,6 @@ export class DebtsController {
     return this.debtsService.updateDebt(householdId, debtId, payload);
   }
 
-  @RequireCapability('edit')
   @Delete(':debtId')
   deleteDebt(
     @Param('householdId') householdId: string,

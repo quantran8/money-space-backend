@@ -8,25 +8,18 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../../database/prisma/prisma.service';
-import {
-  effectivePermission,
-  type Capability,
-  hasCapability,
-} from '../../../common/utils/money-space.utils';
-import type {
-  HouseholdRole,
-  PermissionLevel,
-} from '../../members/entities/member.entity';
-import { CAPABILITY_KEY } from '../decorators/require-capability.decorator';
+import { HOUSEHOLD_CREATOR_KEY } from '../decorators/require-household-creator.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import type { AuthenticatedRequest } from './supabase-auth.guard';
 
 export interface HouseholdMembership {
   householdId: string;
   userId: string;
-  role: HouseholdRole;
-  permission: PermissionLevel;
-  isOwner: boolean;
+  /**
+   * Whether this member created the household. The only distinction between
+   * members, and it gates the three lifecycle operations only — never content.
+   */
+  isCreator: boolean;
 }
 
 export interface RequestWithMembership extends AuthenticatedRequest {
@@ -36,11 +29,17 @@ export interface RequestWithMembership extends AuthenticatedRequest {
 
 /**
  * Authorization guard for `/api/households/:householdId/*` routes (app-layer, no
- * RLS). Verifies the authenticated user is a live member of the household, then
- * attaches `req.membership` (role + effective permission). Capability is checked
- * on top of this by `RequireCapabilityGuard` via the `@RequireCapability(...)`
- * decorator; without that decorator, any member may proceed (visibility is
- * still gated per-record at the service layer).
+ * RLS).
+ *
+ * Membership IS the content permission: a live member of the household may read
+ * and write anything in it, including changing any record's sharing level.
+ * There is no role hierarchy and no permission tier between partners — what
+ * makes a change accountable is that it lands in the journal, not that it was
+ * pre-authorized.
+ *
+ * The single exception is `@RequireHouseholdCreator()`, which guards the three
+ * lifecycle operations (delete household, remove member, invite member). See
+ * that decorator for why those three and not others.
  */
 @Injectable()
 export class HouseholdAccessGuard implements CanActivate {
@@ -81,9 +80,11 @@ export class HouseholdAccessGuard implements CanActivate {
         where: { id: householdId, deletedAt: null },
         select: { id: true, createdById: true },
       }),
+      // Existence is the whole question — membership carries no capability of
+      // its own any more, so there is nothing else to select.
       client.householdMember.findFirst({
         where: { householdId, userId: user.id, deletedAt: null },
-        select: { role: true, permissionLevel: true },
+        select: { id: true },
       }),
     ]);
 
@@ -97,24 +98,16 @@ export class HouseholdAccessGuard implements CanActivate {
       throw new ForbiddenException('You are not a member of this household');
     }
 
-    const permission = effectivePermission(member.role, member.permissionLevel);
-    request.membership = {
-      householdId,
-      userId: user.id,
-      role: member.role,
-      permission,
-      isOwner: household.createdById === user.id,
-    };
+    const isCreator = household.createdById === user.id;
+    request.membership = { householdId, userId: user.id, isCreator };
 
-    // If the handler declared a required capability, enforce it here too so a
-    // single guard covers both membership and capability.
-    const required = this.reflector.getAllAndOverride<Capability | undefined>(
-      CAPABILITY_KEY,
+    const creatorOnly = this.reflector.getAllAndOverride<boolean | undefined>(
+      HOUSEHOLD_CREATOR_KEY,
       [context.getHandler(), context.getClass()],
     );
-    if (required && !hasCapability(permission, required)) {
+    if (creatorOnly && !isCreator) {
       throw new ForbiddenException(
-        `This action requires "${required}" permission`,
+        'Only the member who created this household can do that',
       );
     }
 

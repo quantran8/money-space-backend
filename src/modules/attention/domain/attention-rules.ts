@@ -43,8 +43,7 @@ export type StoredAttentionRuleCode =
   | 'amount_over_threshold';
 
 export type AttentionRuleCode =
-  | DerivedAttentionRuleCode
-  | StoredAttentionRuleCode;
+  DerivedAttentionRuleCode | StoredAttentionRuleCode;
 
 export type AttentionLevel = 'normal' | 'important' | 'urgent';
 

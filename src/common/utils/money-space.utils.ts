@@ -511,7 +511,6 @@ export function toMoneyEventCard(event: MoneyEvent) {
   };
 }
 
-
 export function toGoalCard(goal: FinancialGoal) {
   // Raw numeric `currentAmount` / `targetAmount`; the client formats them.
   return {
@@ -526,4 +525,3 @@ export function toGoalCard(goal: FinancialGoal) {
     targetDate: goal.targetDate,
   };
 }
-
