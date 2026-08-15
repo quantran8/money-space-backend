@@ -14,14 +14,6 @@ enum HouseholdRole {
   viewer
 }
 
-enum PermissionLevel {
-  view_summary
-  view_grouped
-  view_detail
-  edit_content
-  admin
-}
-
 enum UpdateFrequency {
   weekly
   monthly
@@ -76,11 +68,16 @@ enum AssetStatus {
   closed
 }
 
+/// How much of a record the shared picture shows.
+///
+/// A presentation level, NOT an access boundary: every member has the same
+/// rights and any of them can switch a record to `detail`, so folding one is a
+/// courtesy about attention rather than concealment. Nothing is ever excluded
+/// from a shared total on account of it — the retired `private` level did
+/// exactly that, and it put the forecast permanently at odds with net worth.
 enum VisibilityLevel {
   summary_only
-  grouped
   detail
-  private
 }
 
 enum AssetClass {
@@ -296,24 +293,13 @@ enum RelatedObjectType {
 
 /// How the couple actually manages money day to day (spec §7).
 /// Personalization and analytics ONLY — it must never influence permissions,
-/// which come from `HouseholdRole` + `PermissionLevel`.
+/// which comes from membership plus `households.created_by`.
 enum FinancialManagementMode {
   one_person_primary
   partner_primary
   split_responsibility
   joint
   unsure
-}
-
-/// Whose money an asset fundamentally is (spec §11). Together with
-/// `VisibilityLevel` this DERIVES whether the record counts toward the shared
-/// household picture — see `common/utils/shared-calculation.ts`. There is
-/// deliberately no `included_in_household_calculation` column.
-enum FinancialNature {
-  household
-  personal_included
-  managed_for_household
-  personal_private
 }
 
 /// Lifecycle of a protected reserve (spec §19C).
@@ -422,35 +408,29 @@ model Household {
 }
 
 model HouseholdMember {
-  id                              String               @id @default(uuid(7)) @db.Uuid
-  householdId                     String               @map("household_id") @db.Uuid
-  userId                          String               @map("user_id") @db.Uuid
-  role                            HouseholdRole        @default(partner)
+  id                      String               @id @default(uuid(7)) @db.Uuid
+  householdId             String               @map("household_id") @db.Uuid
+  userId                  String               @map("user_id") @db.Uuid
+  role                    HouseholdRole        @default(partner)
   // Nullable OVERRIDE: NULL means "derive from role" (owner→admin,
   // partner→edit_content, viewer→view_summary). Only set when a member needs a
   // permission that differs from their role's default. Role is the primary
   // capability axis; this is the escape hatch. Enforcement is app-layer.
-  permissionLevel                 PermissionLevel?     @map("permission_level")
-  status                          MemberStatus         @default(active)
-  joinedAt                        DateTime             @default(now()) @map("joined_at") @db.Timestamptz(6)
-  invitedById                     String?              @map("invited_by") @db.Uuid
-  createdAt                       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                       DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt                       DateTime?            @map("deleted_at") @db.Timestamptz(6)
-  household                       Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  user                            Profile              @relation("HouseholdMemberUser", fields: [userId], references: [id], onDelete: Cascade)
-  invitedBy                       Profile?             @relation("HouseholdMemberInvitedBy", fields: [invitedById], references: [id])
-  heldAssets                      Asset[]              @relation("AssetHolderMember")
-  ownedCashflowEvents             CashflowEvent[]      @relation("CashflowEventOwnerMember")
-  ownedDebts                      Debt[]               @relation("DebtOwnerMember")
+  status                  MemberStatus         @default(active)
+  joinedAt                DateTime             @default(now()) @map("joined_at") @db.Timestamptz(6)
+  invitedById             String?              @map("invited_by") @db.Uuid
+  createdAt               DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime             @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt               DateTime?            @map("deleted_at") @db.Timestamptz(6)
+  household               Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user                    Profile              @relation("HouseholdMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy               Profile?             @relation("HouseholdMemberInvitedBy", fields: [invitedById], references: [id])
+  heldAssets              Asset[]              @relation("AssetHolderMember")
+  ownedCashflowEvents     CashflowEvent[]      @relation("CashflowEventOwnerMember")
+  ownedDebts              Debt[]               @relation("DebtOwnerMember")
   // Records whose PRIVACY this member owns (spec §30) — separate from holding
   // or creating them.
-  privacyOwnedAssets              Asset[]              @relation("AssetPrivacyOwnerMember")
-  privacyOwnedCashflowEvents      CashflowEvent[]      @relation("CashflowEventPrivacyOwnerMember")
-  privacyOwnedMoneyEvents         MoneyEvent[]         @relation("MoneyEventPrivacyOwnerMember")
-  privacyOwnedAttentionItems      AttentionItem[]      @relation("AttentionItemPrivacyOwnerMember")
-  heldSnapshotAssetValues         SnapshotAssetValue[] @relation("SnapshotAssetValueHolderMember")
-  privacyOwnedSnapshotAssetValues SnapshotAssetValue[] @relation("SnapshotAssetValuePrivacyOwnerMember")
+  heldSnapshotAssetValues SnapshotAssetValue[] @relation("SnapshotAssetValueHolderMember")
 
   @@unique([householdId, userId], map: "household_members_unique")
   @@index([userId])
@@ -459,25 +439,24 @@ model HouseholdMember {
 }
 
 model HouseholdInvite {
-  id                     String           @id @default(uuid(7)) @db.Uuid
-  householdId            String           @map("household_id") @db.Uuid
-  invitedById            String           @map("invited_by") @db.Uuid
-  inviteeEmail           String?          @map("invitee_email")
-  inviteePhone           String?          @map("invitee_phone")
-  token                  String           @unique
-  status                 InviteStatus     @default(pending)
-  defaultRole            HouseholdRole    @default(partner) @map("default_role")
+  id           String        @id @default(uuid(7)) @db.Uuid
+  householdId  String        @map("household_id") @db.Uuid
+  invitedById  String        @map("invited_by") @db.Uuid
+  inviteeEmail String?       @map("invitee_email")
+  inviteePhone String?       @map("invitee_phone")
+  token        String        @unique
+  status       InviteStatus  @default(pending)
+  defaultRole  HouseholdRole @default(partner) @map("default_role")
   // Nullable override, same semantics as HouseholdMember.permissionLevel:
   // NULL = derive the accepted member's permission from `defaultRole`.
-  defaultPermissionLevel PermissionLevel? @map("default_permission_level")
-  expiresAt              DateTime         @map("expires_at") @db.Timestamptz(6)
-  acceptedById           String?          @map("accepted_by") @db.Uuid
-  acceptedAt             DateTime?        @map("accepted_at") @db.Timestamptz(6)
-  createdAt              DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt              DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  household              Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  invitedBy              Profile          @relation("HouseholdInviteInvitedBy", fields: [invitedById], references: [id])
-  acceptedBy             Profile?         @relation("HouseholdInviteAcceptedBy", fields: [acceptedById], references: [id])
+  expiresAt    DateTime      @map("expires_at") @db.Timestamptz(6)
+  acceptedById String?       @map("accepted_by") @db.Uuid
+  acceptedAt   DateTime?     @map("accepted_at") @db.Timestamptz(6)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitedBy    Profile       @relation("HouseholdInviteInvitedBy", fields: [invitedById], references: [id])
+  acceptedBy   Profile?      @relation("HouseholdInviteAcceptedBy", fields: [acceptedById], references: [id])
 
   @@index([householdId, status])
   @@map("household_invites")
@@ -537,9 +516,6 @@ model Asset {
   // Private records must set privacyOwnerMemberId; `created_by` is only a
   // legacy read-time fallback, never the basis for a new row.
   holderMemberId              String?                @map("holder_member_id") @db.Uuid
-  privacyOwnerMemberId        String?                @map("privacy_owner_member_id") @db.Uuid
-  // Derived-inclusion axis, paired with visibilityLevel. See FinancialNature.
-  financialNature             FinancialNature        @default(household) @map("financial_nature")
   liquidity                   AssetLiquidity         @default(usable_now)
   status                      AssetStatus            @default(active)
   soldAt                      DateTime?              @map("sold_at") @db.Timestamptz(6)
@@ -554,7 +530,6 @@ model Asset {
   deletedAt                   DateTime?              @map("deleted_at") @db.Timestamptz(6)
   household                   Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
   holderMember                HouseholdMember?       @relation("AssetHolderMember", fields: [holderMemberId], references: [id])
-  privacyOwnerMember          HouseholdMember?       @relation("AssetPrivacyOwnerMember", fields: [privacyOwnerMemberId], references: [id])
   createdBy                   Profile                @relation("AssetCreatedBy", fields: [createdById], references: [id])
   updatedBy                   Profile?               @relation("AssetUpdatedBy", fields: [updatedById], references: [id])
   marketPositions             AssetMarketPosition[]
@@ -582,8 +557,6 @@ model Asset {
   @@index([householdId, deletedAt])
   @@index([householdId, type])
   @@index([householdId, liquidity])
-  @@index([householdId, financialNature])
-  @@index([privacyOwnerMemberId])
   @@map("assets")
 }
 
@@ -722,32 +695,29 @@ model AssetValuation {
 }
 
 model SnapshotAssetValue {
-  id                   String                @id @default(uuid(7)) @db.Uuid
-  householdId          String                @map("household_id") @db.Uuid
-  snapshotId           String                @map("snapshot_id") @db.Uuid
-  assetId              String                @map("asset_id") @db.Uuid
-  assetName            String                @map("asset_name")
-  assetType            AssetType             @map("asset_type")
-  liquidity            AssetLiquidity
+  id              String                @id @default(uuid(7)) @db.Uuid
+  householdId     String                @map("household_id") @db.Uuid
+  snapshotId      String                @map("snapshot_id") @db.Uuid
+  assetId         String                @map("asset_id") @db.Uuid
+  assetName       String                @map("asset_name")
+  assetType       AssetType             @map("asset_type")
+  liquidity       AssetLiquidity
   // Classification metadata is FROZEN alongside the value (spec §17): a later
   // change to the asset's nature/holder/privacy must not silently rewrite what
   // a past snapshot meant.
-  financialNature      FinancialNature       @default(household) @map("financial_nature")
-  holderMemberId       String?               @map("holder_member_id") @db.Uuid
-  privacyOwnerMemberId String?               @map("privacy_owner_member_id") @db.Uuid
-  value                Decimal               @db.Decimal(14, 2)
-  currency             String                @default("VND")
-  valuationId          String?               @map("valuation_id") @db.Uuid
-  valuationMethod      AssetValuationMethod? @map("valuation_method")
-  valuationDate        DateTime?             @map("valuation_date") @db.Date
-  visibilityLevel      VisibilityLevel       @map("visibility_level")
-  createdAt            DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  household            Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  snapshot             Snapshot              @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
-  asset                Asset                 @relation(fields: [assetId], references: [id])
-  valuation            AssetValuation?       @relation(fields: [valuationId], references: [id])
-  holderMember         HouseholdMember?      @relation("SnapshotAssetValueHolderMember", fields: [holderMemberId], references: [id])
-  privacyOwnerMember   HouseholdMember?      @relation("SnapshotAssetValuePrivacyOwnerMember", fields: [privacyOwnerMemberId], references: [id])
+  holderMemberId  String?               @map("holder_member_id") @db.Uuid
+  value           Decimal               @db.Decimal(14, 2)
+  currency        String                @default("VND")
+  valuationId     String?               @map("valuation_id") @db.Uuid
+  valuationMethod AssetValuationMethod? @map("valuation_method")
+  valuationDate   DateTime?             @map("valuation_date") @db.Date
+  visibilityLevel VisibilityLevel       @map("visibility_level")
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  household       Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  snapshot        Snapshot              @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  asset           Asset                 @relation(fields: [assetId], references: [id])
+  valuation       AssetValuation?       @relation(fields: [valuationId], references: [id])
+  holderMember    HouseholdMember?      @relation("SnapshotAssetValueHolderMember", fields: [holderMemberId], references: [id])
 
   @@unique([snapshotId, assetId], map: "snapshot_asset_values_unique")
   @@index([householdId, snapshotId])
@@ -847,7 +817,6 @@ model CashflowEvent {
   requirement          CashflowRequirement?
   certainty            CashflowCertainty    @default(confirmed)
   ownerMemberId        String?              @map("owner_member_id") @db.Uuid
-  privacyOwnerMemberId String?              @map("privacy_owner_member_id") @db.Uuid
   debtId               String?              @map("debt_id") @db.Uuid
   financialGoalId      String?              @map("financial_goal_id") @db.Uuid
   /// The asset this event is earmarked to buy/fund, when known.
@@ -871,7 +840,6 @@ model CashflowEvent {
   deletedAt            DateTime?            @map("deleted_at") @db.Timestamptz(6)
   household            Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
   ownerMember          HouseholdMember?     @relation("CashflowEventOwnerMember", fields: [ownerMemberId], references: [id])
-  privacyOwnerMember   HouseholdMember?     @relation("CashflowEventPrivacyOwnerMember", fields: [privacyOwnerMemberId], references: [id])
   debt                 Debt?                @relation(fields: [debtId], references: [id])
   financialGoal        FinancialGoal?       @relation("CashflowEventFinancialGoal", fields: [financialGoalId], references: [id])
   plannedAsset         Asset?               @relation("CashflowEventPlannedAsset", fields: [plannedAssetId], references: [id])
@@ -889,7 +857,6 @@ model CashflowEvent {
   @@index([ownerMemberId])
   @@index([financialGoalId])
   @@index([plannedAssetId])
-  @@index([privacyOwnerMemberId])
   @@map("cashflow_events")
 }
 
@@ -938,50 +905,48 @@ model FinancialGoal {
 }
 
 model MoneyEvent {
-  id                   String           @id @default(uuid(7)) @db.Uuid
-  householdId          String           @map("household_id") @db.Uuid
-  description          String?
-  eventType            MoneyEventType   @map("event_type")
+  id              String           @id @default(uuid(7)) @db.Uuid
+  householdId     String           @map("household_id") @db.Uuid
+  description     String?
+  eventType       MoneyEventType   @map("event_type")
   // `category` is a free string CODE resolved against `money_event_categories`
   // (seeded system rows + per-household custom rows) at the app layer — NOT a
   // Postgres enum, so adding a category is a data insert, not a migration.
-  category             String           @default("other")
-  amount               Decimal          @default(0) @db.Decimal(14, 2)
-  feeAmount            Decimal          @default(0) @map("fee_amount") @db.Decimal(14, 2)
-  soldQuantity         Decimal?         @map("sold_quantity") @db.Decimal(20, 8)
-  soldValue            Decimal?         @map("sold_value") @db.Decimal(14, 2)
-  currency             String           @default("VND")
-  eventDate            DateTime         @map("event_date") @db.Date
-  direction            MoneyDirection
-  fromAssetId          String?          @map("from_asset_id") @db.Uuid
-  toAssetId            String?          @map("to_asset_id") @db.Uuid
-  cashflowEventId      String?          @map("cashflow_event_id") @db.Uuid
-  debtId               String?          @map("debt_id") @db.Uuid
-  financialGoalId      String?          @map("financial_goal_id") @db.Uuid
-  snapshotId           String?          @map("snapshot_id") @db.Uuid
+  category        String           @default("other")
+  amount          Decimal          @default(0) @db.Decimal(14, 2)
+  feeAmount       Decimal          @default(0) @map("fee_amount") @db.Decimal(14, 2)
+  soldQuantity    Decimal?         @map("sold_quantity") @db.Decimal(20, 8)
+  soldValue       Decimal?         @map("sold_value") @db.Decimal(14, 2)
+  currency        String           @default("VND")
+  eventDate       DateTime         @map("event_date") @db.Date
+  direction       MoneyDirection
+  fromAssetId     String?          @map("from_asset_id") @db.Uuid
+  toAssetId       String?          @map("to_asset_id") @db.Uuid
+  cashflowEventId String?          @map("cashflow_event_id") @db.Uuid
+  debtId          String?          @map("debt_id") @db.Uuid
+  financialGoalId String?          @map("financial_goal_id") @db.Uuid
+  snapshotId      String?          @map("snapshot_id") @db.Uuid
   // is_large_event / is_attention_needed dropped: never read in code, and
   // attention is centralized in the AttentionItem table (derive from amount /
   // AttentionItem, don't store denormalized flags on the ledger).
   // Who owns the privacy right (spec §30) — distinct from `createdById`.
-  privacyOwnerMemberId String?          @map("privacy_owner_member_id") @db.Uuid
-  visibilityLevel      VisibilityLevel  @default(detail) @map("visibility_level")
-  status               MoneyEventStatus @default(recorded)
-  createdById          String           @map("created_by") @db.Uuid
-  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById          String?          @map("updated_by") @db.Uuid
-  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt            DateTime?        @map("deleted_at") @db.Timestamptz(6)
-  household            Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  fromAsset            Asset?           @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
-  toAsset              Asset?           @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
-  cashflowEvent        CashflowEvent?   @relation("MoneyEventCashflowEvent", fields: [cashflowEventId], references: [id])
-  debt                 Debt?            @relation(fields: [debtId], references: [id])
-  financialGoal        FinancialGoal?   @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
-  snapshot             Snapshot?        @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
-  createdBy            Profile          @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
-  updatedBy            Profile?         @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
-  privacyOwnerMember   HouseholdMember? @relation("MoneyEventPrivacyOwnerMember", fields: [privacyOwnerMemberId], references: [id])
-  valueHistory         AssetValuation[] @relation("MoneyEventValueHistory")
+  visibilityLevel VisibilityLevel  @default(detail) @map("visibility_level")
+  status          MoneyEventStatus @default(recorded)
+  createdById     String           @map("created_by") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById     String?          @map("updated_by") @db.Uuid
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  household       Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromAsset       Asset?           @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
+  toAsset         Asset?           @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
+  cashflowEvent   CashflowEvent?   @relation("MoneyEventCashflowEvent", fields: [cashflowEventId], references: [id])
+  debt            Debt?            @relation(fields: [debtId], references: [id])
+  financialGoal   FinancialGoal?   @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
+  snapshot        Snapshot?        @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
+  createdBy       Profile          @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
+  updatedBy       Profile?         @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
+  valueHistory    AssetValuation[] @relation("MoneyEventValueHistory")
 
   @@index([householdId, eventDate(sort: Desc)])
   @@index([fromAssetId])
@@ -992,7 +957,6 @@ model MoneyEvent {
   @@index([snapshotId])
   @@index([householdId, eventType])
   @@index([householdId, category])
-  @@index([privacyOwnerMemberId])
   @@map("money_events")
 }
 
@@ -1018,42 +982,40 @@ model MoneyEventCategory {
 }
 
 model AttentionItem {
-  id                   String              @id @default(uuid(7)) @db.Uuid
-  householdId          String              @map("household_id") @db.Uuid
-  title                String
-  reason               String?
-  amount               Decimal?            @db.Decimal(14, 2)
-  relatedObjectType    RelatedObjectType?  @map("related_object_type")
-  relatedObjectId      String?             @map("related_object_id") @db.Uuid
-  level                AttentionLevel      @default(normal)
+  id                String              @id @default(uuid(7)) @db.Uuid
+  householdId       String              @map("household_id") @db.Uuid
+  title             String
+  reason            String?
+  amount            Decimal?            @db.Decimal(14, 2)
+  relatedObjectType RelatedObjectType?  @map("related_object_type")
+  relatedObjectId   String?             @map("related_object_id") @db.Uuid
+  level             AttentionLevel      @default(normal)
   // status IS the lifecycle (open → seen → resolved / dismissed). There is no
   // `deletedAt`: `dismissed` already means "gone", so a second delete flag would
   // be a redundant, conflicting source of truth.
-  status               AttentionItemStatus @default(open)
+  status            AttentionItemStatus @default(open)
   /// Machine-readable signal identity (`cashflow_overdue`, `user_flagged`, …).
   /// Most v3.1 signals are DERIVED at read time and never stored; when a member
   /// dismisses one, the dismissal is persisted as a TOMBSTONE row carrying this
   /// code, and the read merge suppresses the matching derived signal. Without
   /// it there would be nothing to match a dismissal against.
-  ruleCode             String?             @map("rule_code")
-  privacyOwnerMemberId String?             @map("privacy_owner_member_id") @db.Uuid
-  visibilityLevel      VisibilityLevel     @default(detail) @map("visibility_level")
-  createdById          String?             @map("created_by") @db.Uuid
-  createdAt            DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  seenById             String?             @map("seen_by") @db.Uuid
-  seenAt               DateTime?           @map("seen_at") @db.Timestamptz(6)
-  resolvedById         String?             @map("resolved_by") @db.Uuid
-  resolvedAt           DateTime?           @map("resolved_at") @db.Timestamptz(6)
+  ruleCode          String?             @map("rule_code")
+  visibilityLevel   VisibilityLevel     @default(detail) @map("visibility_level")
+  createdById       String?             @map("created_by") @db.Uuid
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  seenById          String?             @map("seen_by") @db.Uuid
+  seenAt            DateTime?           @map("seen_at") @db.Timestamptz(6)
+  resolvedById      String?             @map("resolved_by") @db.Uuid
+  resolvedAt        DateTime?           @map("resolved_at") @db.Timestamptz(6)
   /// Separate from `resolvedAt` on purpose: "we dealt with it" and "don't show
   /// me this" are different facts about the household.
-  dismissedById        String?             @map("dismissed_by") @db.Uuid
-  dismissedAt          DateTime?           @map("dismissed_at") @db.Timestamptz(6)
-  household            Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy            Profile?            @relation("AttentionItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  seenBy               Profile?            @relation("AttentionItemSeenBy", fields: [seenById], references: [id])
-  resolvedBy           Profile?            @relation("AttentionItemResolvedBy", fields: [resolvedById], references: [id])
-  dismissedBy          Profile?            @relation("AttentionItemDismissedBy", fields: [dismissedById], references: [id], onDelete: SetNull)
-  privacyOwnerMember   HouseholdMember?    @relation("AttentionItemPrivacyOwnerMember", fields: [privacyOwnerMemberId], references: [id])
+  dismissedById     String?             @map("dismissed_by") @db.Uuid
+  dismissedAt       DateTime?           @map("dismissed_at") @db.Timestamptz(6)
+  household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy         Profile?            @relation("AttentionItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  seenBy            Profile?            @relation("AttentionItemSeenBy", fields: [seenById], references: [id])
+  resolvedBy        Profile?            @relation("AttentionItemResolvedBy", fields: [resolvedById], references: [id])
+  dismissedBy       Profile?            @relation("AttentionItemDismissedBy", fields: [dismissedById], references: [id], onDelete: SetNull)
 
   @@index([householdId, status])
   @@index([householdId, level])
