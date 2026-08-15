@@ -13,8 +13,6 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
     name: 'VCB',
     value: 20 * M,
     liquidity: 'usable_now',
-    financialNature: 'household',
-    visibilityLevel: 'detail',
     valueUpdatedAt: '2026-08-13',
     ...over,
   };
@@ -34,7 +32,6 @@ function event(
     requirement: 'required',
     certainty: 'confirmed',
     status: 'expected',
-    visibilityLevel: 'detail',
     ...over,
   };
 }
@@ -117,41 +114,12 @@ describe('runForecast — starting balance', () => {
     expect(result.usableNowAssetCount).toBe(1);
   });
 
-  it.each([
-    [
-      'personal_private nature',
-      { financialNature: 'personal_private' as const },
-    ],
-    ['private visibility', { visibilityLevel: 'private' as const }],
-  ])('excludes an asset with %s', (_label, patch) => {
-    const result = runForecast(
-      input({
-        assets: [
-          asset({ assetId: 'a1', value: 10 * M }),
-          asset({ assetId: 'a2', value: 99 * M, ...patch }),
-        ],
-      }),
-    );
-
-    expect(result.startingLiquidBalance).toBe(10 * M);
-  });
-
-  it('includes personal_included money that the owner chose to count', () => {
-    const result = runForecast(
-      input({
-        assets: [
-          asset({ assetId: 'a1', value: 10 * M }),
-          asset({
-            assetId: 'a2',
-            value: 5 * M,
-            financialNature: 'personal_included',
-          }),
-        ],
-      }),
-    );
-
-    expect(result.startingLiquidBalance).toBe(15 * M);
-  });
+  /*
+   * Liquidity is now the ONLY thing that keeps an asset out of the starting
+   * balance. The tests that stood here excluded assets for being
+   * `personal_private` or `private`; nothing is excluded on those grounds any
+   * more, and `ForecastLiquidSource` no longer carries either field.
+   */
 });
 
 describe('runForecast — certainty and requirement', () => {
@@ -277,16 +245,14 @@ describe('runForecast — status handling', () => {
     expect(result.endingProjectedBalance).toBe(15 * M);
   });
 
-  it('excludes a private event and counts it as excluded', () => {
-    const result = runForecast(
-      input({
-        cashflowEvents: [event({ visibilityLevel: 'private', amount: 5 * M })],
-      }),
-    );
-
-    expect(result.excludedPrivateRecordCount).toBe(1);
-    expect(result.endingProjectedBalance).toBe(20 * M);
-  });
+  /*
+   * There is no "excludes a private event" test here any more, and deliberately
+   * no "counts a summary_only event" replacement either: `ForecastCashflowEvent`
+   * no longer carries a sharing level at all, so the engine has no concept left
+   * to assert against. That the sharing level does not move any number is
+   * pinned end-to-end by the agreement test in `shared-figures.spec.ts`, which
+   * is where it can actually be observed.
+   */
 });
 
 describe('runForecast — day series', () => {
@@ -399,7 +365,6 @@ describe('runForecast — reserve and assumptions', () => {
             certainty: 'estimated',
             amount: 5 * M,
           }),
-          event({ id: 'p', visibilityLevel: 'private', amount: 1 * M }),
         ],
       }),
     );
@@ -416,7 +381,6 @@ describe('runForecast — reserve and assumptions', () => {
       expect.arrayContaining([
         'horizon_days',
         'estimated_incoming_excluded',
-        'private_records_excluded',
       ]),
     );
   });

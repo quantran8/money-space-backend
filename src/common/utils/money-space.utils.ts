@@ -8,23 +8,22 @@ import type { CalculationTerm } from '../../modules/assets/entities/calculation-
 import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.entity';
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
-import type {
-  HouseholdRole,
-  PermissionLevel,
-} from '../../modules/members/entities/member.entity';
+import type { HouseholdRole } from '../../modules/members/entities/member.entity';
 
-export type VisibilityLevel = 'summary_only' | 'grouped' | 'detail' | 'private';
+/**
+ * How much of a record the shared picture shows.
+ *
+ * A presentation level, not an access boundary: every member has the same
+ * rights and any of them can switch a record to `detail`, so folding one is a
+ * courtesy about attention, never concealment. Nothing is ever excluded from a
+ * shared total on account of it.
+ */
+export type VisibilityLevel = 'detail' | 'summary_only';
 import type {
   MoneyDirection,
   MoneyEvent,
   MoneyEventType,
 } from '../../modules/money-events/entities/money-event.entity';
-
-const DEFAULT_PERMISSION_FOR_ROLE: Record<HouseholdRole, PermissionLevel> = {
-  owner: 'admin',
-  partner: 'edit_content',
-  viewer: 'view_summary',
-};
 
 const VALUATION_MODE_BY_TYPE: Record<AssetType, AssetValuationMode> = {
   cash: 'manual',
@@ -44,88 +43,20 @@ const VALUATION_MODE_BY_TYPE: Record<AssetType, AssetValuationMode> = {
   other: 'manual',
 };
 
-export function defaultPermissionForRole(role: HouseholdRole) {
-  return DEFAULT_PERMISSION_FOR_ROLE[role];
-}
-
 // ---------------------------------------------------------------------------
-// Authorization (app-layer; NOT Postgres RLS — the project stays DB-portable).
+// Authorization lives in `HouseholdAccessGuard`, not here.
 //
-// Two axes:
-//   1. Capability — what a member may DO, from their PermissionLevel (which is
-//      derived from role unless a per-member override is set).
-//   2. Visibility — how sensitive a record is (VisibilityLevel), gated against
-//      the viewer's own permission tier.
+// There is no capability tier and no visibility tier any more. Membership is
+// the content permission — any member may read and write anything in their
+// household, including a record's sharing level — and the single exception is
+// `@RequireHouseholdCreator()` for the three lifecycle operations. What holds a
+// change accountable is the journal entry it leaves, not a permission grant.
+//
+// The tier machinery that used to sit here (PERMISSION_RANK, VISIBILITY_TIER,
+// PERMISSION_VIEW_TIER, canViewVisibility, hasCapability, canEdit, canAdmin,
+// effectivePermission) was fully written and fully unit-tested but never wired:
+// `canViewVisibility` had exactly one caller, its own spec.
 // ---------------------------------------------------------------------------
-
-const PERMISSION_RANK: Record<PermissionLevel, number> = {
-  view_summary: 0,
-  view_grouped: 1,
-  view_detail: 2,
-  edit_content: 3,
-  admin: 4,
-};
-
-/** The effective permission: the override if set, else derived from role. */
-export function effectivePermission(
-  role: HouseholdRole,
-  override?: PermissionLevel | null,
-): PermissionLevel {
-  return override ?? defaultPermissionForRole(role);
-}
-
-/** Can this permission create/update/delete content? */
-export function canEdit(permission: PermissionLevel): boolean {
-  return PERMISSION_RANK[permission] >= PERMISSION_RANK.edit_content;
-}
-
-/** Can this permission manage members / household settings? */
-export function canAdmin(permission: PermissionLevel): boolean {
-  return PERMISSION_RANK[permission] >= PERMISSION_RANK.admin;
-}
-
-export type Capability = 'view' | 'edit' | 'admin';
-
-export function hasCapability(
-  permission: PermissionLevel,
-  capability: Capability,
-): boolean {
-  if (capability === 'admin') return canAdmin(permission);
-  if (capability === 'edit') return canEdit(permission);
-  return true; // any member can view (visibility is gated separately)
-}
-
-// Sensitivity tiers, low → high. `private` is a separate flag (creator/admin only).
-const VISIBILITY_TIER: Record<VisibilityLevel, number> = {
-  summary_only: 0,
-  grouped: 1,
-  detail: 2,
-  private: 99,
-};
-
-// A viewer's permission maps to the highest record tier they may see.
-const PERMISSION_VIEW_TIER: Record<PermissionLevel, number> = {
-  view_summary: 0,
-  view_grouped: 1,
-  view_detail: 2,
-  edit_content: 2,
-  admin: 2,
-};
-
-/**
- * May a viewer see a record of the given visibility?
- * `visible = viewer.tier >= record.tier AND (record != private OR viewer is creator/admin)`.
- */
-export function canViewVisibility(
-  permission: PermissionLevel,
-  visibility: VisibilityLevel,
-  opts?: { isCreator?: boolean },
-): boolean {
-  if (visibility === 'private') {
-    return opts?.isCreator === true || canAdmin(permission);
-  }
-  return PERMISSION_VIEW_TIER[permission] >= VISIBILITY_TIER[visibility];
-}
 
 export function defaultValuationModeForAssetType(type: AssetType) {
   return VALUATION_MODE_BY_TYPE[type];

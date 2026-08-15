@@ -85,7 +85,6 @@ export class InvitesService {
       token: this.invitesRepository.createToken(),
       status: 'pending',
       defaultRole: payload.defaultRole ?? 'partner',
-      defaultPermissionLevel: payload.defaultPermissionLevel ?? null,
       expiresAt: new Date(Date.now() + expiresInDays * DAY_MS).toISOString(),
       acceptedById: null,
       acceptedAt: null,

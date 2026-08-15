@@ -14,10 +14,8 @@ export interface SnapshotAssetLine {
   valuationMethod?: string;
   valuationDate?: string;
   visibilityLevel: string;
-  /** Frozen classification (§17) — what this asset MEANT at snapshot time. */
-  financialNature: string;
+  /** Frozen (§17) — who was responsible for this at snapshot time. */
   holderMemberId?: string | null;
-  privacyOwnerMemberId?: string | null;
 }
 
 export interface SnapshotDetail {

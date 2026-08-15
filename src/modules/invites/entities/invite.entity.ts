@@ -1,6 +1,5 @@
 import type {
   HouseholdRole,
-  PermissionLevel,
 } from '../../members/entities/member.entity';
 
 /** Matches the `InviteStatus` DB enum exactly — `cancelled` is withdrawal. */
@@ -17,7 +16,6 @@ export interface HouseholdInvite {
   status: InviteStatus;
   defaultRole: HouseholdRole;
   /** NULL = derive the accepted member's permission from `defaultRole`. */
-  defaultPermissionLevel: PermissionLevel | null;
   expiresAt: string;
   acceptedById: string | null;
   acceptedAt: string | null;

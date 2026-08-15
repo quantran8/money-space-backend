@@ -21,7 +21,6 @@ export interface CreateCashflowEventDto {
   certainty?: CashflowCertainty;
   ownerMemberId?: string | null;
   /** Required when `visibilityLevel` is `private` (§30). */
-  privacyOwnerMemberId?: string | null;
   debtId?: string | null;
   financialGoalId?: string | null;
   plannedAssetId?: string | null;

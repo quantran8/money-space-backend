@@ -18,7 +18,6 @@ function invite(over: Partial<HouseholdInvite> = {}): HouseholdInvite {
     token: 'tok-1',
     status: 'pending',
     defaultRole: 'partner',
-    defaultPermissionLevel: null,
     expiresAt: new Date(Date.now() + 7 * DAY_MS).toISOString(),
     acceptedById: null,
     acceptedAt: null,
@@ -166,9 +165,6 @@ describe('InvitesService.createInvite', () => {
 
     expect(created.token).toBe('tok-new');
     expect(created.defaultRole).toBe('partner');
-    // NULL permission is meaningful: it derives from the role, so a later
-    // change to the role's default reaches this member too.
-    expect(created.defaultPermissionLevel).toBeNull();
     const days = Math.round(
       (new Date(created.expiresAt).getTime() - Date.now()) / DAY_MS,
     );

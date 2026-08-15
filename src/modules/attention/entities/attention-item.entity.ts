@@ -43,6 +43,5 @@ export interface StoredAttentionItem {
   relatedObjectType: AttentionRelatedObjectType | null;
   relatedObjectId: string | null;
   visibilityLevel: string;
-  privacyOwnerMemberId: string | null;
   createdAt: string;
 }

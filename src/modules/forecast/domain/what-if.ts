@@ -45,7 +45,6 @@ export function buildSyntheticEvent(params: {
     requirement: 'planned',
     certainty: 'confirmed',
     status: 'expected',
-    visibilityLevel: 'detail',
     isSynthetic: true,
   };
 }

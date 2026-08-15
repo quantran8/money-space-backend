@@ -19,7 +19,6 @@ import {
   type IsoDate,
 } from '../../../common/utils/clock';
 import { expandOccurrences } from '../../../common/utils/recurrence';
-import { isIncludedInSharedCalculation } from '../../../common/utils/shared-calculation';
 import type {
   CalculationAssumption,
   ForecastDay,
@@ -56,9 +55,14 @@ export function runForecast(input: ForecastInput): ForecastResult {
   // 2. Starting balance: only money that is spendable TODAY. Savings and
   //    long-term assets are net worth, not cash flow — counting them would
   //    make a household look liquid when its money is locked up.
+  //
+  //    Liquidity is the ONLY filter. Nothing is excluded for being private or
+  //    personal any more: a shared figure that silently omits records is not a
+  //    shared source of truth, and the old rule also put this number
+  //    permanently at odds with the dashboard's net worth, which never applied
+  //    it.
   const usableNow = assets.filter(
-    (asset) =>
-      asset.liquidity === 'usable_now' && isIncludedInSharedCalculation(asset),
+    (asset) => asset.liquidity === 'usable_now',
   );
   const startingLiquidBalance = usableNow.reduce(
     (sum, asset) => sum + asset.value,
@@ -70,14 +74,9 @@ export function runForecast(input: ForecastInput): ForecastResult {
     ...input.cashflowEvents,
     ...(options.syntheticEvents ?? []),
   ];
-  let excludedPrivateRecordCount = 0;
-  const eligible = allEvents.filter((event) => {
-    if (!isIncludedInSharedCalculation(event)) {
-      excludedPrivateRecordCount += 1;
-      return false;
-    }
-    return event.status !== 'completed' && event.status !== 'cancelled';
-  });
+  const eligible = allEvents.filter(
+    (event) => event.status !== 'completed' && event.status !== 'cancelled',
+  );
 
   // 4. Expand every event into concrete occurrences inside the window.
   const occurrences: ForecastOccurrence[] = [];
@@ -284,12 +283,6 @@ export function runForecast(input: ForecastInput): ForecastResult {
       value: round(totals.plannedOutgoingAmount),
     });
   }
-  if (excludedPrivateRecordCount > 0) {
-    assumptions.push({
-      code: 'private_records_excluded',
-      value: excludedPrivateRecordCount,
-    });
-  }
   if (sawClampedFromPast) {
     assumptions.push({ code: 'overdue_events_clamped_to_today' });
   }
@@ -334,7 +327,6 @@ export function runForecast(input: ForecastInput): ForecastResult {
           sourceEventId: nextInflow.sourceEventId,
         }
       : null,
-    excludedPrivateRecordCount,
     staleAssetIds,
     usableNowAssetCount: usableNow.length,
     liveEventCount: eligible.length,

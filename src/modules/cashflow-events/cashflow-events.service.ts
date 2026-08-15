@@ -336,7 +336,6 @@ export class CashflowEventsService {
       attentionLevel: payload.attentionLevel ?? 'normal',
       visibilityLevel: payload.visibilityLevel ?? 'detail',
       ownerMemberId: payload.ownerMemberId ?? null,
-      privacyOwnerMemberId: payload.privacyOwnerMemberId ?? null,
       debtId: payload.debtId ?? null,
       financialGoalId: payload.financialGoalId ?? null,
       plannedAssetId: payload.plannedAssetId ?? null,
@@ -387,14 +386,6 @@ export class CashflowEventsService {
     ) {
       throw new BadRequestException(
         'recurrenceEndDate cannot be before expectedDate',
-      );
-    }
-    // §30: a new private record must name its privacy owner. Falling back to
-    // `created_by` is a read-time legacy accommodation only — the person who
-    // enters a record is often not the person it belongs to.
-    if (event.visibilityLevel === 'private' && !event.privacyOwnerMemberId) {
-      throw new BadRequestException(
-        'privacyOwnerMemberId is required for a private cashflow event',
       );
     }
   }

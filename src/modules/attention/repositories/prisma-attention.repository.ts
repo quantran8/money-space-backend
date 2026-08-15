@@ -165,7 +165,6 @@ export class PrismaAttentionRepository
       relatedObjectType: row.relatedObjectType ?? null,
       relatedObjectId: row.relatedObjectId ?? null,
       visibilityLevel: row.visibilityLevel,
-      privacyOwnerMemberId: row.privacyOwnerMemberId ?? null,
       createdAt: new Date(row.createdAt).toISOString(),
     };
   }

@@ -1,7 +1,5 @@
 import type { IsoDate } from '../../../common/utils/clock';
 import type { RecurrenceFrequency } from '../../../common/utils/recurrence';
-import type { FinancialNature } from '../../../common/utils/shared-calculation';
-import type { VisibilityLevel } from '../../../common/utils/money-space.utils';
 import type {
   CashflowCertainty,
   CashflowDirection,
@@ -21,7 +19,6 @@ export type AssumptionCode =
   | 'horizon_days'
   | 'estimated_incoming_excluded'
   | 'planned_outflows_included'
-  | 'private_records_excluded'
   | 'no_confirmed_inflow_in_horizon'
   | 'reserve_applied'
   | 'no_reserve_declared'
@@ -43,8 +40,6 @@ export interface ForecastLiquidSource {
   /** Already valued in the household currency. */
   value: number;
   liquidity: 'usable_now' | 'not_immediately_usable' | 'long_term';
-  financialNature: FinancialNature;
-  visibilityLevel: VisibilityLevel;
   valueUpdatedAt?: string | null;
 }
 
@@ -59,7 +54,6 @@ export interface ForecastCashflowEvent {
   requirement: CashflowRequirement;
   certainty: CashflowCertainty;
   status: CashflowEventStatus;
-  visibilityLevel: VisibilityLevel;
   ownerMemberId?: string | null;
   financialGoalId?: string | null;
   debtId?: string | null;
@@ -167,7 +161,6 @@ export interface ForecastResult {
     amount: number;
     sourceEventId: string;
   } | null;
-  excludedPrivateRecordCount: number;
   staleAssetIds: string[];
   usableNowAssetCount: number;
   liveEventCount: number;

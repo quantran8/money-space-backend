@@ -19,7 +19,6 @@ import type { HouseholdMember } from '../../modules/members/entities/member.enti
 import type { MoneyEventCategory } from '../../modules/money-event-categories/entities/money-event-category.entity';
 import type { MoneyEvent } from '../../modules/money-events/entities/money-event.entity';
 import type { CashflowEvent } from '../../modules/cashflow-events/entities/cashflow-event.entity';
-import { defaultPermissionForRole } from '../utils/money-space.utils';
 import { DbRow } from './prisma.repository';
 
 /**
@@ -170,11 +169,6 @@ export function mapMember(
     email,
     initials: makeInitials(name || email),
     role: row.role,
-    // permission_level is a nullable OVERRIDE; NULL → derive from role.
-    permission:
-      row.permissionLevel ??
-      row.permission_level ??
-      defaultPermissionForRole(row.role),
     joinedAt: row.joinedAt ?? row.joined_at,
     lastActive: row.updatedAt ?? row.updated_at,
     status: (row.status as 'active' | 'invited') ?? 'active',
@@ -203,11 +197,8 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
         : null,
     // Classification axes (§11). Read here so privacy filtering and the
     // holder-grouped views never have to re-query the row.
-    financialNature: row.financialNature ?? row.financial_nature ?? 'household',
     visibilityLevel: row.visibilityLevel ?? row.visibility_level ?? 'detail',
     holderMemberId: row.holderMemberId ?? row.holder_member_id ?? null,
-    privacyOwnerMemberId:
-      row.privacyOwnerMemberId ?? row.privacy_owner_member_id ?? null,
     soldAt:
       (row.soldAt ?? row.sold_at)
         ? dateOnly(row.soldAt ?? row.sold_at)
@@ -474,8 +465,6 @@ export function mapCashflowEvent(row: DbRow): CashflowEvent {
     attentionLevel: row.attentionLevel ?? row.attention_level ?? 'normal',
     visibilityLevel: row.visibilityLevel ?? row.visibility_level ?? 'detail',
     ownerMemberId: row.ownerMemberId ?? row.owner_member_id ?? null,
-    privacyOwnerMemberId:
-      row.privacyOwnerMemberId ?? row.privacy_owner_member_id ?? null,
     debtId: row.debtId ?? row.debt_id ?? null,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? null,
     plannedAssetId: row.plannedAssetId ?? row.planned_asset_id ?? null,

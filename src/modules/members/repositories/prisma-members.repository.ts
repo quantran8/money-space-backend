@@ -93,7 +93,6 @@ export class PrismaMembersRepository
           householdId: member.householdId,
           userId: member.profileId,
           role: member.role,
-          permissionLevel: member.permission,
           status: member.status ?? 'active',
           joinedAt: new Date(member.joinedAt),
         } as any,
@@ -118,7 +117,6 @@ export class PrismaMembersRepository
         where: { id: memberId },
         data: {
           role: member.role,
-          permissionLevel: member.permission,
           status: member.status ?? undefined,
           joinedAt: new Date(member.joinedAt),
         } as any,

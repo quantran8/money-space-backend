@@ -6,10 +6,7 @@ import {
 } from '@nestjs/common';
 import { uuidv7 } from '../../common/utils/uuid';
 import { HouseholdMember } from './entities/member.entity';
-import {
-  defaultPermissionForRole,
-  makeInitials,
-} from '../../common/utils/money-space.utils';
+import { makeInitials } from '../../common/utils/money-space.utils';
 import type { CreateMemberDto } from './dto/create-member.dto';
 import type { UpdateMemberDto } from './dto/update-member.dto';
 import { MEMBERS_REPOSITORY } from './repositories/members.repository.interface';
@@ -51,7 +48,6 @@ export class MembersService {
       initials:
         payload.initials?.trim() || makeInitials(payload.name || payload.email),
       role: payload.role,
-      permission: payload.permission ?? defaultPermissionForRole(payload.role),
       joinedAt: payload.joinedAt ?? new Date().toISOString(),
       lastActive: payload.lastActive ?? 'Vừa mời',
       status: payload.status ?? 'invited',
@@ -81,9 +77,6 @@ export class MembersService {
         member.initials ||
         makeInitials(payload.name ?? payload.email ?? member.email),
       role: nextRole,
-      permission:
-        payload.permission ??
-        (payload.role ? defaultPermissionForRole(nextRole) : member.permission),
     };
 
     await this.membersRepository.updateMember(memberId, next);

@@ -247,31 +247,12 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  // §30: `created_by` is not a valid privacy owner for a NEW record — whoever
-  // typed it in is often not whose money it is.
-  it('rejects a private event with no privacy owner', async () => {
-    const { service } = setup();
-
-    await expect(
-      service.createCashflowEvent('hh-1', {
-        ...valid,
-        visibilityLevel: 'private',
-      }),
-    ).rejects.toThrow(BadRequestException);
-  });
-
-  it('accepts a private event that names its privacy owner', async () => {
-    const { service, inserted } = setup();
-
-    await service.createCashflowEvent('hh-1', {
-      ...valid,
-      visibilityLevel: 'private',
-      privacyOwnerMemberId: 'member-an',
-    });
-
-    expect(inserted[0].privacyOwnerMemberId).toBe('member-an');
-  });
-
+  /*
+   * The two tests that stood here pinned the rule that a `private` event had to
+   * name whose privacy it was. Neither the level nor the owner column exists
+   * now — nothing is withheld from the shared picture, so there is no privacy
+   * to own.
+   */
   it.each([
     ['blank name', { name: '  ' }],
     ['negative amount', { amount: -1 }],

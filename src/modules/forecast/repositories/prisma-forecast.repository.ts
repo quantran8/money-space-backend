@@ -8,10 +8,6 @@ import {
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import { addDaysIso, todayInTimeZone } from '../../../common/utils/clock';
-import {
-  SHARED_CALCULATION_ASSET_WHERE,
-  SHARED_CALCULATION_VISIBILITY_WHERE,
-} from '../../../common/utils/shared-calculation';
 import { computeCurrentValue } from '../../../common/utils/money-space.utils';
 import { Household } from '../../households/entities/household.entity';
 import type {
@@ -63,15 +59,10 @@ export class PrismaForecastRepository
     // The same trick the snapshots repository uses.
     const [assetRows, eventRows, reserveRows, pricing] = await Promise.all([
       this.prisma.asset.findMany({
-        where: {
-          householdId,
-          deletedAt: null,
-          status: 'active',
-          // Private / personal-private money never enters shared calculations
-          // (§11). Filtered here so the hot path never loads it; the pure
-          // engine re-asserts the same rule.
-          ...SHARED_CALCULATION_ASSET_WHERE,
-        } as never,
+        // No sharing filter: every asset the household owns is part of its
+        // picture. `status: 'active'` is about whether the money still exists,
+        // not about who may see it.
+        where: { householdId, deletedAt: null, status: 'active' },
         include: {
           marketPositions: { where: { deletedAt: null }, take: 1 },
           calculationTerms: { where: { deletedAt: null }, take: 1 },
@@ -82,12 +73,11 @@ export class PrismaForecastRepository
           householdId,
           deletedAt: null,
           status: { notIn: ['completed', 'cancelled'] },
-          ...SHARED_CALCULATION_VISIBILITY_WHERE,
           expectedDate: {
             gte: this.toDate(addDaysIso(today, -LOOKBACK_DAYS)) ?? undefined,
             lte: this.toDate(addDaysIso(today, LOOKAHEAD_DAYS)) ?? undefined,
           },
-        } as never,
+        },
         orderBy: { expectedDate: 'asc' },
       }),
       this.prisma.protectedReserve.findMany({
@@ -116,25 +106,7 @@ export class PrismaForecastRepository
           today,
         ),
         liquidity: asset.liquidity,
-        // Read the REAL values. The snapshot repository's `getActiveAssetLines`
-        // hardcodes `visibilityLevel: 'detail'`; reusing that here would make
-        // the privacy filter silently pass everything.
-        financialNature:
-          (
-            row as never as {
-              financialNature: ForecastLiquidSource['financialNature'];
-            }
-          ).financialNature ?? 'household',
-        visibilityLevel:
-          (
-            row as never as {
-              visibilityLevel: ForecastLiquidSource['visibilityLevel'];
-            }
-          ).visibilityLevel ?? 'detail',
-        valueUpdatedAt:
-          (row as never as { valueUpdatedAt: Date | null }).valueUpdatedAt
-            ?.toISOString()
-            .slice(0, 10) ?? null,
+        valueUpdatedAt: row.valueUpdatedAt?.toISOString().slice(0, 10) ?? null,
       };
     });
 
@@ -151,7 +123,6 @@ export class PrismaForecastRepository
         requirement: event.requirement,
         certainty: event.certainty,
         status: event.status,
-        visibilityLevel: event.visibilityLevel,
         ownerMemberId: event.ownerMemberId ?? null,
         financialGoalId: event.financialGoalId ?? null,
         debtId: event.debtId ?? null,

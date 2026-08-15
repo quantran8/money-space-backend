@@ -154,10 +154,8 @@ export class PrismaSnapshotsRepository
         row.calculationTerms[0],
       );
       const raw = row as unknown as {
-        financialNature?: string;
         visibilityLevel?: string;
         holderMemberId?: string | null;
-        privacyOwnerMemberId?: string | null;
       };
       lines.push({
         assetId: asset.id,
@@ -170,9 +168,7 @@ export class PrismaSnapshotsRepository
         value: computeCurrentValue(asset, marketPrices, fxRates, asOfDate),
         currency: asset.currency,
         visibilityLevel: raw.visibilityLevel ?? 'detail',
-        financialNature: raw.financialNature ?? 'household',
         holderMemberId: raw.holderMemberId ?? null,
-        privacyOwnerMemberId: raw.privacyOwnerMemberId ?? null,
         ...(lineageByAsset.get(asset.id) ?? {}),
       });
     }
@@ -235,11 +231,7 @@ export class PrismaSnapshotsRepository
             assetName: line.assetName,
             assetType: line.assetType,
             liquidity: line.liquidity,
-            financialNature: line.financialNature,
             holderMemberId: this.asUuid(line.holderMemberId ?? null),
-            privacyOwnerMemberId: this.asUuid(
-              line.privacyOwnerMemberId ?? null,
-            ),
             value: line.value,
             currency: line.currency,
             valuationId: this.asUuid(line.valuationId ?? null),
@@ -313,9 +305,7 @@ export class PrismaSnapshotsRepository
       visibilityLevel: v.visibilityLevel,
       // Frozen classification (§17): read from the LINE, never re-read through
       // the asset — the asset may have been reclassified since.
-      financialNature: v.financialNature ?? 'household',
       holderMemberId: v.holderMemberId ?? null,
-      privacyOwnerMemberId: v.privacyOwnerMemberId ?? null,
     }));
 
     // Pre-v3.1 snapshots have no foresight context. NULL is carried through as

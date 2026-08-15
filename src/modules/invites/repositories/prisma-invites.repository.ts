@@ -102,7 +102,6 @@ export class PrismaInvitesRepository
         ${invite.token},
         ${invite.status}::"InviteStatus",
         ${invite.defaultRole}::"HouseholdRole",
-        ${invite.defaultPermissionLevel}::"PermissionLevel",
         ${new Date(invite.expiresAt)}::timestamptz,
         now()
       FROM households h
@@ -182,7 +181,6 @@ export class PrismaInvitesRepository
           role: invite.defaultRole,
           // NULL is meaningful: it derives permission from the role, so a later
           // change to the role's default reaches this member too.
-          permissionLevel: invite.defaultPermissionLevel,
           invitedById: invite.invitedById,
           joinedAt: new Date(),
         } as never,
@@ -230,7 +228,6 @@ export class PrismaInvitesRepository
       token: row.token,
       status: row.status,
       defaultRole: row.defaultRole,
-      defaultPermissionLevel: row.defaultPermissionLevel ?? null,
       expiresAt: new Date(row.expiresAt).toISOString(),
       acceptedById: row.acceptedById ?? null,
       acceptedAt: row.acceptedAt

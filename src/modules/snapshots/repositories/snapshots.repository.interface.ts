@@ -15,14 +15,15 @@ export interface SnapshotAssetLine {
   valuationDate?: string;
   visibilityLevel: string;
   /**
-   * Classification frozen alongside the value (§17). A later change to the
-   * asset's nature/holder/privacy must not silently rewrite what a past
-   * snapshot meant, so these travel WITH the line rather than being re-read
-   * through the asset when the snapshot is displayed.
+   * Frozen alongside the value (§17). Reclassifying an asset later must not
+   * silently rewrite what a past snapshot meant, so these travel WITH the line
+   * rather than being re-read through the asset when the snapshot is displayed.
+   *
+   * The nature/privacy half of that classification is gone with the model it
+   * belonged to; what a line still remembers is who was responsible for the
+   * money and how much of it the picture showed.
    */
-  financialNature: string;
   holderMemberId?: string | null;
-  privacyOwnerMemberId?: string | null;
 }
 
 /** Everything `POST /snapshots` freezes beyond the per-asset lines. */

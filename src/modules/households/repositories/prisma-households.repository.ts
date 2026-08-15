@@ -88,7 +88,6 @@ export class PrismaHouseholdsRepository
           householdId,
           userId: input.ownerId,
           role: 'owner',
-          permissionLevel: 'admin',
           joinedAt: now,
         } as any,
       });
@@ -103,7 +102,6 @@ export class PrismaHouseholdsRepository
             token: randomUUID(),
             status: 'pending',
             defaultRole: 'partner',
-            defaultPermissionLevel: 'view_detail',
             expiresAt: new Date(now.getTime() + INVITE_TTL_MS),
           } as any,
         });

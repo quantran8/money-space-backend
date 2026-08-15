@@ -7,7 +7,6 @@ import {
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import { addDaysIso } from '../../../common/utils/clock';
-import { SHARED_CALCULATION_VISIBILITY_WHERE } from '../../../common/utils/shared-calculation';
 import { Household } from '../../households/entities/household.entity';
 import {
   CashflowEvent,
@@ -121,7 +120,6 @@ export class PrismaCashflowEventsRepository
         status: { notIn: ['completed', 'cancelled'] },
         // Private records never enter shared calculations (§11). Applied here
         // so the hot path never loads them, and re-asserted in the pure engine.
-        ...SHARED_CALCULATION_VISIBILITY_WHERE,
         expectedDate: {
           gte:
             this.toDate(addDaysIso(iso, -FORECAST_LOOKBACK_DAYS)) ?? undefined,
@@ -158,7 +156,7 @@ export class PrismaCashflowEventsRepository
         (id, household_id, name, amount, direction, expected_date,
          recurrence, recurrence_end_date, requirement, certainty,
          status, attention_level, visibility_level,
-         owner_member_id, privacy_owner_member_id, debt_id,
+         owner_member_id, debt_id,
          financial_goal_id, planned_asset_id, note, created_by, updated_at)
       SELECT
         ${event.id}::uuid,
@@ -175,7 +173,6 @@ export class PrismaCashflowEventsRepository
         ${event.attentionLevel}::"AttentionLevel",
         ${event.visibilityLevel}::"VisibilityLevel",
         ${this.asUuid(event.ownerMemberId ?? null)}::uuid,
-        ${this.asUuid(event.privacyOwnerMemberId ?? null)}::uuid,
         ${event.debtId ?? null}::uuid,
         ${event.financialGoalId ?? null}::uuid,
         ${event.plannedAssetId ?? null}::uuid,
@@ -227,7 +224,6 @@ export class PrismaCashflowEventsRepository
         attentionLevel: event.attentionLevel,
         visibilityLevel: event.visibilityLevel,
         ownerMemberId: this.asUuid(event.ownerMemberId ?? null),
-        privacyOwnerMemberId: this.asUuid(event.privacyOwnerMemberId ?? null),
         debtId: event.debtId ?? null,
         financialGoalId: event.financialGoalId ?? null,
         plannedAssetId: event.plannedAssetId ?? null,
@@ -256,7 +252,6 @@ export class PrismaCashflowEventsRepository
         attentionLevel: event.attentionLevel,
         visibilityLevel: event.visibilityLevel,
         ownerMemberId: this.asUuid(event.ownerMemberId ?? null),
-        privacyOwnerMemberId: this.asUuid(event.privacyOwnerMemberId ?? null),
         debtId: event.debtId ?? null,
         financialGoalId: event.financialGoalId ?? null,
         plannedAssetId: event.plannedAssetId ?? null,

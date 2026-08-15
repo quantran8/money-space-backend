@@ -1,4 +1,3 @@
-import type { FinancialNature } from '../../../common/utils/shared-calculation';
 import type { VisibilityLevel } from '../../../common/utils/money-space.utils';
 import type { CalculationTerm } from './calculation-term.entity';
 import type { MarketPosition } from './market-position.entity';
@@ -48,11 +47,9 @@ export interface Asset {
    */
   valueUpdatedAt?: string | null;
   /** Whose money this fundamentally is (§11). Pairs with `visibilityLevel`. */
-  financialNature?: FinancialNature;
   visibilityLevel?: VisibilityLevel;
   /** Who holds it — distinct from who entered it and who owns its privacy. */
   holderMemberId?: string | null;
-  privacyOwnerMemberId?: string | null;
   soldAt?: string;
   /** Remaining floor/land area for a real-estate asset, in square metres. */
   areaSqm?: number;

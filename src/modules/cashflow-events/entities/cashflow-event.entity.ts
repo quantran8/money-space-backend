@@ -57,7 +57,6 @@ export interface CashflowEvent {
   attentionLevel: AttentionLevel;
   visibilityLevel: VisibilityLevel;
   ownerMemberId?: string | null;
-  privacyOwnerMemberId?: string | null;
   debtId?: string | null;
   financialGoalId?: string | null;
   /** The asset this event is earmarked to buy/fund, when known. */
