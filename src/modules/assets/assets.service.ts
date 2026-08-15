@@ -494,6 +494,8 @@ export class AssetsService {
       manualValue: payload.manualValue,
       marketPosition: payload.marketPosition,
       calculationTerm: payload.calculationTerm,
+      visibilityLevel: payload.visibilityLevel ?? 'detail',
+      holderMemberId: payload.holderMemberId ?? null,
     });
 
     // The asset row and its initial valuation must be written atomically. When

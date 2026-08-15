@@ -1,4 +1,6 @@
 import type { VisibilityLevel } from '../../../common/utils/money-space.utils';
+
+export type { VisibilityLevel };
 import type { CalculationTerm } from './calculation-term.entity';
 import type { MarketPosition } from './market-position.entity';
 
@@ -46,9 +48,12 @@ export interface Asset {
    * "we don't know" and "it's old" are different claims.
    */
   valueUpdatedAt?: string | null;
-  /** Whose money this fundamentally is (§11). Pairs with `visibilityLevel`. */
+  /**
+   * How much of this the shared picture shows. Presentation only — it never
+   * changes a total, and any member may change it.
+   */
   visibilityLevel?: VisibilityLevel;
-  /** Who holds it — distinct from who entered it and who owns its privacy. */
+  /** Who is responsible for the money. Distinct from who entered the record. */
   holderMemberId?: string | null;
   soldAt?: string;
   /** Remaining floor/land area for a real-estate asset, in square metres. */
