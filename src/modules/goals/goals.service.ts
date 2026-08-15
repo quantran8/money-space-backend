@@ -37,13 +37,11 @@ export class GoalsService {
    * imports Goals, so the reverse edge would be a cycle.
    */
   async listFinancialGoals(householdId: string, include?: string) {
-    // The guard does not feed the query, so running it serially just added a
-    // round-trip in front of every list call. `Promise.all` still rejects on
-    // the first failure, so the access check is unchanged.
-    const [, goals] = await Promise.all([
-      this.goalsRepository.assertHousehold(householdId),
-      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
-    ]);
+    // No `assertHousehold`: `HouseholdAccessGuard` already validated the
+    // household + membership for this route, so a second lookup of the same
+    // row buys nothing but a query.
+    const goals =
+      await this.goalsRepository.findFinancialGoalsByHousehold(householdId);
 
     const wantsProjection = (include ?? '')
       .split(',')

@@ -62,12 +62,10 @@ export class DebtsService {
   ) {}
 
   async listDebts(householdId: string, query?: ListDebtsQuery) {
-    // Guard and query are independent — see the note in `goals.service.ts`.
-    const [, found] = await Promise.all([
-      this.debtsRepository.assertHousehold(householdId),
-      this.debtsRepository.findDebtsByHousehold(householdId),
-    ]);
-    let items = found;
+    // No `assertHousehold`: `HouseholdAccessGuard` already validated the
+    // household + membership for this route — see the note in
+    // `goals.service.ts`.
+    let items = await this.debtsRepository.findDebtsByHousehold(householdId);
 
     if (query?.status) {
       items = items.filter((debt) => debt.status === query.status);

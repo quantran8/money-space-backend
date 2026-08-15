@@ -124,10 +124,10 @@ describe('ForecastService.whatIf', () => {
         .filter(([, value]) => (value as jest.Mock).mock.calls.length > 0)
         .map(([name]) => name);
 
-    expect(called(forecastRepository).sort()).toEqual([
-      'assertHousehold',
-      'loadForecastBundle',
-    ]);
+    // `loadForecastBundle` alone: access is settled by `HouseholdAccessGuard`
+    // before the handler runs, so the service no longer re-asserts the
+    // household.
+    expect(called(forecastRepository).sort()).toEqual(['loadForecastBundle']);
     expect(called(goalsRepository)).toEqual([]);
   });
 

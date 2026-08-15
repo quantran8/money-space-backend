@@ -38,16 +38,16 @@ export class SnapshotsService {
   ) {}
 
   async listSnapshots(householdId: string) {
-    // Guard and query are independent — see the note in `goals.service.ts`.
-    const [, items] = await Promise.all([
-      this.snapshotsRepository.assertHousehold(householdId),
-      this.snapshotsRepository.listSnapshots(householdId),
-    ]);
+    // No `assertHousehold`: `HouseholdAccessGuard` already validated the
+    // household + membership for this route — see the note in
+    // `goals.service.ts`.
+    const items = await this.snapshotsRepository.listSnapshots(householdId);
     return { householdId, items, total: items.length };
   }
 
   async getSnapshot(householdId: string, snapshotId: string) {
-    await this.snapshotsRepository.assertHousehold(householdId);
+    // The `householdId`-scoped lookup below already 404s for a household the
+    // guard let through but that owns no such snapshot.
     const snapshot = await this.snapshotsRepository.getSnapshotById(
       householdId,
       snapshotId,

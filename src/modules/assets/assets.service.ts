@@ -76,10 +76,9 @@ export class AssetsService {
   }
 
   async getAssetSummary(householdId: string) {
-    const [, assets] = await Promise.all([
-      this.assetsRepository.assertHousehold(householdId),
-      this.getAssetRecords(householdId),
-    ]);
+    // No `assertHousehold`: unlike `listAssets` the summary does not return the
+    // household, and `HouseholdAccessGuard` already validated it for this route.
+    const assets = await this.getAssetRecords(householdId);
     // A sold/closed asset no longer contributes to net worth or the liquidity
     // buckets — it is kept only for history. See [[asset-sale]].
     const activeAssets = assets.filter((asset) => asset.status === 'active');

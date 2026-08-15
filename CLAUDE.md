@@ -40,13 +40,24 @@ Two cross-cutting rules for any create/update/delete flow:
     (Prisma default 5s) and abort with *"Transaction not found"*. Prefer a
     single bulk write (`createMany`) over N single-row inserts, and pass a
     larger `{ timeout }` to `runInTransaction` for legitimately heavy units.
-  - **Interactive transactions run on the direct connection.** `DATABASE_URL`
-    is Supabase's transaction-mode pooler (pgbouncer, :6543), where Prisma
-    interactive transactions are unsupported (statements may hop connections →
-    *"Transaction not found"*). `PrismaService` therefore opens a second client
-    on `DIRECT_URL` (session-mode, :5432) and routes every `$transaction`
-    through it, while single-statement queries stay on the pooler. Set
-    `DIRECT_URL` in any environment that uses a transaction-mode pooler.
+  - **`DATABASE_URL` points at the SESSION-mode pooler (:5432), not the
+    transaction-mode one (:6543).** The transaction pooler was measured at
+    ~270ms per query against ~53ms on :5432 from the same machine (TCP RTT to
+    the region is 57ms — so the gap is pgbouncer overhead, not network). Every
+    endpoint issues several queries, so that ~5x penalty multiplied straight
+    into page-load time. Session mode also makes Prisma's interactive
+    transactions work natively.
+    - Session mode is capped project-wide at `pool_size: 15`, so `DATABASE_URL`
+      carries an explicit `connection_limit` (8) — exceeding the cap fails with
+      *"(EMAXCONNSESSION) max clients reached in session mode"*. Budget for
+      migrations, psql, and any second app instance.
+    - `PrismaService` still opens a second client on `DIRECT_URL` and routes
+      every `$transaction` through it **when `DATABASE_URL` addresses a
+      different endpoint** — the fallback for environments that must run on a
+      transaction-mode pooler, where interactive transactions are unsupported
+      (statements may hop connections → *"Transaction not found"*). The two
+      URLs are compared by host + database, not raw string, so differing query
+      params don't open a redundant second pool.
   - **`PrismaService.client()` is a method, not a getter.** Read through a
     getter, `this` binds to the raw `PrismaClient` target (no model delegates)
     → `this.prisma.household` is `undefined`. As a method, `this` is the Proxy

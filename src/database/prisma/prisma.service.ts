@@ -12,6 +12,22 @@ const FALLBACK_DATABASE_URL =
  */
 export type PrismaTransactionClient = Prisma.TransactionClient;
 
+/**
+ * Whether two Postgres URLs address the same server endpoint, ignoring
+ * credentials and query params. Unparseable input falls back to a raw compare.
+ */
+function sameEndpoint(a: string, b: string): boolean {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    return (
+      left.host === right.host && left.pathname === right.pathname
+    );
+  } catch {
+    return a === b;
+  }
+}
+
 @Injectable()
 export class PrismaService
   extends PrismaClient
@@ -57,14 +73,17 @@ export class PrismaService
       Boolean(process.env.DATABASE_URL) && process.env.NODE_ENV !== 'test';
 
     // Only spin up the dedicated transaction client when a direct URL is
-    // configured AND it differs from the main URL (otherwise the pooler client
-    // already is the session connection, e.g. plain local Postgres).
+    // configured AND it points somewhere other than the main URL (otherwise the
+    // main client already IS a session connection, e.g. plain local Postgres or
+    // DATABASE_URL on :5432).
+    //
+    // Compared by host:port, not by raw string: the two URLs routinely differ
+    // only in query params (`?connection_limit=…` on DATABASE_URL, none on
+    // DIRECT_URL), and a string compare would open a redundant second pool
+    // against the same endpoint — doubling the connections we hold against
+    // Supabase's session-mode `pool_size: 15`.
     const directUrl = process.env.DIRECT_URL;
-    if (
-      this.shouldConnect &&
-      directUrl &&
-      directUrl !== process.env.DATABASE_URL
-    ) {
+    if (this.shouldConnect && directUrl && !sameEndpoint(directUrl, url)) {
       this.txClient = new PrismaClient({
         datasources: { db: { url: directUrl } },
       });

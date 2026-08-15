@@ -108,13 +108,13 @@ export class ForecastService {
     horizonDays: number,
     asOfDate?: IsoDate,
   ): Promise<ForecastInput> {
-    // The guard and the bundle are independent — running them serially added a
-    // round-trip in front of every forecast, flexible-money and financial-state
-    // call. `Promise.all` still rejects if the household check fails.
-    const [, bundle] = await Promise.all([
-      this.forecastRepository.assertHousehold(householdId),
-      this.forecastRepository.loadForecastBundle(householdId),
-    ]);
+    // No `assertHousehold` here: every route that reaches this service is
+    // `/api/households/:householdId/*`, and `HouseholdAccessGuard` has already
+    // proved the household exists (404) and the caller is a member (403)
+    // before the handler ran. Re-checking was a third redundant lookup of the
+    // same row per request.
+    const bundle =
+      await this.forecastRepository.loadForecastBundle(householdId);
     return {
       householdId,
       asOfDate: asOfDate ?? todayInTimeZone(),
@@ -150,6 +150,34 @@ export class ForecastService {
   ) {
     const forecast = await this.forecast(householdId, horizonDays, asOfDate);
     return deriveFinancialState(forecast, computeFlexibleMoney(forecast));
+  }
+
+  /**
+   * All three readings of one forecast, from ONE load.
+   *
+   * `flexibleMoney` and `financialState` are both pure functions OF the
+   * forecast — nothing else. Served as three endpoints they made the client
+   * issue three requests that each re-loaded the same bundle (5 queries) and
+   * re-ran the same engine, for one answer. Home reads all three together, so
+   * this is the shape it actually wants. The individual endpoints stay for
+   * callers that need only one.
+   */
+  async forecastBundle(
+    householdId: string,
+    horizonDays: number,
+    asOfDate?: IsoDate,
+  ): Promise<{
+    forecast: ForecastResult;
+    flexibleMoney: FlexibleMoneyResult;
+    financialState: ReturnType<typeof deriveFinancialState>;
+  }> {
+    const forecast = await this.forecast(householdId, horizonDays, asOfDate);
+    const flexibleMoney = computeFlexibleMoney(forecast);
+    return {
+      forecast,
+      flexibleMoney,
+      financialState: deriveFinancialState(forecast, flexibleMoney),
+    };
   }
 
   /**

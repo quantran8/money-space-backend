@@ -71,19 +71,28 @@ export class HouseholdAccessGuard implements CanActivate {
       throw new UnauthorizedException('Missing bearer token');
     }
 
+    // Both lookups key off `householdId` alone — the membership row does not
+    // depend on the household row existing — so they run concurrently. This
+    // guard sits in front of EVERY household-scoped request; awaiting them in
+    // sequence put two full DB round-trips ahead of every handler.
     const client = this.prisma.client();
-    const household = await client.household.findFirst({
-      where: { id: householdId, deletedAt: null },
-      select: { id: true, createdById: true },
-    });
+    const [household, member] = await Promise.all([
+      client.household.findFirst({
+        where: { id: householdId, deletedAt: null },
+        select: { id: true, createdById: true },
+      }),
+      client.householdMember.findFirst({
+        where: { householdId, userId: user.id, deletedAt: null },
+        select: { role: true, permissionLevel: true },
+      }),
+    ]);
+
+    // Order of checks is preserved: a missing household is a 404 even when the
+    // membership row is also absent, so callers can't probe for household
+    // existence via the 403.
     if (!household) {
       throw new NotFoundException(`Household "${householdId}" was not found`);
     }
-
-    const member = await client.householdMember.findFirst({
-      where: { householdId, userId: user.id, deletedAt: null },
-      select: { role: true, permissionLevel: true },
-    });
     if (!member) {
       throw new ForbiddenException('You are not a member of this household');
     }

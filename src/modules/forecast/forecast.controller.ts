@@ -47,6 +47,22 @@ export class ForecastController {
     );
   }
 
+  /**
+   * Forecast + flexible money + financial state in one response, from one load
+   * of the bundle. Home needs all three; asking for them separately cost three
+   * requests, three bundle loads and three engine runs for one answer.
+   */
+  @Get('forecast-bundle')
+  getForecastBundle(
+    @Param('householdId') householdId: string,
+    @Query('horizon_days') horizonDays?: string,
+  ) {
+    return this.forecast.forecastBundle(
+      householdId,
+      this.forecast.parseHorizon(horizonDays),
+    );
+  }
+
   @Post('what-if')
   runWhatIf(
     @Param('householdId') householdId: string,

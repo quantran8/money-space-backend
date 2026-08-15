@@ -68,10 +68,11 @@ export class AttentionService {
     storedCount: number;
     derivedCount: number;
   }> {
-    const household =
-      await this.attentionRepository.assertHousehold(householdId);
-
-    const [stored, dismissals, input] = await Promise.all([
+    // The household row is real input here (`updateFrequency` drives staleness),
+    // not an access check — the guard already did that — so it loads alongside
+    // the rest instead of in front of it.
+    const [household, stored, dismissals, input] = await Promise.all([
+      this.attentionRepository.assertHousehold(householdId),
       this.attentionRepository.findOpenStoredItems(householdId),
       this.attentionRepository.findDismissals(householdId),
       this.forecast.loadInput(householdId, ATTENTION_HORIZON_DAYS),
