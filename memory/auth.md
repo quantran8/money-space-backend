@@ -1,6 +1,6 @@
 # Auth
 
-Authentication & session gating. Supabase-backed. Related: [[households-and-onboarding]], [[members-and-permissions]].
+Authentication & session gating. Supabase-backed. Related: [[households-and-onboarding]], [[members-and-lifecycle-safeguard]].
 
 ## Overview
 

@@ -51,9 +51,14 @@ one.
 ## SnapshotAssetValue
 
 Denormalizes **each asset's value/type/liquidity/visibility at snapshot time**
-(unique per `[snapshotId, assetId]`), plus its **classification** —
-`financial_nature`, `holder_member_id`, `privacy_owner_member_id` (§17). This is
-what the dashboard's `assetTrend` reads.
+(unique per `[snapshotId, assetId]`), plus `holder_member_id` — who was
+responsible for it at the time (§17). This is what the dashboard's `assetTrend`
+reads.
+
+`financial_nature` and `privacy_owner_member_id` were dropped with the model they
+belonged to (migration `20260815120100`, which writes its own `audit_logs` row
+because reducing frozen history is exactly what §17 exists to prevent — accepted
+only because every affected row was `household`/NULL).
 
 Lines are read back from the LINE, never re-read through the asset: the asset may
 have been reclassified since, and a past snapshot must keep meaning what it meant.
@@ -120,9 +125,8 @@ its OWN reader (`getClassifiedAssetLines` + the pure `computeCurrentValue` util)
 NOT `AssetsService` — so no dependency cycle forms.
 
 `getClassifiedAssetLines` replaced `getActiveAssetLines`, which hardcoded
-`visibilityLevel: 'detail'` on every line. Harmless while snapshots were internal
-bookkeeping; fatal once §17 freezes classification, since it would have recorded
-every private asset as shared — permanently.
+`visibilityLevel: 'detail'` on every line — so a line no longer claims a sharing
+level the asset did not have.
 
 ## Immutability invariant
 
@@ -130,10 +134,10 @@ every private asset as shared — permanently.
 snapshot rows or lines, and nothing mutates them after creation. Editing an old
 valuation cannot rewrite a past snapshot.
 
-This is also why `snapshot_asset_values` freezes the asset's **classification**
-(`financial_nature`, `holder_member_id`, `privacy_owner_member_id`) alongside its
-value — otherwise re-marking an asset `personal_private` would silently change
-what every past snapshot meant. See [[shared-calculation-and-privacy]].
+This is also why `snapshot_asset_values` freezes `holder_member_id` and
+`visibility_level` alongside the value — otherwise reassigning who holds an asset
+would silently change what every past snapshot said. The freeze concept survives
+the privacy removal; it simply freezes less. See [[sharing-levels]].
 
 ## AttentionItem
 

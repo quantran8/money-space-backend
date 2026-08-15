@@ -2,7 +2,7 @@
 
 Expected future movements of money — the **sole input to the forecast**.
 Replaces `upcoming_payments`. Related: [[money-events]], [[debts]],
-[[snapshots-and-networth]], [[shared-calculation-and-privacy]].
+[[snapshots-and-networth]], [[sharing-levels]].
 
 ## Overview
 
@@ -27,7 +27,7 @@ interleaved day by day.
 
 Validation (`assertValid`): outgoing must have a requirement (defaults to
 `required` — the conservative choice); incoming is forced to `null`;
-`recurrenceEndDate >= expectedDate`; a `private` event must name its
+`recurrenceEndDate >= expectedDate`. (The rule that a `private` event must name its
 `privacyOwnerMemberId` (§30 — `created_by` is not a valid substitute for a new
 record).
 

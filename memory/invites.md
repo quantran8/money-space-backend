@@ -1,7 +1,7 @@
 # Household invites
 
 How a second person joins a household (spec §6). Related:
-[[members-and-permissions]], [[households-and-onboarding]], [[auth]].
+[[members-and-lifecycle-safeguard]], [[households-and-onboarding]], [[auth]].
 
 ## The constraint everything follows from
 
@@ -49,7 +49,7 @@ created and be partially guessable from a known sibling.
 
 ## The preview
 
-Returns exactly: household name, inviter name, offered role, status, expiry,
+Returns exactly: household name, inviter name, status, expiry,
 `acceptable`. **Nothing financial** — a token holder has been granted nothing
 yet, and the link may have been forwarded to anyone.
 
@@ -69,9 +69,8 @@ token with no membership — locking the invitee out permanently:
    race, and `household_members_unique` would raise a constraint error instead of
    the friendly no-op the caller expects. Already a member → still consume the
    token (the invite did its job) and return `alreadyMember: true`;
-3. **insert the member** with `permissionLevel = invite.defaultPermissionLevel`.
-   NULL is meaningful: it derives permission from the role, so a later change to
-   the role's default reaches this member too;
+3. **insert the member.** No role and no permission: whoever accepts an invite
+   is an equal member of the household;
 4. **consume the invite**, guarded on `status = 'pending'` so a concurrent accept
    can only win once;
 5. **audit** `household.member_joined`.

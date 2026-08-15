@@ -1,6 +1,6 @@
 # Households & onboarding
 
-Creating the shared finance space and getting both partners in. Related: [[members-and-permissions]], [[auth]], [[settings-and-sharing]].
+Creating the shared finance space and getting both partners in. Related: [[members-and-lifecycle-safeguard]], [[auth]], [[settings-and-sharing]].
 
 ## Overview
 
@@ -10,7 +10,9 @@ A `Household` is the aggregate root (see [[domain-overview]]). Onboarding create
 
 1. Upsert the owner's profile.
 2. Create the household.
-3. Create the creator as a member with role `owner` + permission `admin` (see [[members-and-permissions]]).
+3. Create the creator as a member. No role or permission is stored — the creator is
+   distinguished only by `households.created_by`, which guards the three lifecycle
+   operations (see [[members-and-lifecycle-safeguard]]).
 4. Optionally create a pending `HouseholdInvite` (7-day TTL, random token; defaults partner / view_detail).
 5. Write an `household.created` audit log with `{ invitedPartner }` metadata.
 
@@ -27,7 +29,7 @@ The active household id is kept in a zustand `household-store`; `use-my-househol
 
 ## Invite state machine
 
-`HouseholdInvite`: pending → accepted / expired / cancelled. Unique token, expiry, default role/permission for the invitee. (Accept flow not yet exposed via a controller — only creation on household-create.)
+`HouseholdInvite`: pending → accepted / expired / cancelled. Unique token and expiry. No role or permission is offered — whoever joins is equal. (Accept flow not yet exposed via a controller — only creation on household-create.)
 
 ## Where it lives in code
 

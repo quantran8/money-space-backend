@@ -1,6 +1,7 @@
 # Settings & sharing
 
-Household preferences, reminders, and the flexible privacy/sharing model. Related: [[members-and-permissions]], [[households-and-onboarding]].
+Household preferences and reminders. Related: [[sharing-levels]],
+[[members-and-lifecycle-safeguard]], [[households-and-onboarding]].
 
 ## Overview
 
@@ -24,11 +25,24 @@ Two toggles:
 - `reminderPayments` — upcoming-payment reminders.
 - `reminderUpdate` — weekly/monthly snapshot-update reminder.
 
-## Sharing / privacy controls
+## There are no household-level sharing controls
 
-- `shareAssets` and `shareUpcoming`, each ∈ `SharingLevel = overview | grouped | detailed` — the spec's flexible view-permission model.
-- `hidePrivateNotes` toggle.
-- These map onto the per-entity `VisibilityLevel` and the member permission levels (see [[members-and-permissions]]).
+`shareAssets`, `shareUpcoming` and `hidePrivateNotes` were **removed**, and the
+`SharingCard` with them. Three reasons, strongest first:
+
+1. **They never persisted.** `updateHouseholdConfig` PATCHes only `currency`, so
+   the user's choice was silently discarded. In a product whose proposition is
+   "you decide what to share", a sharing control that lies is the worst bug
+   available.
+2. **A household-scoped default is the wrong shape.** One partner setting a
+   policy for both is structurally the asymmetry this model removes at the
+   record level. Sharing is chosen per record, by whoever is looking at it.
+3. `hidePrivateNotes` had no referent once `private` was gone.
+
+The default for a new record is the code constant `DEFAULT_VISIBILITY_LEVEL`
+(`detail`). If a persisted household default is ever genuinely wanted, it must be
+ONE control backed by a real column and a real PATCH — not three against an
+endpoint that ignores them. See [[sharing-levels]].
 
 ## Data controls
 

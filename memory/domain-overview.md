@@ -43,7 +43,9 @@ When real-time is wired, replace these constants — they affect interest accrua
 - [[debts]] — debts / liabilities and interest maths
 - [[money-events]] — money events + upcoming payments (unified events timeline)
 - [[goals]] — financial goals and progress
-- [[members-and-permissions]] — roles, permissions, invites
+- [[members-and-lifecycle-safeguard]] — equal members; the one creator-only exception
+- [[sharing-levels]] — everything counts; `detail` vs `summary_only`
+- [[activity-log]] — the journal that replaced the permission system
 - [[households-and-onboarding]] — household creation & onboarding
 - [[dashboard]] — overview / status buckets
 - [[snapshots-and-networth]] — net-worth history & attention items
@@ -60,4 +62,6 @@ When real-time is wired, replace these constants — they affect interest accrua
   (frontend-web repo root) are the authoritative DOMAIN-RULES references, kept in
   sync with the Prisma schema.
 - **Authorization is app-layer** (NestJS guards), NOT Postgres RLS — the project
-  stays DB-portable. See [[members-and-permissions]].
+  stays DB-portable. Membership IS the content permission; the only distinction
+between members is `households.created_by`, which guards three lifecycle
+operations. See [[members-and-lifecycle-safeguard]].

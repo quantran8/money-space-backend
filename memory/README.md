@@ -52,7 +52,7 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [protected-reserves.md](protected-reserves.md) — money kept untouched; the forecast constraint
 - [attention-items.md](attention-items.md) — derived vs stored signals, dismissal tombstones
 - [data-freshness.md](data-freshness.md) — how old the picture is; confirm-unchanged
-- [members-and-permissions.md](members-and-permissions.md) — roles, permissions
+- [members-and-lifecycle-safeguard.md](members-and-lifecycle-safeguard.md) — equal members; the one creator-only exception
 - [invites.md](invites.md) — joining a household; why accept is NOT household-scoped
 - [households-and-onboarding.md](households-and-onboarding.md) — household creation & onboarding
 - [dashboard.md](dashboard.md) — overview / status buckets
@@ -60,5 +60,6 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [market-data.md](market-data.md) — market prices & FX reference data
 - [money-formatting.md](money-formatting.md) — API returns raw numbers; client formats money
 - [settings-and-sharing.md](settings-and-sharing.md) — household config, reminders, sharing
-- [shared-calculation-and-privacy.md](shared-calculation-and-privacy.md) — what counts toward the shared picture (derived, not stored) + privacy ownership
+- [sharing-levels.md](sharing-levels.md) — everything counts; `detail` vs `summary_only` is presentation only
+- [activity-log.md](activity-log.md) — the journal: what is logged, what deliberately is not
 - [auth.md](auth.md) — authentication & session gating

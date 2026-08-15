@@ -92,11 +92,29 @@ Two cross-cutting rules for any create/update/delete flow:
 
 ## Authorization
 
-Enforced **app-layer** (NestJS guards/interceptors + repository query filters),
-**not** Postgres RLS — the project stays DB-portable. Permission model is 2-axis:
-role/capability (`HouseholdRole`, with `permissionLevel` as a nullable override →
-NULL derives from role) + record sensitivity (`VisibilityLevel`). Do not add
-`CREATE POLICY` / RLS.
+Enforced **app-layer** (NestJS guards + repository query filters), **not**
+Postgres RLS — the project stays DB-portable. Do not add `CREATE POLICY` / RLS.
+
+**Membership IS the content permission.** Any live member of a household may
+read and write anything in it, including any record's sharing level. There is no
+role and no permission tier: `HouseholdRole` and `PermissionLevel` were both
+dropped. What makes a change accountable is the journal entry it leaves, not a
+permission granted beforehand — see `memory/activity-log.md`.
+
+The single exception is `@RequireHouseholdCreator()`, resolved from
+`households.created_by`, guarding exactly three lifecycle operations: delete the
+household, remove a member, invite a member. `req.membership` is
+`{ householdId, userId, isCreator }` and carries nothing else.
+
+`VisibilityLevel` (`detail | summary_only`) is **presentation, not
+authorization**. Nothing is ever excluded from a shared figure because of it, and
+the server does not redact — any member can flip a record to `detail` in one
+edit, so redaction would be theatre. See `memory/sharing-levels.md`.
+
+Do not reintroduce a role column, a permission enum, or a per-record exclusion
+rule. Each existed here before, none was ever wired to anything that worked, and
+the exclusion rule left the dashboard and the forecast disagreeing about how much
+money the household had.
 
 ## Business logic memory
 

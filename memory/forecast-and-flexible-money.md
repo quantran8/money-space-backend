@@ -1,7 +1,7 @@
 # Forecast, flexible money & what-if
 
 The calculation core of v3.1. Related: [[cashflow-events]], [[protected-reserves]],
-[[goals]], [[shared-calculation-and-privacy]], [[snapshots-and-networth]].
+[[goals]], [[sharing-levels]], [[snapshots-and-networth]].
 
 ## Why day-by-day
 
@@ -35,10 +35,15 @@ synthetic events are objects that never leave memory.
 
 1. Window `[asOfDate, asOfDate + horizonDays]`, **inclusive both ends** — so
    `horizon_days=30` yields 31 day rows.
-2. Starting balance = Σ assets with `liquidity = usable_now` that pass
-   `isIncludedInSharedCalculation`. Savings and long-term holdings are net
-   worth, not cash flow; counting them would make a household look liquid when
-   its money is locked up.
+2. Starting balance = Σ assets with `liquidity = usable_now`. Savings and
+   long-term holdings are net worth, not cash flow; counting them would make a
+   household look liquid when its money is locked up.
+
+   **Liquidity is the only filter.** Sharing level is never consulted: the
+   engine no longer even receives it. See [[sharing-levels]] for why, and
+   `shared-figures.spec.ts` for the test that keeps this figure in agreement
+   with dashboard net worth, the asset summary and snapshot totals — they used
+   to disagree.
 3. Drop `completed` / `cancelled`. `postponed` is **shown but not counted** —
    its date is no longer trustworthy.
 4. Expand recurrence virtually (see [[cashflow-events]]).
