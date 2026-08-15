@@ -14,6 +14,7 @@ import { ForecastModule } from './forecast/forecast.module';
 import { AttentionModule } from './attention/attention.module';
 import { InvitesModule } from './invites/invites.module';
 import { ProtectedReservesModule } from './protected-reserves/protected-reserves.module';
+import { ActivityModule } from './activity/activity.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     InvitesModule,
     MarketDataModule,
     SnapshotsModule,
+    ActivityModule,
   ],
   exports: [
     AuthModule,
@@ -52,6 +54,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     InvitesModule,
     MarketDataModule,
     SnapshotsModule,
+    ActivityModule,
   ],
 })
 export class MoneySpaceModule {}

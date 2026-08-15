@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { AuditService } from '../../common/audit/audit.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { freshnessOf, staleAfterDaysFor } from '../../common/utils/freshness';
 import { Asset, AssetType } from './entities/asset.entity';
@@ -51,6 +52,7 @@ export class AssetsService {
     private readonly assetsRepository: AssetsRepository,
     private readonly prisma: PrismaService,
     private readonly marketData: MarketDataService,
+    private readonly audit: AuditService,
   ) {}
 
   private readonly logger = new Logger(AssetsService.name);
@@ -476,7 +478,11 @@ export class AssetsService {
     return points;
   }
 
-  async createAsset(householdId: string, payload: CreateAssetDto) {
+  async createAsset(
+    householdId: string,
+    payload: CreateAssetDto,
+    actorId?: string,
+  ) {
     // `insertAsset` asserts the household exists (and needs its row to resolve
     // `createdById`), so we don't assert it a second time here.
     const asset = this.normalizeAsset({
@@ -550,6 +556,7 @@ export class AssetsService {
     householdId: string,
     assetId: string,
     payload: UpdateAssetDto,
+    actorId?: string,
   ) {
     const current = await this.ensureAsset(householdId, assetId);
     const next = this.normalizeAsset({
@@ -935,14 +942,30 @@ export class AssetsService {
     });
   }
 
-  async deleteAsset(householdId: string, assetId: string) {
-    await this.ensureAsset(householdId, assetId);
-    // These three writes must all land or none: run them in one transaction,
-    // sequentially (they share the transaction's single connection).
+  async deleteAsset(householdId: string, assetId: string, actorId?: string) {
+    const current = await this.ensureAsset(householdId, assetId);
+    // These writes must all land or none: run them in one transaction,
+    // sequentially (they share the transaction's single connection). The
+    // journal entry joins the same transaction, so it can never describe a
+    // deletion that was rolled back.
     await this.prisma.runInTransaction(async () => {
       await this.assetsRepository.deleteAsset(assetId);
       await this.assetsRepository.deleteAssetValueHistory(assetId);
       await this.assetsRepository.unlinkAssetFromMoneyEvents(assetId);
+      await this.audit.record(householdId, {
+        actorId,
+        action: 'asset.deleted',
+        entityType: 'asset',
+        entityId: assetId,
+        impact: {
+          metric: 'net_worth',
+          delta: -(current.manualValue ?? 0),
+        },
+        details: {
+          objectName: current.name,
+          visibilityLevel: current.visibilityLevel ?? 'detail',
+        },
+      });
     });
     return {
       deleted: true,

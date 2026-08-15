@@ -7,6 +7,8 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import type { AuthUser } from '../auth/entities/auth-user.entity';
 import { AssetsService } from './assets.service';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
@@ -86,8 +88,9 @@ export class AssetsController {
   createAsset(
     @Param('householdId') householdId: string,
     @Body() payload: CreateAssetDto,
+    @CurrentUser() user?: AuthUser,
   ) {
-    return this.assetsService.createAsset(householdId, payload);
+    return this.assetsService.createAsset(householdId, payload, user?.id);
   }
 
   @Patch(':assetId')
@@ -95,15 +98,17 @@ export class AssetsController {
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
     @Body() payload: UpdateAssetDto,
+    @CurrentUser() user?: AuthUser,
   ) {
-    return this.assetsService.updateAsset(householdId, assetId, payload);
+    return this.assetsService.updateAsset(householdId, assetId, payload, user?.id);
   }
 
   @Delete(':assetId')
   deleteAsset(
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
+    @CurrentUser() user?: AuthUser,
   ) {
-    return this.assetsService.deleteAsset(householdId, assetId);
+    return this.assetsService.deleteAsset(householdId, assetId, user?.id);
   }
 }

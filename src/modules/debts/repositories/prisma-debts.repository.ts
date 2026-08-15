@@ -358,10 +358,15 @@ export class PrismaDebtsRepository
       metadata: Record<string, unknown>;
     },
   ): Promise<void> {
-    // Resolve the actor from the household owner in one statement — debt
-    // endpoints have no request user, mirroring how `insertDebt` derives
-    // `created_by`. If the household is missing/soft-deleted the SELECT yields
-    // no row and nothing is written (the debt update would already have 404'd).
+    // actor_id is NULL, not the household creator.
+    //
+    // This used to write `h.created_by`, on the reasoning that debt endpoints
+    // have no request user. That was harmless while nothing read the table and
+    // becomes a visible lie the moment the journal ships: the feed would say
+    // "An corrected the mortgage" when Bình did it. NULL means "system", which
+    // the schema already sanctions and the client renders as such. Threading
+    // the real actor through the debt write path is the proper fix; until then
+    // an honest absence beats a plausible wrong name.
     const metadataJson = JSON.stringify(entry.metadata);
     await this.prisma.$executeRaw`
       INSERT INTO audit_logs
@@ -369,7 +374,7 @@ export class PrismaDebtsRepository
       SELECT
         ${uuidv7()}::uuid,
         h.id,
-        h.created_by,
+        NULL::uuid,
         ${entry.action},
         ${entry.entityType},
         ${entry.entityId}::uuid,
