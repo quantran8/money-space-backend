@@ -13,7 +13,6 @@ import { Household } from '../../households/entities/household.entity';
 import type {
   ForecastCashflowEvent,
   ForecastLiquidSource,
-  ForecastProtectedReserve,
 } from '../domain/forecast.types';
 import {
   ForecastBundle,
@@ -57,7 +56,7 @@ export class PrismaForecastRepository
     // Three queries in parallel. Deliberately does NOT go through AssetsService:
     // that would make ForecastModule depend on AssetsModule and form a cycle.
     // The same trick the snapshots repository uses.
-    const [assetRows, eventRows, reserveRows, pricing] = await Promise.all([
+    const [assetRows, eventRows, pricing] = await Promise.all([
       this.prisma.asset.findMany({
         // No sharing filter: every asset the household owns is part of its
         // picture. `status: 'active'` is about whether the money still exists,
@@ -79,9 +78,6 @@ export class PrismaForecastRepository
           },
         },
         orderBy: { expectedDate: 'asc' },
-      }),
-      this.prisma.protectedReserve.findMany({
-        where: { householdId, deletedAt: null },
       }),
       this.loadPricing(),
     ]);
@@ -129,16 +125,7 @@ export class PrismaForecastRepository
       };
     });
 
-    const protectedReserves: ForecastProtectedReserve[] = reserveRows.map(
-      (row) => ({
-        id: row.id,
-        name: row.name,
-        amount: numberFromDb(row.amount),
-        status: row.status,
-      }),
-    );
-
-    return { assets, cashflowEvents, protectedReserves };
+    return { assets, cashflowEvents };
   }
 
   /** Latest market price / FX row per key, for valuing market-priced assets. */

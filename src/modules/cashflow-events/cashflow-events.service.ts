@@ -68,8 +68,9 @@ export class CashflowEventsService {
   async createCashflowEvent(
     householdId: string,
     payload: CreateCashflowEventDto,
+    creatorMemberId?: string,
   ) {
-    const event = this.buildEvent(householdId, payload);
+    const event = this.buildEvent(householdId, payload, creatorMemberId);
     await this.cashflowEventsRepository.insertCashflowEvent(event);
     return event;
   }
@@ -99,7 +100,6 @@ export class CashflowEventsService {
     const direction = payload.direction ?? event.direction;
     const next: CashflowEvent = {
       ...event,
-      ...payload,
       id: event.id,
       householdId: event.householdId,
       name: payload.name?.trim() ?? event.name,
@@ -116,8 +116,20 @@ export class CashflowEventsService {
         payload.requirement ?? event.requirement ?? undefined,
       ),
       certainty: payload.certainty ?? event.certainty,
-      visibilityLevel: payload.visibilityLevel ?? event.visibilityLevel,
       attentionLevel: payload.attentionLevel ?? event.attentionLevel,
+      ownerMemberId:
+        payload.ownerMemberId !== undefined
+          ? payload.ownerMemberId
+          : event.ownerMemberId,
+      debtId: payload.debtId !== undefined ? payload.debtId : event.debtId,
+      financialGoalId:
+        payload.financialGoalId !== undefined
+          ? payload.financialGoalId
+          : event.financialGoalId,
+      plannedAssetId:
+        payload.plannedAssetId !== undefined
+          ? payload.plannedAssetId
+          : event.plannedAssetId,
       note: payload.note?.trim() ?? event.note,
     };
 
@@ -317,6 +329,7 @@ export class CashflowEventsService {
   private buildEvent(
     householdId: string,
     payload: CreateCashflowEventDto,
+    creatorMemberId?: string,
   ): CashflowEvent {
     const event: CashflowEvent = {
       id: this.cashflowEventsRepository.createId('cashflow-event'),
@@ -334,8 +347,7 @@ export class CashflowEventsService {
       certainty: payload.certainty ?? 'confirmed',
       status: 'expected',
       attentionLevel: payload.attentionLevel ?? 'normal',
-      visibilityLevel: payload.visibilityLevel ?? 'detail',
-      ownerMemberId: payload.ownerMemberId ?? null,
+      ownerMemberId: payload.ownerMemberId || creatorMemberId || null,
       debtId: payload.debtId ?? null,
       financialGoalId: payload.financialGoalId ?? null,
       plannedAssetId: payload.plannedAssetId ?? null,

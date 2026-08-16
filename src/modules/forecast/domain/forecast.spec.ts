@@ -43,7 +43,6 @@ function input(over: Partial<ForecastInput> = {}): ForecastInput {
     horizonDays: 30,
     assets: [asset()],
     cashflowEvents: [],
-    protectedReserves: [],
     ...over,
   };
 }
@@ -244,15 +243,6 @@ describe('runForecast — status handling', () => {
 
     expect(result.endingProjectedBalance).toBe(15 * M);
   });
-
-  /*
-   * There is no "excludes a private event" test here any more, and deliberately
-   * no "counts a summary_only event" replacement either: `ForecastCashflowEvent`
-   * no longer carries a sharing level at all, so the engine has no concept left
-   * to assert against. That the sharing level does not move any number is
-   * pinned end-to-end by the agreement test in `shared-figures.spec.ts`, which
-   * is where it can actually be observed.
-   */
 });
 
 describe('runForecast — day series', () => {
@@ -324,36 +314,7 @@ describe('runForecast — day series', () => {
   });
 });
 
-describe('runForecast — reserve and assumptions', () => {
-  it('flags the reserve as breached when the low point dips below it', () => {
-    const result = runForecast(
-      input({
-        assets: [asset({ value: 50 * M })],
-        protectedReserves: [
-          { id: 'r1', name: 'Quy an toan', amount: 40 * M, status: 'active' },
-        ],
-        cashflowEvents: [event({ amount: 20 * M, expectedDate: '2026-08-20' })],
-      }),
-    );
-
-    expect(result.protectedReserveAmount).toBe(40 * M);
-    expect(result.lowestProjectedBalance).toBe(30 * M);
-    expect(result.reserveProtected).toBe(false);
-  });
-
-  it('ignores archived reserves', () => {
-    const result = runForecast(
-      input({
-        protectedReserves: [
-          { id: 'r1', name: 'Old', amount: 40 * M, status: 'archived' },
-        ],
-      }),
-    );
-
-    expect(result.protectedReserveAmount).toBe(0);
-    expect(result.assumptions).toContainEqual({ code: 'no_reserve_declared' });
-  });
-
+describe('runForecast — assumptions', () => {
   // The client renders all copy; the backend must never emit a sentence.
   it('emits assumption CODES, never localized text', () => {
     const result = runForecast(
@@ -378,10 +339,7 @@ describe('runForecast — reserve and assumptions', () => {
       }
     }
     expect(result.assumptions.map((a) => a.code)).toEqual(
-      expect.arrayContaining([
-        'horizon_days',
-        'estimated_incoming_excluded',
-      ]),
+      expect.arrayContaining(['horizon_days', 'estimated_incoming_excluded']),
     );
   });
 

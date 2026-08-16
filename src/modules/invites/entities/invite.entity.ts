@@ -1,5 +1,4 @@
-import type {
-} from '../../members/entities/member.entity';
+import type {} from '../../members/entities/member.entity';
 
 /** Matches the `InviteStatus` DB enum exactly — `cancelled` is withdrawal. */
 export type InviteStatus = 'pending' | 'accepted' | 'expired' | 'cancelled';

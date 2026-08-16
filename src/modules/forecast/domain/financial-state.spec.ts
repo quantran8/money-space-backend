@@ -19,7 +19,6 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
     value: 100 * M,
     liquidity: 'usable_now',
     financialNature: 'household',
-    visibilityLevel: 'detail',
     valueUpdatedAt: '2026-08-13',
     ...over,
   };
@@ -39,7 +38,6 @@ function event(
     requirement: 'required',
     certainty: 'confirmed',
     status: 'expected',
-    visibilityLevel: 'detail',
     ...over,
   };
 }
@@ -51,7 +49,6 @@ function derive(over: Partial<ForecastInput> = {}) {
     horizonDays: 30,
     assets: [asset()],
     cashflowEvents: [event()],
-    protectedReserves: [],
     ...over,
   });
   return deriveFinancialState(forecast, computeFlexibleMoney(forecast));
@@ -70,12 +67,6 @@ describe('deriveFinancialState — incomplete', () => {
     expect(result.state).toBe('incomplete');
     expect(result.reasons).toContain('no_cashflow_events');
   });
-
-  it('does NOT become incomplete merely because no reserve is declared', () => {
-    const result = derive({ protectedReserves: [] });
-    expect(result.reasons).toContain('no_reserve_declared');
-    expect(result.state).not.toBe('incomplete');
-  });
 });
 
 describe('deriveFinancialState — tight', () => {
@@ -89,37 +80,9 @@ describe('deriveFinancialState — tight', () => {
     expect(result.reasons).toContain('required_payment_not_covered');
     expect(result.reasons).toContain('lowest_projected_balance_negative');
   });
-
-  it('is tight when the reserve is materially breached', () => {
-    const result = derive({
-      assets: [asset({ value: 100 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy', amount: 100 * M, status: 'active' },
-      ],
-      // Leaves 30M against a 100M reserve → below the 0.5 breach ratio.
-      cashflowEvents: [event({ amount: 70 * M })],
-    });
-
-    expect(result.state).toBe('tight');
-    expect(result.reasons).toContain('reserve_significantly_breached');
-  });
 });
 
 describe('deriveFinancialState — watch', () => {
-  it('is watch when the forecast comes near the reserve without breaching it', () => {
-    const result = derive({
-      assets: [asset({ value: 100 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy', amount: 90 * M, status: 'active' },
-      ],
-      // Leaves 95M: above the reserve, but inside the 1.1× "near" band.
-      cashflowEvents: [event({ amount: 5 * M })],
-    });
-
-    expect(result.state).toBe('watch');
-    expect(result.reasons).toContain('forecast_near_reserve');
-  });
-
   it('is watch when a single obligation is a large share of liquid money', () => {
     const result = derive({
       assets: [asset({ value: 100 * M })],
@@ -158,9 +121,6 @@ describe('deriveFinancialState — on_track and precedence', () => {
   it('is on_track when nothing fires', () => {
     const result = derive({
       assets: [asset({ value: 500 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy', amount: 20 * M, status: 'active' },
-      ],
       cashflowEvents: [event({ amount: 1 * M })],
     });
 
@@ -171,9 +131,6 @@ describe('deriveFinancialState — on_track and precedence', () => {
   it('reports tight over watch while keeping BOTH sets of reasons', () => {
     const result = derive({
       assets: [asset({ value: 10 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy', amount: 50 * M, status: 'active' },
-      ],
       cashflowEvents: [event({ amount: 40 * M })],
     });
 
@@ -212,8 +169,6 @@ describe('FINANCIAL_STATE_THRESHOLDS', () => {
   // not a magic number quietly drifting.
   it('are the documented values', () => {
     expect(FINANCIAL_STATE_THRESHOLDS).toEqual({
-      reserveBreachRatio: 0.5,
-      nearReserveRatio: 1.1,
       flexibleMoneyLowRatio: 0.1,
       largePaymentRatio: 0.3,
       staleAssetRatio: 0.34,

@@ -13,15 +13,12 @@ export interface SnapshotAssetLine {
   valuationId?: string;
   valuationMethod?: string;
   valuationDate?: string;
-  visibilityLevel: string;
   /**
    * Frozen alongside the value (§17). Reclassifying an asset later must not
    * silently rewrite what a past snapshot meant, so these travel WITH the line
    * rather than being re-read through the asset when the snapshot is displayed.
    *
-   * The nature/privacy half of that classification is gone with the model it
-   * belonged to; what a line still remembers is who was responsible for the
-   * money and how much of it the picture showed.
+   * What a line remembers is who was responsible for the money.
    */
   holderMemberId?: string | null;
 }
@@ -37,7 +34,6 @@ export interface CreateSnapshotInput {
   totalDebt: number;
   upcomingDueAmount: number;
   attentionCount: number;
-  protectedReserveAmount: number;
   forecastHorizonDays: number;
   upcomingIncomeAmount: number;
   upcomingOutgoingAmount: number;
@@ -52,13 +48,7 @@ export interface CreateSnapshotInput {
 export interface SnapshotsRepository {
   assertHousehold(householdId: string): Promise<Household>;
   createId(prefix: string): string;
-  /**
-   * Active assets valued as of `asOfDate`, carrying their REAL classification.
-   *
-   * Distinct from the legacy `getActiveAssetLines`, which hardcoded
-   * `visibilityLevel: 'detail'` — reusing that here would have frozen every
-   * private asset into the snapshot as if it were shared.
-   */
+  /** Active assets valued as of `asOfDate`, with their holder metadata. */
   getClassifiedAssetLines(
     householdId: string,
     asOfDate: string,

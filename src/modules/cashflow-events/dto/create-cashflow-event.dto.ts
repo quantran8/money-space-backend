@@ -1,5 +1,4 @@
 import type { RecurrenceFrequency } from '../../../common/utils/recurrence';
-import type { VisibilityLevel } from '../../../common/utils/money-space.utils';
 import type {
   AttentionLevel,
   CashflowCertainty,
@@ -20,11 +19,9 @@ export interface CreateCashflowEventDto {
   requirement?: 'required' | 'planned';
   certainty?: CashflowCertainty;
   ownerMemberId?: string | null;
-  /** Required when `visibilityLevel` is `private` (§30). */
   debtId?: string | null;
   financialGoalId?: string | null;
   plannedAssetId?: string | null;
   attentionLevel?: AttentionLevel;
-  visibilityLevel?: VisibilityLevel;
   note?: string;
 }

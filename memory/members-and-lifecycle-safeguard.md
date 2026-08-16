@@ -7,7 +7,7 @@ Who is in a household, and the one thing that is not open to everyone. Related:
 
 **Two partners are equal in everything that touches the money.** Any live member
 may read and write any record in their household — assets, debts, events, goals,
-reserves — and may change any record's sharing level. There is no role, no
+events — and may change any record's sharing level. There is no role, no
 permission tier, and no approval flow between them.
 
 What makes a change accountable is **the journal entry it leaves**, not a

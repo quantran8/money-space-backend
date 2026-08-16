@@ -18,13 +18,10 @@ export type FinancialState = 'on_track' | 'watch' | 'tight' | 'incomplete';
 export type FinancialStateReason =
   | 'no_liquid_sources'
   | 'no_cashflow_events'
-  | 'no_reserve_declared'
   | 'required_payment_not_covered'
   | 'lowest_projected_balance_negative'
-  | 'reserve_significantly_breached'
   | 'flexible_money_low'
   | 'large_payment_upcoming'
-  | 'forecast_near_reserve'
   | 'unconfirmed_critical_data'
   | 'stale_data';
 
@@ -41,10 +38,6 @@ export interface FinancialStateResult {
  * rather than a magic number quietly drifting.
  */
 export const FINANCIAL_STATE_THRESHOLDS = {
-  /** Below reserve × this → "materially breached", not just brushed. */
-  reserveBreachRatio: 0.5,
-  /** Below reserve × this → close enough to be worth a look. */
-  nearReserveRatio: 1.1,
   /** Flexible money below this share of horizon obligations → watch. */
   flexibleMoneyLowRatio: 0.1,
   /** A single required outflow at/above this share of liquid → watch. */
@@ -67,10 +60,6 @@ export function deriveFinancialState(
   if (forecast.liveEventCount === 0) {
     reasons.push('no_cashflow_events');
   }
-  if (forecast.protectedReserveAmount === 0) {
-    // A reason, never enough on its own to call the picture incomplete.
-    reasons.push('no_reserve_declared');
-  }
 
   // --- tight ---------------------------------------------------------------
   if (!forecast.obligationsCovered) {
@@ -78,13 +67,6 @@ export function deriveFinancialState(
   }
   if (forecast.lowestProjectedBalance < 0) {
     reasons.push('lowest_projected_balance_negative');
-  }
-  if (
-    forecast.protectedReserveAmount > 0 &&
-    forecast.lowestProjectedBalance <
-      forecast.protectedReserveAmount * t.reserveBreachRatio
-  ) {
-    reasons.push('reserve_significantly_breached');
   }
 
   // --- watch ---------------------------------------------------------------
@@ -102,13 +84,6 @@ export function deriveFinancialState(
     if (largest >= forecast.startingLiquidBalance * t.largePaymentRatio) {
       reasons.push('large_payment_upcoming');
     }
-  }
-  if (
-    forecast.protectedReserveAmount > 0 &&
-    forecast.lowestProjectedBalance <
-      forecast.protectedReserveAmount * t.nearReserveRatio
-  ) {
-    reasons.push('forecast_near_reserve');
   }
   if (forecast.timeline.some((o) => o.status === 'pending_confirmation')) {
     reasons.push('unconfirmed_critical_data');
@@ -129,14 +104,12 @@ export function deriveFinancialState(
     state = 'incomplete';
   } else if (
     has('required_payment_not_covered') ||
-    has('lowest_projected_balance_negative') ||
-    has('reserve_significantly_breached')
+    has('lowest_projected_balance_negative')
   ) {
     state = 'tight';
   } else if (
     has('flexible_money_low') ||
     has('large_payment_upcoming') ||
-    has('forecast_near_reserve') ||
     has('unconfirmed_critical_data') ||
     has('stale_data')
   ) {

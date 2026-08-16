@@ -72,20 +72,17 @@ export class ActivityService {
     entityType: string;
     entityId: string | null;
     metadata: unknown;
-    actor: { id: string; fullName: string | null; displayName: string | null } | null;
+    actor: {
+      id: string;
+      fullName: string | null;
+      displayName: string | null;
+    } | null;
   }) {
     const metadata = (row.metadata ?? {}) as Record<string, unknown>;
     const impact = (metadata.impact ?? null) as {
       metric: string;
       delta: number;
     } | null;
-
-    // A folded record must not print its name here. The journal is the one
-    // place both partners are guaranteed to look, so leaking the specifics of
-    // a `summary_only` record into it would undo the fold at exactly the wrong
-    // spot. The client renders `objectName: null` as "một khoản đóng góp chung".
-    const folded = metadata.visibilityLevel === 'summary_only';
-    const objectName = folded ? null : ((metadata.objectName as string) ?? null);
 
     return {
       id: row.id,
@@ -99,8 +96,8 @@ export class ActivityService {
       action: row.action,
       objectType: row.entityType,
       objectId: row.entityId,
-      objectName,
-      amount: folded ? null : ((metadata.amount as number) ?? null),
+      objectName: (metadata.objectName as string) ?? null,
+      amount: (metadata.amount as number) ?? null,
       impact,
     };
   }

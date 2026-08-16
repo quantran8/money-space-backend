@@ -13,6 +13,8 @@ import type { CreateCashflowEventDto } from './dto/create-cashflow-event.dto';
 import type { UpdateCashflowEventDto } from './dto/update-cashflow-event.dto';
 import type { CompleteCashflowEventDto } from './dto/complete-cashflow-event.dto';
 import type { ListCashflowEventsQuery } from './dto/list-cashflow-events.query';
+import { CurrentMembership } from '../auth/decorators/current-membership.decorator';
+import type { HouseholdMembership } from '../auth/guards/household-access.guard';
 
 /**
  * Replaces `/upcoming-payments` (spec §18). Not an alias — the payload shape
@@ -43,8 +45,13 @@ export class CashflowEventsController {
   createCashflowEvent(
     @Param('householdId') householdId: string,
     @Body() payload: CreateCashflowEventDto,
+    @CurrentMembership() membership?: HouseholdMembership,
   ) {
-    return this.cashflowEvents.createCashflowEvent(householdId, payload);
+    return this.cashflowEvents.createCashflowEvent(
+      householdId,
+      payload,
+      membership?.memberId,
+    );
   }
 
   @Patch(':eventId')

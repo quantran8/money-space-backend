@@ -23,7 +23,7 @@ snapshots. Those are facts about a moment, so a row is the right home.
 | Rule code | Kind |
 |---|---|
 | `cashflow_required_due_soon`, `cashflow_overdue` | derived |
-| `low_projected_balance`, `reserve_at_risk` | derived |
+| `low_projected_balance` | derived |
 | `stale_data` | derived |
 | `user_flagged`, `money_event_flagged` | stored |
 | `asset_moved_sharply` | stored (needs a comparison base) |
@@ -63,9 +63,6 @@ stop working on the next read. Pinned by a test.
 - **A recurring series collapses to ONE signal**, keyed on the source event.
   Monthly rent inside a 90-day horizon must not produce three copies of the same
   fact.
-- **`reserve_at_risk` is suppressed when the balance is already negative.**
-  Both would fire on the same dip; reporting it twice double-counts one worry,
-  and `low_projected_balance` is the bigger fact.
 - **`stale_data` is measured against the household's OWN cadence.** A household
   on `manual` never goes stale — see [[data-freshness]].
 

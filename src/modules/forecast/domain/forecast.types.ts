@@ -20,8 +20,6 @@ export type AssumptionCode =
   | 'estimated_incoming_excluded'
   | 'planned_outflows_included'
   | 'no_confirmed_inflow_in_horizon'
-  | 'reserve_applied'
-  | 'no_reserve_declared'
   | 'overdue_events_clamped_to_today'
   | 'stale_asset_values'
   | 'same_day_outflows_ordered_first';
@@ -61,13 +59,6 @@ export interface ForecastCashflowEvent {
   isSynthetic?: boolean;
 }
 
-export interface ForecastProtectedReserve {
-  id: string;
-  name: string;
-  amount: number;
-  status: 'active' | 'archived';
-}
-
 export interface ForecastOptions {
   /**
    * §26A.5 — conservative default: `estimated` incoming is DISPLAYED but not
@@ -91,7 +82,6 @@ export interface ForecastInput {
   horizonDays: number;
   assets: ForecastLiquidSource[];
   cashflowEvents: ForecastCashflowEvent[];
-  protectedReserves: ForecastProtectedReserve[];
   options?: ForecastOptions;
 }
 
@@ -154,8 +144,6 @@ export interface ForecastResult {
   lowestProjectedBalanceDate: IsoDate;
   endingProjectedBalance: number;
   obligationsCovered: boolean;
-  protectedReserveAmount: number;
-  reserveProtected: boolean;
   nextSufficientlyCertainInflow: {
     date: IsoDate;
     amount: number;

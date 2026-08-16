@@ -18,8 +18,7 @@
 import type { IsoDate } from '../../../common/utils/clock';
 import type { ForecastCashflowEvent, ForecastResult } from './forecast.types';
 
-export type WhatIfResultType =
-  'comfortable' | 'watch' | 'tight' | 'not_covered';
+export type WhatIfResultType = 'comfortable' | 'tight' | 'not_covered';
 
 /**
  * The spend, as the forecast sees it.
@@ -56,7 +55,6 @@ export function buildSyntheticEvent(params: {
 export function classifyResult(after: ForecastResult): WhatIfResultType {
   if (!after.obligationsCovered) return 'not_covered';
   if (after.lowestProjectedBalance < 0) return 'tight';
-  if (!after.reserveProtected) return 'watch';
   return 'comfortable';
 }
 

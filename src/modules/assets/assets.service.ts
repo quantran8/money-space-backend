@@ -27,6 +27,9 @@ import {
   computeCurrentValue,
   computeLiquidityTotals,
   defaultValuationModeForAssetType,
+  liquidityForAsset,
+  marketUnitForAssetType,
+  normalizeCountsAsFlexible,
 } from '../../common/utils/money-space.utils';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
@@ -481,7 +484,7 @@ export class AssetsService {
   async createAsset(
     householdId: string,
     payload: CreateAssetDto,
-    actorId?: string,
+    creatorMemberId?: string,
   ) {
     // `insertAsset` asserts the household exists (and needs its row to resolve
     // `createdById`), so we don't assert it a second time here.
@@ -492,7 +495,11 @@ export class AssetsService {
       type: payload.type,
       valuationMode:
         payload.valuationMode ?? defaultValuationModeForAssetType(payload.type),
-      liquidity: payload.liquidity,
+      countsAsFlexible: normalizeCountsAsFlexible(
+        payload.type,
+        payload.countsAsFlexible,
+      ),
+      liquidity: liquidityForAsset(payload.type, payload.countsAsFlexible),
       currency: payload.currency ?? 'VND',
       note: payload.note ?? '',
       status: 'active',
@@ -500,8 +507,7 @@ export class AssetsService {
       manualValue: payload.manualValue,
       marketPosition: payload.marketPosition,
       calculationTerm: payload.calculationTerm,
-      visibilityLevel: payload.visibilityLevel ?? 'detail',
-      holderMemberId: payload.holderMemberId ?? null,
+      holderMemberId: payload.holderMemberId || creatorMemberId || null,
     });
 
     // The asset row and its initial valuation must be written atomically. When
@@ -556,20 +562,28 @@ export class AssetsService {
     householdId: string,
     assetId: string,
     payload: UpdateAssetDto,
-    actorId?: string,
   ) {
     const current = await this.ensureAsset(householdId, assetId);
+    const nextType = payload.type ?? current.type;
+    // An untouched override survives a type change as INTENT, but is dropped
+    // once it merely restates the new type's own default.
+    const nextCountsAsFlexible = normalizeCountsAsFlexible(
+      nextType,
+      payload.countsAsFlexible !== undefined
+        ? payload.countsAsFlexible
+        : current.countsAsFlexible,
+    );
     const next = this.normalizeAsset({
       ...current,
-      ...payload,
       id: current.id,
       householdId: current.householdId,
       valuationMode:
         payload.valuationMode ??
         defaultValuationModeForAssetType(payload.type ?? current.type),
       name: payload.name ?? current.name,
-      type: payload.type ?? current.type,
-      liquidity: payload.liquidity ?? current.liquidity,
+      type: nextType,
+      countsAsFlexible: nextCountsAsFlexible,
+      liquidity: liquidityForAsset(nextType, nextCountsAsFlexible),
       currency: payload.currency ?? current.currency,
       note: payload.note ?? current.note,
       areaSqm:
@@ -589,6 +603,10 @@ export class AssetsService {
         payload.calculationTerm !== undefined
           ? payload.calculationTerm
           : current.calculationTerm,
+      holderMemberId:
+        payload.holderMemberId !== undefined
+          ? payload.holderMemberId
+          : current.holderMemberId,
     });
 
     // Persist the asset and its valuation atomically. Updating only the latest
@@ -963,7 +981,6 @@ export class AssetsService {
         },
         details: {
           objectName: current.name,
-          visibilityLevel: current.visibilityLevel ?? 'detail',
         },
       });
     });
@@ -1351,6 +1368,19 @@ export class AssetsService {
     if (mode === 'market_priced') {
       next.manualValue = undefined;
       next.calculationTerm = undefined;
+      if (next.marketPosition) {
+        const symbol = next.marketPosition.symbol.trim().toUpperCase();
+        next.name = symbol;
+        next.marketPosition = {
+          ...next.marketPosition,
+          symbol,
+          unit: marketUnitForAssetType(
+            next.type,
+            symbol,
+            next.marketPosition.unit,
+          ),
+        };
+      }
     }
 
     if (mode === 'formula_calculated') {

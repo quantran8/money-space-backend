@@ -36,14 +36,7 @@ function round(value: number): number {
 }
 
 export function runForecast(input: ForecastInput): ForecastResult {
-  const {
-    householdId,
-    asOfDate,
-    horizonDays,
-    assets,
-    protectedReserves,
-    options = {},
-  } = input;
+  const { householdId, asOfDate, horizonDays, assets, options = {} } = input;
 
   const includeEstimatedIncoming = options.includeEstimatedIncoming ?? false;
   const includePlannedOutgoing = options.includePlannedOutgoing ?? true;
@@ -61,9 +54,7 @@ export function runForecast(input: ForecastInput): ForecastResult {
   //    shared source of truth, and the old rule also put this number
   //    permanently at odds with the dashboard's net worth, which never applied
   //    it.
-  const usableNow = assets.filter(
-    (asset) => asset.liquidity === 'usable_now',
-  );
+  const usableNow = assets.filter((asset) => asset.liquidity === 'usable_now');
   const startingLiquidBalance = usableNow.reduce(
     (sum, asset) => sum + asset.value,
     0,
@@ -236,19 +227,13 @@ export function runForecast(input: ForecastInput): ForecastResult {
     }
   }
 
-  // 10. Reserve.
-  const protectedReserveAmount = protectedReserves
-    .filter((reserve) => reserve.status === 'active')
-    .reduce((sum, reserve) => sum + reserve.amount, 0);
-  const reserveProtected = lowestProjectedBalance >= protectedReserveAmount;
-
-  // 11. The next inflow we're willing to bank on — flexible money needs it.
+  // 10. The next inflow we're willing to bank on — flexible money needs it.
   const nextInflow = occurrences.find(
     (occurrence) =>
       occurrence.direction === 'incoming' && occurrence.countedInBalance,
   );
 
-  // 12. Assumptions — codes only, never sentences.
+  // 11. Assumptions — codes only, never sentences.
   const staleAssetIds = usableNow
     .filter((asset) => {
       if (!asset.valueUpdatedAt) return true;
@@ -263,14 +248,6 @@ export function runForecast(input: ForecastInput): ForecastResult {
     { code: 'horizon_days', value: horizonDays },
     { code: 'same_day_outflows_ordered_first' },
   ];
-  if (protectedReserveAmount > 0) {
-    assumptions.push({
-      code: 'reserve_applied',
-      value: round(protectedReserveAmount),
-    });
-  } else {
-    assumptions.push({ code: 'no_reserve_declared' });
-  }
   if (totals.estimatedIncomingAmountExcluded > 0) {
     assumptions.push({
       code: 'estimated_incoming_excluded',
@@ -318,8 +295,6 @@ export function runForecast(input: ForecastInput): ForecastResult {
     lowestProjectedBalanceDate,
     endingProjectedBalance: round(balance),
     obligationsCovered,
-    protectedReserveAmount: round(protectedReserveAmount),
-    reserveProtected,
     nextSufficientlyCertainInflow: nextInflow
       ? {
           date: nextInflow.date,

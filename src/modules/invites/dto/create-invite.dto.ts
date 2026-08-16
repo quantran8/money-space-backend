@@ -1,5 +1,4 @@
-import type {
-} from '../../members/entities/member.entity';
+import type {} from '../../members/entities/member.entity';
 
 export interface CreateInviteDto {
   inviteeEmail?: string;

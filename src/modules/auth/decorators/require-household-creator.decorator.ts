@@ -7,8 +7,8 @@ export const HOUSEHOLD_CREATOR_KEY = 'household:creator';
  *
  * This is the ONLY authorization axis above plain membership. Partners are
  * equal in everything that touches the money: any member may add, edit and
- * delete any record, and any member may change any record's sharing level.
- * What holds people accountable is the journal, not a permission grant.
+ * delete any financial record. What holds people accountable is the journal,
+ * not a permission grant.
  *
  * Three operations are the exception, because they are not about money — they
  * are about the shared space itself, and each is either irreversible or

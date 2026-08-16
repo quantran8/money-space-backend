@@ -164,7 +164,6 @@ export class PrismaAttentionRepository
       amount: row.amount === null ? null : numberFromDb(row.amount),
       relatedObjectType: row.relatedObjectType ?? null,
       relatedObjectId: row.relatedObjectId ?? null,
-      visibilityLevel: row.visibilityLevel,
       createdAt: new Date(row.createdAt).toISOString(),
     };
   }

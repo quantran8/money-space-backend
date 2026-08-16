@@ -1,6 +1,6 @@
 # Forecast, flexible money & what-if
 
-The calculation core of v3.1. Related: [[cashflow-events]], [[protected-reserves]],
+The calculation core of v3.1. Related: [[cashflow-events]],
 [[goals]], [[sharing-levels]], [[snapshots-and-networth]].
 
 ## Why day-by-day
@@ -39,6 +39,13 @@ synthetic events are objects that never leave memory.
    long-term holdings are net worth, not cash flow; counting them would make a
    household look liquid when its money is locked up.
 
+   The household can overrule the type default per asset —
+   `assets.counts_as_flexible` (see [[assets]]) — but that override is
+   **materialized into the `liquidity` column**, so this step is unchanged and
+   still reads one materialized bucket. The forecast must never grow a second,
+   private rule about which assets are spendable: that is precisely what once
+   put it out of step with the dashboard.
+
    **Liquidity is the only filter.** Sharing level is never consulted: the
    engine no longer even receives it. See [[sharing-levels]] for why, and
    `shared-figures.spec.ts` for the test that keeps this figure in agreement
@@ -64,12 +71,17 @@ synthetic events are objects that never leave memory.
 Two forms, both may be negative:
 
 - **Conservative (Home)**:
-  `liquid − reserve − required outflows before the next confirmed inflow`.
+  `liquid − required outflows before the next confirmed inflow`.
   The window is **inclusive of the inflow date** — same conservative reasoning
   as the same-day ordering.
-- **Horizon**: `lowestProjectedBalance − reserve`. This is what what-if
-  compares, because it answers "can I spend this without ever breaking the
-  reserve".
+- **Horizon**: `lowestProjectedBalance` itself. This is what what-if compares,
+  because it answers "can I spend this without the balance ever going negative".
+
+Both used to subtract the protected reserve, and the horizon form was exported
+under its own name (`flexibleMoneyHorizon`) for exactly that reason. The reserve
+was retired, so the subtraction is gone and the second name with it — an API
+that returns one figure under two names invites a client to treat them as two
+different things.
 
 **Two rules that must not be "tidied":**
 
@@ -88,8 +100,7 @@ Precedence: `incomplete` → `tight` → `watch` → `on_track`. **All** matchin
 reasons are returned, not just the winning one, so the UI can explain itself.
 
 `incomplete` means *absence of data*, never a judgement about money — no liquid
-sources or nothing to forecast. A missing reserve is a reason, never enough on
-its own.
+sources or nothing to forecast.
 
 Thresholds live in the exported `FINANCIAL_STATE_THRESHOLDS` so changing one is
 a deliberate edit with a failing test, not a magic number drifting.

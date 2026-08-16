@@ -18,7 +18,6 @@ function forecastInput(over: Partial<ForecastInput> = {}): ForecastInput {
         value: 5 * M,
         liquidity: 'usable_now',
         financialNature: 'household',
-        visibilityLevel: 'detail',
         valueUpdatedAt: '2026-08-13',
       },
     ],
@@ -34,10 +33,8 @@ function forecastInput(over: Partial<ForecastInput> = {}): ForecastInput {
         requirement: 'required',
         certainty: 'confirmed',
         status: 'expected',
-        visibilityLevel: 'detail',
       },
     ],
-    protectedReserves: [],
     ...over,
   };
 }
@@ -94,7 +91,6 @@ function storedItem(
     amount: null,
     relatedObjectType: null,
     relatedObjectId: null,
-    visibilityLevel: 'detail',
     privacyOwnerMemberId: null,
     createdAt: '2026-08-10T00:00:00.000Z',
     ...over,
@@ -156,7 +152,6 @@ describe('AttentionService.listAttentionItems', () => {
           requirement: 'required' as const,
           certainty: 'confirmed' as const,
           status: 'expected' as const,
-          visibilityLevel: 'detail' as const,
         },
         {
           id: 'power',
@@ -169,7 +164,6 @@ describe('AttentionService.listAttentionItems', () => {
           requirement: 'required' as const,
           certainty: 'confirmed' as const,
           status: 'expected' as const,
-          visibilityLevel: 'detail' as const,
         },
       ],
     };
@@ -238,7 +232,6 @@ describe('AttentionService.listAttentionItems', () => {
             value: 5 * M,
             liquidity: 'usable_now',
             financialNature: 'household',
-            visibilityLevel: 'detail',
             valueUpdatedAt: '2020-01-01',
           },
         ],
@@ -273,11 +266,13 @@ describe('AttentionService.dismissDerived', () => {
   /** A double-tap on a phone must not surface an error for a done thing. */
   it('is idempotent', async () => {
     const { service, insertItem } = setup({
-      dismissals: [{ ruleCode: 'reserve_at_risk', relatedObjectId: null }],
+      dismissals: [
+        { ruleCode: 'low_projected_balance', relatedObjectId: null },
+      ],
     });
 
     const result = await service.dismissDerived('hh-1', {
-      ruleCode: 'reserve_at_risk',
+      ruleCode: 'low_projected_balance',
     });
 
     expect(result.alreadyDismissed).toBe(true);

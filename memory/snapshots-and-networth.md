@@ -9,9 +9,15 @@ A `Snapshot` is a deliberately-taken frozen picture of a household. It persists:
 **Balance-sheet totals:** `totalLiquid`, `totalSavings`, `totalLongTermAssets`,
 `totalDebt`, `upcomingDueAmount`, `attentionCount`.
 
-**Foresight context (v3.1, spec §10):** `protectedReserveAmount`,
-`forecastHorizonDays`, `upcomingIncomeAmount`, `upcomingOutgoingAmount`,
-`lowestProjectedBalance`, `flexibleMoney`.
+**Foresight context (v3.1, spec §10):** `forecastHorizonDays`,
+`upcomingIncomeAmount`, `upcomingOutgoingAmount`, `lowestProjectedBalance`,
+`flexibleMoney`.
+
+There used to be a sixth, `protectedReserveAmount`. It went with the reserve
+itself — including for snapshots already taken, which is why a handful of past
+snapshots that read `tight` or `watch` because of a reserve now read `on_track`.
+That was the accepted price of removing the concept rather than leaving a column
+that freezes history about something the product no longer has.
 
 The last two are **nullable and legitimately negative**. §10 explicitly forbids a
 `>= 0` CHECK on them: a projected shortfall is the single most important thing a

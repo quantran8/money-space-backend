@@ -1,6 +1,3 @@
-import type { VisibilityLevel } from '../../../common/utils/money-space.utils';
-
-export type { VisibilityLevel };
 import type { CalculationTerm } from './calculation-term.entity';
 import type { MarketPosition } from './market-position.entity';
 
@@ -39,6 +36,12 @@ export interface Asset {
   type: AssetType;
   valuationMode: AssetValuationMode;
   liquidity: AssetLiquidity;
+  /**
+   * The household's explicit answer to "does this count towards flexible
+   * money", or null for "follow the type". `liquidity` is derived from it —
+   * see `liquidityForAsset`.
+   */
+  countsAsFlexible?: boolean | null;
   currency: string;
   note: string;
   status: AssetStatus;
@@ -48,11 +51,6 @@ export interface Asset {
    * "we don't know" and "it's old" are different claims.
    */
   valueUpdatedAt?: string | null;
-  /**
-   * How much of this the shared picture shows. Presentation only — it never
-   * changes a total, and any member may change it.
-   */
-  visibilityLevel?: VisibilityLevel;
   /** Who is responsible for the money. Distinct from who entered the record. */
   holderMemberId?: string | null;
   soldAt?: string;

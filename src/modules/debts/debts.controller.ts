@@ -12,6 +12,8 @@ import type { CreateDebtDto } from './dto/create-debt.dto';
 import type { ListDebtsQuery } from './dto/list-debts.query';
 import type { UpdateDebtDto } from './dto/update-debt.dto';
 import { DebtsService } from './debts.service';
+import { CurrentMembership } from '../auth/decorators/current-membership.decorator';
+import type { HouseholdMembership } from '../auth/guards/household-access.guard';
 
 @Controller('api/households/:householdId/debts')
 export class DebtsController {
@@ -37,8 +39,13 @@ export class DebtsController {
   createDebt(
     @Param('householdId') householdId: string,
     @Body() payload: CreateDebtDto,
+    @CurrentMembership() membership?: HouseholdMembership,
   ) {
-    return this.debtsService.createDebt(householdId, payload);
+    return this.debtsService.createDebt(
+      householdId,
+      payload,
+      membership?.memberId,
+    );
   }
 
   @Patch(':debtId')

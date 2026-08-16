@@ -26,15 +26,9 @@ export type AuditAction =
   | 'cashflow_event.completed'
   | 'cashflow_event.cancelled'
   | 'cashflow_event.postponed'
-  // The forecast's floor
-  | 'protected_reserve.created'
-  | 'protected_reserve.updated'
-  | 'protected_reserve.archived'
   // Goals
   | 'goal.created'
   | 'goal.target_changed'
-  // Sharing
-  | 'record.visibility_changed'
   // Lifecycle — under this model the journal is their only visible trace
   | 'household.created'
   | 'household.deleted'
@@ -50,7 +44,6 @@ export type AuditAction =
 export type AuditEntityType =
   | 'asset'
   | 'cashflow_event'
-  | 'protected_reserve'
   | 'financial_goal'
   | 'debt'
   | 'snapshot'
@@ -60,11 +53,7 @@ export type AuditEntityType =
 
 /** Which shared figure a change moved, and by how much. */
 export type AuditImpactMetric =
-  | 'liquid'
-  | 'net_worth'
-  | 'flexible_money'
-  | 'upcoming_outgoing'
-  | 'protected_reserve';
+  'liquid' | 'net_worth' | 'flexible_money' | 'upcoming_outgoing';
 
 export interface AuditImpact {
   metric: AuditImpactMetric;
@@ -79,7 +68,7 @@ export interface AuditRecordInput {
   entityType: AuditEntityType;
   entityId?: string | null;
   /**
-   * The record's own delta — the asset's value change, the reserve's amount
+   * The record's own delta — the asset's value change, the event's amount
    * change. Deliberately NOT a before/after re-run of the forecast: that would
    * double the cost of every write for a column the client only labels.
    */

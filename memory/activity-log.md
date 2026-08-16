@@ -26,7 +26,7 @@ metadata; the client builds every word. Same contract as the forecast's
 
 ```
 metadata.impact = { metric: 'liquid' | 'net_worth' | 'flexible_money'
-                            | 'upcoming_outgoing' | 'protected_reserve',
+                            | 'upcoming_outgoing',
                     delta: <signed VND> }
 ```
 
@@ -59,9 +59,14 @@ Vocabulary and impact shapes are defined for 24 actions in
 `src/common/audit/audit.types.ts`. Wired write sites today: asset deletion, plus
 the lifecycle set (household created/deleted/steward transferred, invite
 created, member joined) and snapshot/debt corrections inherited from the older
-writers. **Not yet threaded**: `asset.value_updated`, the cashflow and reserve
-actions, and `record.visibility_changed` — each needs the request actor pushed
-through its service. That is the next piece of work.
+writers. **Not yet threaded**: `asset.value_updated`, the cashflow actions, and
+`record.visibility_changed` — each needs the request actor pushed through its
+service. That is the next piece of work.
+
+The three `protected_reserve.*` actions were never threaded either, and are now
+gone with the concept. Rows written before the removal keep their action string:
+`audit_logs.action` is TEXT, and the journal renders from the client's own copy
+table, so old history still reads as a sentence.
 
 `audit_logs` is append-only, never soft-deleted, and has **no retention
 policy**. At the write frequency above a busy household produces roughly 10–30

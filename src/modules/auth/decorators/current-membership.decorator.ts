@@ -5,9 +5,8 @@ import type {
 } from '../guards/household-access.guard';
 
 /**
- * The caller's membership in the route's household (role + effective
- * permission), attached by `HouseholdAccessGuard`. Undefined only on routes
- * that guard did not run on.
+ * The caller's live membership in the route's household, attached by
+ * `HouseholdAccessGuard`. Undefined only on routes that guard did not run on.
  */
 export const CurrentMembership = createParamDecorator(
   (

@@ -62,18 +62,6 @@ enum AssetStatus {
   closed
 }
 
-/// How much of a record the shared picture shows.
-///
-/// A presentation level, NOT an access boundary: every member has the same
-/// rights and any of them can switch a record to `detail`, so folding one is a
-/// courtesy about attention rather than concealment. Nothing is ever excluded
-/// from a shared total on account of it — the retired `private` level did
-/// exactly that, and it put the forecast permanently at odds with net worth.
-enum VisibilityLevel {
-  summary_only
-  detail
-}
-
 enum AssetClass {
   gold
   crypto
@@ -296,12 +284,6 @@ enum FinancialManagementMode {
   unsure
 }
 
-/// Lifecycle of a protected reserve (spec §19C).
-enum ReserveStatus {
-  active
-  archived
-}
-
 enum AttentionItemStatus {
   open
   seen
@@ -355,8 +337,6 @@ model Profile {
   attentionItemsSeen       AttentionItem[]    @relation("AttentionItemSeenBy")
   attentionItemsResolved   AttentionItem[]    @relation("AttentionItemResolvedBy")
   attentionItemsDismissed  AttentionItem[]    @relation("AttentionItemDismissedBy")
-  protectedReservesCreated ProtectedReserve[] @relation("ProtectedReserveCreatedBy")
-  protectedReservesUpdated ProtectedReserve[] @relation("ProtectedReserveUpdatedBy")
   auditLogsActed           AuditLog[]         @relation("AuditLogActor")
 
   @@map("profiles")
@@ -393,7 +373,6 @@ model Household {
   moneyEvents             MoneyEvent[]
   moneyEventCategories    MoneyEventCategory[]
   attentionItems          AttentionItem[]
-  protectedReserves       ProtectedReserve[]
   auditLogs               AuditLog[]
 
   @@index([createdById])
@@ -432,22 +411,22 @@ model HouseholdMember {
 }
 
 model HouseholdInvite {
-  id           String        @id @default(uuid(7)) @db.Uuid
-  householdId  String        @map("household_id") @db.Uuid
-  invitedById  String        @map("invited_by") @db.Uuid
-  inviteeEmail String?       @map("invitee_email")
-  inviteePhone String?       @map("invitee_phone")
-  token        String        @unique
-  status       InviteStatus  @default(pending)
+  id           String       @id @default(uuid(7)) @db.Uuid
+  householdId  String       @map("household_id") @db.Uuid
+  invitedById  String       @map("invited_by") @db.Uuid
+  inviteeEmail String?      @map("invitee_email")
+  inviteePhone String?      @map("invitee_phone")
+  token        String       @unique
+  status       InviteStatus @default(pending)
   // Nullable override, same semantics as HouseholdMember.permissionLevel:
-  expiresAt    DateTime      @map("expires_at") @db.Timestamptz(6)
-  acceptedById String?       @map("accepted_by") @db.Uuid
-  acceptedAt   DateTime?     @map("accepted_at") @db.Timestamptz(6)
-  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  invitedBy    Profile       @relation("HouseholdInviteInvitedBy", fields: [invitedById], references: [id])
-  acceptedBy   Profile?      @relation("HouseholdInviteAcceptedBy", fields: [acceptedById], references: [id])
+  expiresAt    DateTime     @map("expires_at") @db.Timestamptz(6)
+  acceptedById String?      @map("accepted_by") @db.Uuid
+  acceptedAt   DateTime?    @map("accepted_at") @db.Timestamptz(6)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  household    Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  invitedBy    Profile      @relation("HouseholdInviteInvitedBy", fields: [invitedById], references: [id])
+  acceptedBy   Profile?     @relation("HouseholdInviteAcceptedBy", fields: [acceptedById], references: [id])
 
   @@index([householdId, status])
   @@map("household_invites")
@@ -465,8 +444,7 @@ model Snapshot {
   attentionCount         Int                  @default(0) @map("attention_count")
   // --- v3.1 foresight freeze (spec §10) ----------------------------------
   // The forecast context as it stood when the snapshot was taken, so a past
-  // snapshot stays reproducible even after reserves/events change.
-  protectedReserveAmount Decimal              @default(0) @map("protected_reserve_amount") @db.Decimal(14, 2)
+  // snapshot stays reproducible even after the events behind it change.
   forecastHorizonDays    Int                  @default(30) @map("forecast_horizon_days")
   upcomingIncomeAmount   Decimal              @default(0) @map("upcoming_income_amount") @db.Decimal(14, 2)
   upcomingOutgoingAmount Decimal              @default(0) @map("upcoming_outgoing_amount") @db.Decimal(14, 2)
@@ -508,11 +486,16 @@ model Asset {
   // legacy read-time fallback, never the basis for a new row.
   holderMemberId              String?                @map("holder_member_id") @db.Uuid
   liquidity                   AssetLiquidity         @default(usable_now)
+  // The household's explicit answer to "does this count towards flexible
+  // money", or NULL for "no answer — follow the type". It is the INTENT;
+  // `liquidity` above stays the materialized bucket every consumer reads, so
+  // the forecast and the dashboard cannot end up with different totals. The
+  // `assets_liquidity_matches_type` CHECK keeps the two in step.
+  countsAsFlexible            Boolean?               @map("counts_as_flexible")
   status                      AssetStatus            @default(active)
   soldAt                      DateTime?              @map("sold_at") @db.Timestamptz(6)
   areaSqm                     Decimal?               @map("area_sqm") @db.Decimal(14, 4)
   purpose                     String?
-  visibilityLevel             VisibilityLevel        @default(detail) @map("visibility_level")
   note                        String?
   createdById                 String                 @map("created_by") @db.Uuid
   createdAt                   DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -702,7 +685,6 @@ model SnapshotAssetValue {
   valuationId     String?               @map("valuation_id") @db.Uuid
   valuationMethod AssetValuationMethod? @map("valuation_method")
   valuationDate   DateTime?             @map("valuation_date") @db.Date
-  visibilityLevel VisibilityLevel       @map("visibility_level")
   createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
   household       Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
   snapshot        Snapshot              @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
@@ -816,7 +798,6 @@ model CashflowEvent {
   // attentionLevel stays: it carries the UI's "important" flag that status
   // can't express. `is_attention_needed` was a derived mirror → dropped.
   attentionLevel       AttentionLevel       @default(normal) @map("attention_level")
-  visibilityLevel      VisibilityLevel      @default(detail) @map("visibility_level")
   note                 String?
   // For a recurring series these describe the MOST RECENT completion, not a
   // terminal state — the row lives on and its expectedDate moves forward.
@@ -921,7 +902,6 @@ model MoneyEvent {
   // attention is centralized in the AttentionItem table (derive from amount /
   // AttentionItem, don't store denormalized flags on the ledger).
   // Who owns the privacy right (spec §30) — distinct from `createdById`.
-  visibilityLevel VisibilityLevel  @default(detail) @map("visibility_level")
   status          MoneyEventStatus @default(recorded)
   createdById     String           @map("created_by") @db.Uuid
   createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -991,7 +971,6 @@ model AttentionItem {
   /// code, and the read merge suppresses the matching derived signal. Without
   /// it there would be nothing to match a dismissal against.
   ruleCode          String?             @map("rule_code")
-  visibilityLevel   VisibilityLevel     @default(detail) @map("visibility_level")
   createdById       String?             @map("created_by") @db.Uuid
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   seenById          String?             @map("seen_by") @db.Uuid
@@ -1015,38 +994,6 @@ model AttentionItem {
   // tombstone lookup on every attention read.
   @@index([householdId, ruleCode])
   @@map("attention_items")
-}
-
-/// Money the household has decided to keep untouched — an emergency fund, a
-/// deposit already promised to something (spec §19C).
-///
-/// It is a CONSTRAINT on the forecast, not necessarily a separate account: the
-/// reserve is subtracted when computing flexible money, so "how much can we
-/// move without breaking what we promised ourselves" has an answer.
-///
-/// The MVP UI shows a single main reserve, but the schema supports many so
-/// adding a second one later is not a migration.
-model ProtectedReserve {
-  id          String        @id @default(uuid(7)) @db.Uuid
-  householdId String        @map("household_id") @db.Uuid
-  name        String
-  amount      Decimal       @default(0) @db.Decimal(14, 2)
-  status      ReserveStatus @default(active)
-  note        String?
-  createdById String?       @map("created_by") @db.Uuid
-  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById String?       @map("updated_by") @db.Uuid
-  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt   DateTime?     @map("deleted_at") @db.Timestamptz(6)
-  household   Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy   Profile?      @relation("ProtectedReserveCreatedBy", fields: [createdById], references: [id])
-  updatedBy   Profile?      @relation("ProtectedReserveUpdatedBy", fields: [updatedById], references: [id])
-
-  // Mirrors the partial `protected_reserves_household_live_idx
-  // (household_id) WHERE deleted_at IS NULL` so a squash can't drop the lookup.
-  @@index([householdId, status])
-  @@index([householdId, deletedAt])
-  @@map("protected_reserves")
 }
 
 model AuditLog {

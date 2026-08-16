@@ -31,7 +31,6 @@ export type DerivedAttentionRuleCode =
   | 'cashflow_required_due_soon'
   | 'cashflow_overdue'
   | 'low_projected_balance'
-  | 'reserve_at_risk'
   | 'stale_data';
 
 /** Signals that are genuine point-in-time records, so they ARE persisted. */
@@ -87,8 +86,6 @@ export interface DeriveAttentionInput {
 export const ATTENTION_THRESHOLDS = {
   /** A required outflow within this many days is worth surfacing. */
   dueSoonDays: 7,
-  /** Below reserve × this → the reserve is materially at risk, not brushed. */
-  reserveAtRiskRatio: 1,
 } as const;
 
 /**
@@ -194,31 +191,6 @@ export function deriveAttentionItems(
         lowestProjectedBalance: forecast.lowestProjectedBalance,
         lowestProjectedBalanceDate: forecast.lowestProjectedBalanceDate,
         horizonDays: forecast.horizonDays,
-      },
-    });
-  }
-
-  // The reserve gets breached but the balance still stays positive. Reported
-  // separately and only when NOT already negative: two signals about the same
-  // dip would double-count the same worry.
-  if (
-    forecast.protectedReserveAmount > 0 &&
-    forecast.lowestProjectedBalance >= 0 &&
-    forecast.lowestProjectedBalance <
-      forecast.protectedReserveAmount * ATTENTION_THRESHOLDS.reserveAtRiskRatio
-  ) {
-    items.push({
-      id: derivedAttentionId('reserve_at_risk', null),
-      source: 'derived',
-      ruleCode: 'reserve_at_risk',
-      level: 'important',
-      amount: flexible.flexibleMoneyHorizon,
-      relatedObjectType: null,
-      relatedObjectId: null,
-      params: {
-        protectedReserveAmount: forecast.protectedReserveAmount,
-        lowestProjectedBalance: forecast.lowestProjectedBalance,
-        lowestProjectedBalanceDate: forecast.lowestProjectedBalanceDate,
       },
     });
   }

@@ -126,8 +126,8 @@ export class PrismaAssetsRepository
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO assets
         (id, household_id, name, type, valuation_mode, current_value, area_sqm,
-         currency, value_updated_at, liquidity, note, created_by, updated_at,
-         visibility_level, holder_member_id)
+         currency, value_updated_at, liquidity, counts_as_flexible, note,
+         created_by, updated_at, holder_member_id)
       SELECT
         ${asset.id}::uuid,
         h.id,
@@ -139,10 +139,10 @@ export class PrismaAssetsRepository
         ${asset.currency},
         now(),
         ${asset.liquidity}::"AssetLiquidity",
+        ${asset.countsAsFlexible ?? null}::boolean,
         ${asset.note},
         h.created_by,
         now(),
-        ${asset.visibilityLevel ?? 'detail'}::"VisibilityLevel",
         ${this.asUuid(asset.holderMemberId ?? null)}::uuid
       FROM households h
       WHERE h.id = ${asset.householdId}::uuid
@@ -244,11 +244,11 @@ export class PrismaAssetsRepository
         currency: asset.currency,
         valueUpdatedAt: new Date(),
         liquidity: asset.liquidity,
+        countsAsFlexible: asset.countsAsFlexible ?? null,
         note: asset.note,
         status: asset.status,
         soldAt: asset.soldAt ? new Date(asset.soldAt) : null,
         areaSqm: asset.areaSqm ?? null,
-        visibilityLevel: asset.visibilityLevel ?? 'detail',
         holderMemberId: asset.holderMemberId ?? null,
       } as any,
     });

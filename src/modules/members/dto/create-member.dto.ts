@@ -1,4 +1,3 @@
-
 export interface CreateMemberDto {
   profileId?: string;
   name: string;

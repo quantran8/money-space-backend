@@ -118,17 +118,7 @@ export class PrismaSnapshotsRepository
     return map;
   }
 
-  /**
-   * Active assets valued as of `asOfDate`, carrying their REAL classification.
-   *
-   * Replaces `getActiveAssetLines`, which hardcoded `visibilityLevel: 'detail'`
-   * for every line. That was harmless while snapshots were an internal
-   * bookkeeping artifact, but §17 freezes classification INTO the snapshot — so
-   * the old shape would have recorded every private asset as shared, and the
-   * frozen record would say something untrue about the household forever.
-   *
-   * Three queries in parallel; the lineage lookup is batched (it was a 1+N).
-   */
+  /** Active assets valued as of `asOfDate`, with holder and valuation lineage. */
   async getClassifiedAssetLines(
     householdId: string,
     asOfDate: string,
@@ -153,10 +143,7 @@ export class PrismaSnapshotsRepository
         row.marketPositions[0],
         row.calculationTerms[0],
       );
-      const raw = row as unknown as {
-        visibilityLevel?: string;
-        holderMemberId?: string | null;
-      };
+      const raw = row as unknown as { holderMemberId?: string | null };
       lines.push({
         assetId: asset.id,
         assetName: asset.name,
@@ -167,7 +154,6 @@ export class PrismaSnapshotsRepository
         // number that gets frozen.
         value: computeCurrentValue(asset, marketPrices, fxRates, asOfDate),
         currency: asset.currency,
-        visibilityLevel: raw.visibilityLevel ?? 'detail',
         holderMemberId: raw.holderMemberId ?? null,
         ...(lineageByAsset.get(asset.id) ?? {}),
       });
@@ -205,7 +191,6 @@ export class PrismaSnapshotsRepository
           totalDebt: input.totalDebt,
           upcomingDueAmount: input.upcomingDueAmount,
           attentionCount: input.attentionCount,
-          protectedReserveAmount: input.protectedReserveAmount,
           forecastHorizonDays: input.forecastHorizonDays,
           upcomingIncomeAmount: input.upcomingIncomeAmount,
           upcomingOutgoingAmount: input.upcomingOutgoingAmount,
@@ -237,7 +222,6 @@ export class PrismaSnapshotsRepository
             valuationId: this.asUuid(line.valuationId ?? null),
             valuationMethod: line.valuationMethod ?? null,
             valuationDate: this.toDate(line.valuationDate ?? null),
-            visibilityLevel: line.visibilityLevel,
           })) as never,
         });
       }
@@ -302,7 +286,6 @@ export class PrismaSnapshotsRepository
       valuationDate: v.valuationDate
         ? new Date(v.valuationDate).toISOString().slice(0, 10)
         : undefined,
-      visibilityLevel: v.visibilityLevel,
       // Frozen classification (§17): read from the LINE, never re-read through
       // the asset — the asset may have been reclassified since.
       holderMemberId: v.holderMemberId ?? null,
@@ -320,12 +303,10 @@ export class PrismaSnapshotsRepository
       row.flexibleMoney === null || row.flexibleMoney === undefined
         ? null
         : Number(row.flexibleMoney);
-    const protectedReserveAmount = Number(row.protectedReserveAmount ?? 0);
 
     const { state, reasons } = deriveSnapshotFinancialState({
       lowestProjectedBalance,
       flexibleMoney,
-      protectedReserveAmount,
       assetLineCount: items.length,
     });
     const sourceMode = deriveSnapshotSourceMode(
@@ -342,7 +323,6 @@ export class PrismaSnapshotsRepository
       totalDebt: Number(row.totalDebt),
       upcomingDueAmount: Number(row.upcomingDueAmount),
       attentionCount: row.attentionCount,
-      protectedReserveAmount,
       forecastHorizonDays: Number(row.forecastHorizonDays ?? 30),
       upcomingIncomeAmount: Number(row.upcomingIncomeAmount ?? 0),
       upcomingOutgoingAmount: Number(row.upcomingOutgoingAmount ?? 0),

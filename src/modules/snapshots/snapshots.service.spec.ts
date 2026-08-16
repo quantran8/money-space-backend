@@ -15,7 +15,6 @@ const TODAY_LINES: SnapshotAssetLine[] = [
     liquidity: 'usable_now',
     value: 20 * M,
     currency: 'VND',
-    visibilityLevel: 'detail',
     financialNature: 'household',
     holderMemberId: 'm1',
     privacyOwnerMemberId: null,
@@ -27,7 +26,6 @@ const TODAY_LINES: SnapshotAssetLine[] = [
     liquidity: 'long_term',
     value: 50 * M,
     currency: 'VND',
-    visibilityLevel: 'detail',
     financialNature: 'personal_included',
     holderMemberId: 'm2',
     privacyOwnerMemberId: 'm2',
@@ -68,7 +66,6 @@ function setup(
             value: 20 * M,
             liquidity: 'usable_now',
             financialNature: 'household',
-            visibilityLevel: 'detail',
             valueUpdatedAt: asOfDate ?? '2026-08-13',
           },
         ],
@@ -84,10 +81,8 @@ function setup(
             requirement: 'required',
             certainty: 'confirmed',
             status: 'expected',
-            visibilityLevel: 'detail',
           },
         ],
-        protectedReserves: [],
         ...options.input,
       }),
     ),
@@ -106,14 +101,13 @@ function setup(
 }
 
 describe('SnapshotsService.createSnapshot', () => {
-  it('freezes the six foresight columns', async () => {
+  it('freezes the five foresight columns', async () => {
     const { service, created } = setup();
 
     await service.createSnapshot('hh-1');
 
     const [snapshot] = created;
     expect(snapshot.forecastHorizonDays).toBe(30);
-    expect(snapshot.protectedReserveAmount).toBe(0);
     expect(snapshot.upcomingOutgoingAmount).toBe(25 * M);
     expect(snapshot.lowestProjectedBalance).toBe(-5 * M);
     expect(snapshot.flexibleMoney).toBe(-5 * M);

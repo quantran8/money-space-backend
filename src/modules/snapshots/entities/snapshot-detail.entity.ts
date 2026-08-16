@@ -13,7 +13,6 @@ export interface SnapshotAssetLine {
   valuationId?: string;
   valuationMethod?: string;
   valuationDate?: string;
-  visibilityLevel: string;
   /** Frozen (§17) — who was responsible for this at snapshot time. */
   holderMemberId?: string | null;
 }
@@ -30,7 +29,6 @@ export interface SnapshotDetail {
   attentionCount: number;
 
   // --- frozen foresight context (§10) -------------------------------------
-  protectedReserveAmount: number;
   forecastHorizonDays: number;
   upcomingIncomeAmount: number;
   upcomingOutgoingAmount: number;

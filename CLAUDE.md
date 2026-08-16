@@ -116,6 +116,13 @@ rule. Each existed here before, none was ever wired to anything that worked, and
 the exclusion rule left the dashboard and the forecast disagreeing about how much
 money the household had.
 
+`assets.counts_as_flexible` is **not** an exception to that: it is the
+household's own answer to "is this money spendable", not a permission, and it is
+materialized into `assets.liquidity` — the single column every consumer already
+reads. The banned shape is a rule only one consumer knows about. Any future
+"exclude this record from a figure" feature must land in the shared, stored
+value the same way. See `memory/assets.md`.
+
 ## Business logic memory
 
 **All business logic (nghiệp vụ) of the app must be documented under `memory/`.** This is the durable source of truth for how the app's domain flows work.

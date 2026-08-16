@@ -15,7 +15,6 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
     value: 50 * M,
     liquidity: 'usable_now',
     financialNature: 'household',
-    visibilityLevel: 'detail',
     valueUpdatedAt: '2026-08-13',
     ...over,
   };
@@ -35,7 +34,6 @@ function event(
     requirement: 'required',
     certainty: 'confirmed',
     status: 'expected',
-    visibilityLevel: 'detail',
     ...over,
   };
 }
@@ -48,19 +46,15 @@ function compute(over: Partial<ForecastInput> = {}) {
       horizonDays: 30,
       assets: [asset()],
       cashflowEvents: [],
-      protectedReserves: [],
       ...over,
     }),
   );
 }
 
 describe('computeFlexibleMoney — the conservative form (05 §3)', () => {
-  it('subtracts the reserve and the obligations due before the next inflow', () => {
+  it('subtracts the obligations due before the next inflow', () => {
     const result = compute({
       assets: [asset({ value: 50 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy an toan', amount: 20 * M, status: 'active' },
-      ],
       cashflowEvents: [
         event({ id: 'rent', amount: 15 * M, expectedDate: '2026-08-16' }),
         event({
@@ -75,8 +69,8 @@ describe('computeFlexibleMoney — the conservative form (05 §3)', () => {
       ],
     });
 
-    // 50 − 20 reserve − 15 due before payday = 15
-    expect(result.flexibleMoneyToday).toBe(15 * M);
+    // 50 − 15 due before payday = 35
+    expect(result.flexibleMoneyToday).toBe(35 * M);
     expect(result.requiredOutflowsBeforeNextInflow).toBe(15 * M);
     expect(result.nextSufficientlyCertainInflow).toEqual({
       date: '2026-08-25',
@@ -141,28 +135,28 @@ describe('computeFlexibleMoney — negative is the signal', () => {
   it('goes negative and is NOT clamped to zero', () => {
     const result = compute({
       assets: [asset({ value: 30 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy an toan', amount: 100 * M, status: 'active' },
-      ],
+      cashflowEvents: [event({ amount: 100 * M, expectedDate: '2026-08-20' })],
     });
 
     expect(result.flexibleMoneyToday).toBe(-70 * M);
-    expect(result.flexibleMoneyHorizon).toBe(-70 * M);
+    expect(result.lowestProjectedBalance).toBe(-70 * M);
   });
 });
 
 describe('computeFlexibleMoney — the horizon form', () => {
-  it('is the lowest projected balance minus the reserve', () => {
+  /**
+   * The horizon figure used to be `lowestProjectedBalance − reserve`. With the
+   * reserve retired it IS the lowest projected balance, carried through
+   * untouched rather than re-exported under a second name.
+   */
+  it('carries the forecast balances through untouched', () => {
     const result = compute({
       assets: [asset({ value: 50 * M })],
-      protectedReserves: [
-        { id: 'r', name: 'Quy an toan', amount: 10 * M, status: 'active' },
-      ],
       cashflowEvents: [event({ amount: 30 * M, expectedDate: '2026-08-20' })],
     });
 
     expect(result.lowestProjectedBalance).toBe(20 * M);
-    expect(result.flexibleMoneyHorizon).toBe(10 * M);
+    expect(result.endingProjectedBalance).toBe(20 * M);
   });
 });
 

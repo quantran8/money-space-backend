@@ -27,7 +27,13 @@ function setup(rows: ReturnType<typeof row>[]) {
 describe('ActivityService.listActivity', () => {
   it('emits action CODES and structured impact, never prose', async () => {
     const { service } = setup([
-      row({ metadata: { objectName: 'VCB', amount: 2_400_000, impact: { metric: 'liquid', delta: 2_400_000 } } }),
+      row({
+        metadata: {
+          objectName: 'VCB',
+          amount: 2_400_000,
+          impact: { metric: 'liquid', delta: 2_400_000 },
+        },
+      }),
     ]);
 
     const { items } = await service.listActivity(HOUSEHOLD);
@@ -45,27 +51,6 @@ describe('ActivityService.listActivity', () => {
     });
   });
 
-  /**
-   * The journal is the one place both partners are guaranteed to look, so it is
-   * the worst possible place to leak the specifics of a record its owner chose
-   * not to itemize. Folding has to hold here or it does not hold at all.
-   */
-  it('does not print the name or amount of a folded record', async () => {
-    const { service } = setup([
-      row({
-        action: 'record.visibility_changed',
-        metadata: { objectName: 'Sổ tiết kiệm', amount: 40_000_000, visibilityLevel: 'summary_only' },
-      }),
-    ]);
-
-    const { items } = await service.listActivity(HOUSEHOLD);
-
-    expect(items[0].objectName).toBeNull();
-    expect(items[0].amount).toBeNull();
-    // The action itself still shows: that a change happened is never hidden.
-    expect(items[0].action).toBe('record.visibility_changed');
-  });
-
   it('reports a null actor for system writes rather than inventing one', async () => {
     const { service } = setup([row({ actor: null })]);
 
@@ -76,7 +61,10 @@ describe('ActivityService.listActivity', () => {
 
   it('pages with a cursor and does not leak the lookahead row', async () => {
     const rows = Array.from({ length: 3 }, (_, i) =>
-      row({ id: `a-${i}`, createdAt: new Date(`2026-08-1${5 - i}T03:00:00.000Z`) }),
+      row({
+        id: `a-${i}`,
+        createdAt: new Date(`2026-08-1${5 - i}T03:00:00.000Z`),
+      }),
     );
     const { service, findMany } = setup(rows);
 
@@ -101,6 +89,8 @@ describe('ActivityService.listActivity', () => {
 
     await service.listActivity(HOUSEHOLD, { limit: '9999' });
 
-    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 101 }));
+    expect(findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 101 }),
+    );
   });
 });

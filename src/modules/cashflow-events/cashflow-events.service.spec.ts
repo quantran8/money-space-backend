@@ -21,7 +21,6 @@ describe('CashflowEventsService — completion (§18)', () => {
     certainty: 'confirmed',
     status: 'expected',
     attentionLevel: 'normal',
-    visibilityLevel: 'detail',
     ownerMemberId: null,
     privacyOwnerMemberId: null,
     debtId: null,
@@ -233,6 +232,26 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
     });
 
     expect(inserted[0].requirement).toBe('required');
+  });
+
+  it('defaults responsibility to the member creating the record', async () => {
+    const { service, inserted } = setup();
+
+    await service.createCashflowEvent('hh-1', valid, 'member-creator');
+
+    expect(inserted[0].ownerMemberId).toBe('member-creator');
+  });
+
+  it('keeps an explicitly selected responsible member', async () => {
+    const { service, inserted } = setup();
+
+    await service.createCashflowEvent(
+      'hh-1',
+      { ...valid, ownerMemberId: 'member-partner' },
+      'member-creator',
+    );
+
+    expect(inserted[0].ownerMemberId).toBe('member-partner');
   });
 
   it('rejects a recurrence ending before it starts', async () => {

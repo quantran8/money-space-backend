@@ -92,7 +92,6 @@ describe('AppModule integration', () => {
           certainty: 'confirmed',
           status: 'expected',
           attentionLevel: 'important',
-          visibilityLevel: 'detail',
         },
       ]),
       findFinancialGoalsByHousehold: jest.fn(async () => []),

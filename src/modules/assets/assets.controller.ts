@@ -8,7 +8,9 @@ import {
   Post,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { CurrentMembership } from '../auth/decorators/current-membership.decorator';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
+import type { HouseholdMembership } from '../auth/guards/household-access.guard';
 import { AssetsService } from './assets.service';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
@@ -88,9 +90,13 @@ export class AssetsController {
   createAsset(
     @Param('householdId') householdId: string,
     @Body() payload: CreateAssetDto,
-    @CurrentUser() user?: AuthUser,
+    @CurrentMembership() membership?: HouseholdMembership,
   ) {
-    return this.assetsService.createAsset(householdId, payload, user?.id);
+    return this.assetsService.createAsset(
+      householdId,
+      payload,
+      membership?.memberId,
+    );
   }
 
   @Patch(':assetId')
@@ -98,9 +104,8 @@ export class AssetsController {
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
     @Body() payload: UpdateAssetDto,
-    @CurrentUser() user?: AuthUser,
   ) {
-    return this.assetsService.updateAsset(householdId, assetId, payload, user?.id);
+    return this.assetsService.updateAsset(householdId, assetId, payload);
   }
 
   @Delete(':assetId')

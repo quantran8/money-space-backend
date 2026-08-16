@@ -49,7 +49,6 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [cashflow-events.md](cashflow-events.md) — expected future money in/out; the forecast's input
 - [forecast-and-flexible-money.md](forecast-and-flexible-money.md) — running balance, lowest projected balance, flexible money, financial state, what-if
 - [goals.md](goals.md) — financial goals & progress
-- [protected-reserves.md](protected-reserves.md) — money kept untouched; the forecast constraint
 - [attention-items.md](attention-items.md) — derived vs stored signals, dismissal tombstones
 - [data-freshness.md](data-freshness.md) — how old the picture is; confirm-unchanged
 - [members-and-lifecycle-safeguard.md](members-and-lifecycle-safeguard.md) — equal members; the one creator-only exception

@@ -1,5 +1,4 @@
 import type { RecurrenceFrequency } from '../../../common/utils/recurrence';
-import type { VisibilityLevel } from '../../../common/utils/money-space.utils';
 
 /** Which way the money moves. */
 export type CashflowDirection = 'incoming' | 'outgoing';
@@ -55,7 +54,6 @@ export interface CashflowEvent {
   certainty: CashflowCertainty;
   status: CashflowEventStatus;
   attentionLevel: AttentionLevel;
-  visibilityLevel: VisibilityLevel;
   ownerMemberId?: string | null;
   debtId?: string | null;
   financialGoalId?: string | null;

@@ -91,6 +91,7 @@ describe('HouseholdAccessGuard', () => {
       const partner = run(PARTNER);
       await partner.promise;
       expect(partner.request.membership).toEqual({
+        memberId: 'm-1',
         householdId: HOUSEHOLD,
         userId: PARTNER,
         isCreator: false,

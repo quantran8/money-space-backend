@@ -140,7 +140,6 @@ export class SnapshotsService {
       totalDebt,
       upcomingDueAmount: forecast.totals.requiredOutgoingAmount,
       attentionCount,
-      protectedReserveAmount: forecast.protectedReserveAmount,
       forecastHorizonDays: horizonDays,
       upcomingIncomeAmount: forecast.totals.upcomingIncomeAmount,
       upcomingOutgoingAmount: forecast.totals.upcomingOutgoingAmount,

@@ -184,6 +184,9 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
     type: row.type,
     valuationMode,
     liquidity: row.liquidity,
+    countsAsFlexible: (row.countsAsFlexible ??
+      row.counts_as_flexible ??
+      null) as boolean | null,
     currency: row.currency,
     note: row.note ?? '',
     status: row.status ?? 'active',
@@ -194,9 +197,6 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
       (row.valueUpdatedAt ?? row.value_updated_at)
         ? new Date(row.valueUpdatedAt ?? row.value_updated_at).toISOString()
         : null,
-    // Classification axes (§11). Read here so privacy filtering and the
-    // holder-grouped views never have to re-query the row.
-    visibilityLevel: row.visibilityLevel ?? row.visibility_level ?? 'detail',
     holderMemberId: row.holderMemberId ?? row.holder_member_id ?? null,
     soldAt:
       (row.soldAt ?? row.sold_at)
@@ -462,7 +462,6 @@ export function mapCashflowEvent(row: DbRow): CashflowEvent {
     certainty: row.certainty ?? 'confirmed',
     status: row.status,
     attentionLevel: row.attentionLevel ?? row.attention_level ?? 'normal',
-    visibilityLevel: row.visibilityLevel ?? row.visibility_level ?? 'detail',
     ownerMemberId: row.ownerMemberId ?? row.owner_member_id ?? null,
     debtId: row.debtId ?? row.debt_id ?? null,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? null,

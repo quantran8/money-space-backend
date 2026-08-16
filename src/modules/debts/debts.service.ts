@@ -142,7 +142,11 @@ export class DebtsService {
     }
   }
 
-  async createDebt(householdId: string, payload: CreateDebtDto) {
+  async createDebt(
+    householdId: string,
+    payload: CreateDebtDto,
+    creatorMemberId?: string,
+  ) {
     // `insertDebt` asserts the household exists (and needs its row to resolve
     // `createdById`), so we don't assert it a second time here.
     const debt: Debt = {
@@ -158,7 +162,7 @@ export class DebtsService {
       firstPaymentDate: payload.firstPaymentDate,
       expectedFinalDueDate: payload.expectedFinalDueDate,
       status: payload.status ?? 'active',
-      ownerMemberId: payload.ownerMemberId,
+      ownerMemberId: payload.ownerMemberId || creatorMemberId,
       receivedToAssetId: payload.receivedToAssetId,
       paymentFrequency: payload.paymentFrequency,
       fixedPaymentAmount: payload.fixedPaymentAmount,
@@ -269,6 +273,7 @@ export class DebtsService {
         certainty: 'confirmed',
         expectedDate: dueDate,
         debtId: debt.id,
+        ownerMemberId: debt.ownerMemberId,
       });
       // No explicit end date: generate a single next-due reminder rather than a
       // full open-ended schedule.

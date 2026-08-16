@@ -37,11 +37,13 @@ const DEFAULT_HORIZON = 30;
 
 export interface WhatIfSideResult {
   flexibleMoneyToday: number;
-  flexibleMoneyHorizon: number;
+  /**
+   * The horizon figure. Since the protected reserve was retired this IS the
+   * flexible-money-over-the-horizon number — there is no second name for it.
+   */
   lowestProjectedBalance: number;
   lowestProjectedBalanceDate: IsoDate;
   obligationsCovered: boolean;
-  reserveProtected: boolean;
   goal: GoalProjection | null;
 }
 
@@ -51,12 +53,10 @@ export interface WhatIfResult {
   horizonDays: number;
   input: WhatIfRequestDto;
   obligationsCovered: boolean;
-  reserveProtected: boolean;
   before: WhatIfSideResult;
   after: WhatIfSideResult;
   delta: {
     flexibleMoneyToday: number;
-    flexibleMoneyHorizon: number;
     lowestProjectedBalance: number;
     goalDelayMonths: number | null;
     goalDelayDays: number | null;
@@ -278,11 +278,9 @@ export class ForecastService {
       goalProjection: GoalProjection | null,
     ): WhatIfSideResult => ({
       flexibleMoneyToday: flexible.flexibleMoneyToday,
-      flexibleMoneyHorizon: flexible.flexibleMoneyHorizon,
       lowestProjectedBalance: forecast.lowestProjectedBalance,
       lowestProjectedBalanceDate: forecast.lowestProjectedBalanceDate,
       obligationsCovered: forecast.obligationsCovered,
-      reserveProtected: forecast.reserveProtected,
       goal: goalProjection,
     });
 
@@ -299,14 +297,11 @@ export class ForecastService {
       horizonDays,
       input: payload,
       obligationsCovered: after.obligationsCovered,
-      reserveProtected: after.reserveProtected,
       before,
       after,
       delta: {
         flexibleMoneyToday:
           after.flexibleMoneyToday - before.flexibleMoneyToday,
-        flexibleMoneyHorizon:
-          after.flexibleMoneyHorizon - before.flexibleMoneyHorizon,
         lowestProjectedBalance:
           after.lowestProjectedBalance - before.lowestProjectedBalance,
         goalDelayMonths: afterGoalResult?.goalDelayMonths ?? null,

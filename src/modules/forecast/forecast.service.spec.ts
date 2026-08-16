@@ -17,12 +17,10 @@ function bundle(over: Partial<ForecastBundle> = {}): ForecastBundle {
         value: 100 * M,
         liquidity: 'usable_now',
         financialNature: 'household',
-        visibilityLevel: 'detail',
         valueUpdatedAt: TODAY,
       },
     ],
     cashflowEvents: [],
-    protectedReserves: [],
     ...over,
   };
 }
@@ -75,28 +73,15 @@ describe('ForecastService.whatIf', () => {
 
     const result = await service.whatIf('hh-1', spend);
 
-    expect(result.before.flexibleMoneyHorizon).toBe(100 * M);
-    expect(result.after.flexibleMoneyHorizon).toBe(70 * M);
-    expect(result.delta.flexibleMoneyHorizon).toBe(-30 * M);
+    expect(result.before.lowestProjectedBalance).toBe(100 * M);
+    expect(result.after.lowestProjectedBalance).toBe(70 * M);
+    expect(result.delta.lowestProjectedBalance).toBe(-30 * M);
   });
 
   it('classifies a comfortable spend', async () => {
     const { service } = setup();
     const result = await service.whatIf('hh-1', { ...spend, amount: 1 * M });
     expect(result.resultType).toBe('comfortable');
-  });
-
-  it('classifies a spend that touches the reserve as watch', async () => {
-    const { service } = setup({
-      protectedReserves: [
-        { id: 'r', name: 'Quy', amount: 90 * M, status: 'active' },
-      ],
-    });
-
-    const result = await service.whatIf('hh-1', { ...spend, amount: 20 * M });
-
-    expect(result.after.reserveProtected).toBe(false);
-    expect(result.resultType).toBe('watch');
   });
 
   it('classifies a spend that goes negative as tight', async () => {

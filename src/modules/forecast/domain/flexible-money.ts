@@ -12,6 +12,13 @@
  *    `Math.max(0, …)` here.
  * 2. **It is never a spending allowance.** The product must never label this
  *    "what you can spend" (design §12.3) — it is what remains unassigned.
+ *
+ * There used to be three flexible-money figures here. Two of them — the horizon
+ * form and the end-of-horizon form — existed only to subtract the protected
+ * reserve from `lowestProjectedBalance` / `endingProjectedBalance`. With the
+ * reserve gone they were those two numbers under a second name, so they are
+ * gone too: a response with two names for one figure invites the client to
+ * treat them as different things. Callers read the forecast's balances directly.
  */
 
 import type { IsoDate } from '../../../common/utils/clock';
@@ -21,7 +28,6 @@ export interface FlexibleMoneyResult {
   asOfDate: IsoDate;
   horizonDays: number;
   currentSharedLiquidMoney: number;
-  protectedReserveAmount: number;
 
   /** §26B conservative form. MAY BE NEGATIVE. */
   flexibleMoneyToday: number;
@@ -31,17 +37,15 @@ export interface FlexibleMoneyResult {
   consideredOutflowKeys: string[];
 
   /**
-   * "Spendable without breaching the reserve at ANY point in the horizon."
-   * This is the number what-if compares before/after. MAY BE NEGATIVE.
+   * The horizon figure — what the household can spend without the projected
+   * balance ever going negative. MAY BE NEGATIVE. This is what what-if compares
+   * before/after.
    */
-  flexibleMoneyHorizon: number;
-  /** End-of-horizon variant; must be labelled with its assumption when shown. */
-  flexibleMoneyEndOfHorizon: number;
-
   lowestProjectedBalance: number;
   lowestProjectedBalanceDate: IsoDate;
+  /** End-of-horizon variant; must be labelled with its assumption when shown. */
+  endingProjectedBalance: number;
   obligationsCovered: boolean;
-  reserveProtected: boolean;
   assumptions: CalculationAssumption[];
 }
 
@@ -72,23 +76,12 @@ export function computeFlexibleMoney(
   );
 
   const flexibleMoneyToday =
-    forecast.startingLiquidBalance -
-    forecast.protectedReserveAmount -
-    requiredOutflowsBeforeNextInflow;
-
-  // The horizon form answers "can I spend this without ever breaking the
-  // reserve", which is what a decision actually needs.
-  const flexibleMoneyHorizon =
-    forecast.lowestProjectedBalance - forecast.protectedReserveAmount;
-
-  const flexibleMoneyEndOfHorizon =
-    forecast.endingProjectedBalance - forecast.protectedReserveAmount;
+    forecast.startingLiquidBalance - requiredOutflowsBeforeNextInflow;
 
   return {
     asOfDate: forecast.asOfDate,
     horizonDays: forecast.horizonDays,
     currentSharedLiquidMoney: forecast.startingLiquidBalance,
-    protectedReserveAmount: forecast.protectedReserveAmount,
 
     // Deliberately NOT clamped at zero — negative is the signal.
     flexibleMoneyToday: Math.round(flexibleMoneyToday),
@@ -100,13 +93,10 @@ export function computeFlexibleMoney(
       : null,
     consideredOutflowKeys: consideredOutflows.map((o) => o.occurrenceKey),
 
-    flexibleMoneyHorizon: Math.round(flexibleMoneyHorizon),
-    flexibleMoneyEndOfHorizon: Math.round(flexibleMoneyEndOfHorizon),
-
     lowestProjectedBalance: forecast.lowestProjectedBalance,
     lowestProjectedBalanceDate: forecast.lowestProjectedBalanceDate,
+    endingProjectedBalance: forecast.endingProjectedBalance,
     obligationsCovered: forecast.obligationsCovered,
-    reserveProtected: forecast.reserveProtected,
     // Inherited verbatim so "how was this calculated" shows the same reasons
     // the forecast used.
     assumptions: forecast.assumptions,

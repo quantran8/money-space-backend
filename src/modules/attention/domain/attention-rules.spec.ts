@@ -4,7 +4,6 @@ import type {
   ForecastCashflowEvent,
   ForecastInput,
   ForecastLiquidSource,
-  ForecastProtectedReserve,
 } from '../../forecast/domain/forecast.types';
 import {
   ATTENTION_THRESHOLDS,
@@ -22,7 +21,6 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
     value: 50 * M,
     liquidity: 'usable_now',
     financialNature: 'household',
-    visibilityLevel: 'detail',
     valueUpdatedAt: TODAY,
     ...over,
   };
@@ -42,7 +40,6 @@ function event(
     requirement: 'required',
     certainty: 'confirmed',
     status: 'expected',
-    visibilityLevel: 'detail',
     ...over,
   };
 }
@@ -57,7 +54,6 @@ function derive(
     horizonDays: 30,
     assets: [asset()],
     cashflowEvents: [],
-    protectedReserves: [],
     ...over,
   };
   const forecast = runForecast(input);
@@ -178,36 +174,13 @@ describe('deriveAttentionItems — household-level signals', () => {
     expect(item.relatedObjectId).toBeNull();
   });
 
-  it('raises reserve_at_risk when the dip breaches the reserve but stays positive', () => {
-    const reserves: ForecastProtectedReserve[] = [
-      { id: 'r1', name: 'Quy', amount: 20 * M, status: 'active' },
-    ];
+  it('stays silent when the dip stays positive', () => {
     const items = derive({
       assets: [asset({ value: 30 * M })],
       cashflowEvents: [event({ amount: 15 * M, expectedDate: '2026-08-20' })],
-      protectedReserves: reserves,
     });
 
-    expect(codes(items)).toContain('reserve_at_risk');
     expect(codes(items)).not.toContain('low_projected_balance');
-  });
-
-  /**
-   * Both would technically fire on a negative balance. Reporting the same dip
-   * twice would double-count one worry, so the reserve signal is suppressed
-   * once the balance itself goes negative — the bigger fact wins.
-   */
-  it('does NOT raise reserve_at_risk when the balance is already negative', () => {
-    const items = derive({
-      assets: [asset({ value: 5 * M })],
-      cashflowEvents: [event({ amount: 20 * M, expectedDate: '2026-08-20' })],
-      protectedReserves: [
-        { id: 'r1', name: 'Quy', amount: 10 * M, status: 'active' },
-      ],
-    });
-
-    expect(codes(items)).toContain('low_projected_balance');
-    expect(codes(items)).not.toContain('reserve_at_risk');
   });
 
   it('is silent when nothing is wrong', () => {
@@ -264,7 +237,6 @@ describe('thresholds', () => {
   it('are what the rules claim', () => {
     expect(ATTENTION_THRESHOLDS).toEqual({
       dueSoonDays: 7,
-      reserveAtRiskRatio: 1,
     });
   });
 });
@@ -282,7 +254,6 @@ describe('purity', () => {
       horizonDays: 30,
       assets: [asset()],
       cashflowEvents: [event()],
-      protectedReserves: [],
     };
     const before = JSON.stringify(input);
     const forecast = runForecast(input);

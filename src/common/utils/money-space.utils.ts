@@ -9,15 +9,6 @@ import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
 
-/**
- * How much of a record the shared picture shows.
- *
- * A presentation level, not an access boundary: every member has the same
- * rights and any of them can switch a record to `detail`, so folding one is a
- * courtesy about attention, never concealment. Nothing is ever excluded from a
- * shared total on account of it.
- */
-export type VisibilityLevel = 'detail' | 'summary_only';
 import type {
   MoneyDirection,
   MoneyEvent,
@@ -42,12 +33,30 @@ const VALUATION_MODE_BY_TYPE: Record<AssetType, AssetValuationMode> = {
   other: 'manual',
 };
 
+const LIQUIDITY_BY_ASSET_TYPE: Record<AssetType, AssetLiquidity> = {
+  cash: 'usable_now',
+  bank_account: 'usable_now',
+  saving_deposit: 'not_immediately_usable',
+  certificate_of_deposit: 'not_immediately_usable',
+  bond: 'not_immediately_usable',
+  loan_receivable: 'not_immediately_usable',
+  gold: 'long_term',
+  stock: 'long_term',
+  fund: 'long_term',
+  crypto: 'long_term',
+  foreign_currency: 'not_immediately_usable',
+  real_estate: 'long_term',
+  insurance: 'long_term',
+  investment: 'long_term',
+  other: 'not_immediately_usable',
+};
+
 // ---------------------------------------------------------------------------
 // Authorization lives in `HouseholdAccessGuard`, not here.
 //
-// There is no capability tier and no visibility tier any more. Membership is
-// the content permission — any member may read and write anything in their
-// household, including a record's sharing level — and the single exception is
+// There is no capability or visibility tier. Membership is the content
+// permission — any member may read and write anything in their household —
+// and the single exception is
 // `@RequireHouseholdCreator()` for the three lifecycle operations. What holds a
 // change accountable is the journal entry it leaves, not a permission grant.
 //
@@ -59,6 +68,79 @@ const VALUATION_MODE_BY_TYPE: Record<AssetType, AssetValuationMode> = {
 
 export function defaultValuationModeForAssetType(type: AssetType) {
   return VALUATION_MODE_BY_TYPE[type];
+}
+
+/** The bucket a type falls into when the household has not said otherwise. */
+export function liquidityForAssetType(type: AssetType): AssetLiquidity {
+  return LIQUIDITY_BY_ASSET_TYPE[type];
+}
+
+/**
+ * Whether a type is spendable-now by default — i.e. the state the "counts
+ * towards flexible money" switch starts in for that type.
+ */
+export function flexibleByDefaultForAssetType(type: AssetType): boolean {
+  return LIQUIDITY_BY_ASSET_TYPE[type] === 'usable_now';
+}
+
+/**
+ * The stored bucket, given the type and the household's explicit override.
+ *
+ * The type mapping answers "what kind of money is this", which is right often
+ * enough to be the default and wrong often enough to need an escape hatch: cash
+ * held for someone else is not spendable, and a gold bar the household would
+ * genuinely sell this month is. `countsAsFlexible` records that decision;
+ * `null` means "no decision — follow the type".
+ *
+ * The override lands in the STORED `liquidity` column rather than being a
+ * second rule the forecast alone consults. Everything that answers "how much
+ * money is usable now" — forecast, dashboard, the assets summary, snapshots —
+ * already reads that column, so they cannot disagree. A per-record exclusion
+ * known only to one consumer is what once left the dashboard and the forecast
+ * reporting different totals (see CLAUDE.md, Authorization).
+ */
+export function liquidityForAsset(
+  type: AssetType,
+  countsAsFlexible?: boolean | null,
+): AssetLiquidity {
+  const derived = LIQUIDITY_BY_ASSET_TYPE[type];
+  if (countsAsFlexible === true) return 'usable_now';
+  if (countsAsFlexible === false && derived === 'usable_now') {
+    // Excluded cash is still money the household has, just not money it counts
+    // on — the middle bucket, never `long_term`.
+    return 'not_immediately_usable';
+  }
+  return derived;
+}
+
+/**
+ * Keep the column holding only real overrides: a flag that merely restates the
+ * type's own default is stored as `null`, so an asset that was never given an
+ * explicit answer keeps following its type (including after a type change).
+ */
+export function normalizeCountsAsFlexible(
+  type: AssetType,
+  countsAsFlexible?: boolean | null,
+): boolean | null {
+  if (countsAsFlexible === null || countsAsFlexible === undefined) return null;
+  return countsAsFlexible === flexibleByDefaultForAssetType(type)
+    ? null
+    : countsAsFlexible;
+}
+
+/** Unit metadata that can be inferred without asking the user. */
+export function marketUnitForAssetType(
+  type: AssetType,
+  symbol: string,
+  enteredUnit = '',
+): string {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  if (type === 'stock') return 'cổ';
+  if (type === 'crypto' || type === 'foreign_currency') {
+    return normalizedSymbol;
+  }
+  if (type === 'fund') return 'chứng chỉ';
+  return enteredUnit.trim();
 }
 
 export function daysBetween(from: string, to: string): number {

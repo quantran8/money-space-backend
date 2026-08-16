@@ -155,7 +155,7 @@ export class PrismaCashflowEventsRepository
       INSERT INTO cashflow_events
         (id, household_id, name, amount, direction, expected_date,
          recurrence, recurrence_end_date, requirement, certainty,
-         status, attention_level, visibility_level,
+         status, attention_level,
          owner_member_id, debt_id,
          financial_goal_id, planned_asset_id, note, created_by, updated_at)
       SELECT
@@ -171,7 +171,6 @@ export class PrismaCashflowEventsRepository
         ${event.certainty}::"CashflowCertainty",
         ${event.status}::"CashflowEventStatus",
         ${event.attentionLevel}::"AttentionLevel",
-        ${event.visibilityLevel}::"VisibilityLevel",
         ${this.asUuid(event.ownerMemberId ?? null)}::uuid,
         ${event.debtId ?? null}::uuid,
         ${event.financialGoalId ?? null}::uuid,
@@ -222,7 +221,6 @@ export class PrismaCashflowEventsRepository
         certainty: event.certainty,
         status: event.status,
         attentionLevel: event.attentionLevel,
-        visibilityLevel: event.visibilityLevel,
         ownerMemberId: this.asUuid(event.ownerMemberId ?? null),
         debtId: event.debtId ?? null,
         financialGoalId: event.financialGoalId ?? null,
@@ -250,7 +248,6 @@ export class PrismaCashflowEventsRepository
         certainty: event.certainty,
         status: event.status,
         attentionLevel: event.attentionLevel,
-        visibilityLevel: event.visibilityLevel,
         ownerMemberId: this.asUuid(event.ownerMemberId ?? null),
         debtId: event.debtId ?? null,
         financialGoalId: event.financialGoalId ?? null,

@@ -7,32 +7,29 @@
  * number that changes every time you look at it, which is the opposite of what
  * a snapshot is for.
  *
- * So this derives the same four codes from the SIX foresight columns the
+ * So this derives the same four codes from the FIVE foresight columns the
  * snapshot froze. It is deliberately a separate, smaller function rather than a
  * reuse of `deriveFinancialState`: pretending we have inputs we don't would be
  * worse than admitting the reduced set.
  *
- * It shares `FINANCIAL_STATE_THRESHOLDS`, so a threshold change moves the live
- * view and the history together — they can never disagree about what "tight"
- * means.
+ * With the protected reserve retired, every threshold this used to share with
+ * the live view is gone: the reduced set is now two sign checks, and "tight"
+ * means the same thing here and there because both are simply "it went below
+ * zero".
  */
 
-import { FINANCIAL_STATE_THRESHOLDS } from '../../forecast/domain/financial-state';
 import type { FinancialState } from '../../forecast/domain/financial-state';
 
 export type SnapshotFinancialStateReason =
   | 'no_assets_recorded'
   | 'no_foresight_recorded'
   | 'lowest_projected_balance_negative'
-  | 'reserve_significantly_breached'
-  | 'forecast_near_reserve'
   | 'flexible_money_negative';
 
 export interface SnapshotFinancialStateInput {
   /** NULL when the snapshot predates the foresight columns. */
   lowestProjectedBalance: number | null;
   flexibleMoney: number | null;
-  protectedReserveAmount: number;
   assetLineCount: number;
 }
 
@@ -44,7 +41,6 @@ export interface SnapshotFinancialStateResult {
 export function deriveSnapshotFinancialState(
   input: SnapshotFinancialStateInput,
 ): SnapshotFinancialStateResult {
-  const t = FINANCIAL_STATE_THRESHOLDS;
   const reasons: SnapshotFinancialStateReason[] = [];
 
   if (input.assetLineCount === 0) {
@@ -57,24 +53,11 @@ export function deriveSnapshotFinancialState(
     reasons.push('no_foresight_recorded');
   }
 
-  if (input.lowestProjectedBalance !== null) {
-    if (input.lowestProjectedBalance < 0) {
-      reasons.push('lowest_projected_balance_negative');
-    }
-    if (
-      input.protectedReserveAmount > 0 &&
-      input.lowestProjectedBalance <
-        input.protectedReserveAmount * t.reserveBreachRatio
-    ) {
-      reasons.push('reserve_significantly_breached');
-    }
-    if (
-      input.protectedReserveAmount > 0 &&
-      input.lowestProjectedBalance <
-        input.protectedReserveAmount * t.nearReserveRatio
-    ) {
-      reasons.push('forecast_near_reserve');
-    }
+  if (
+    input.lowestProjectedBalance !== null &&
+    input.lowestProjectedBalance < 0
+  ) {
+    reasons.push('lowest_projected_balance_negative');
   }
 
   if (input.flexibleMoney !== null && input.flexibleMoney < 0) {
@@ -87,12 +70,9 @@ export function deriveSnapshotFinancialState(
   let state: FinancialState;
   if (has('no_assets_recorded') || has('no_foresight_recorded')) {
     state = 'incomplete';
-  } else if (
-    has('lowest_projected_balance_negative') ||
-    has('reserve_significantly_breached')
-  ) {
+  } else if (has('lowest_projected_balance_negative')) {
     state = 'tight';
-  } else if (has('forecast_near_reserve') || has('flexible_money_negative')) {
+  } else if (has('flexible_money_negative')) {
     state = 'watch';
   } else {
     state = 'on_track';

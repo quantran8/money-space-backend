@@ -13,6 +13,8 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import type { AuthenticatedRequest } from './supabase-auth.guard';
 
 export interface HouseholdMembership {
+  /** Household-member row id used by holder/owner foreign keys. */
+  memberId: string;
   householdId: string;
   userId: string;
   /**
@@ -32,7 +34,7 @@ export interface RequestWithMembership extends AuthenticatedRequest {
  * RLS).
  *
  * Membership IS the content permission: a live member of the household may read
- * and write anything in it, including changing any record's sharing level.
+ * and write any financial record in it.
  * There is no role hierarchy and no permission tier between partners — what
  * makes a change accountable is that it lands in the journal, not that it was
  * pre-authorized.
@@ -99,7 +101,12 @@ export class HouseholdAccessGuard implements CanActivate {
     }
 
     const isCreator = household.createdById === user.id;
-    request.membership = { householdId, userId: user.id, isCreator };
+    request.membership = {
+      memberId: member.id,
+      householdId,
+      userId: user.id,
+      isCreator,
+    };
 
     const creatorOnly = this.reflector.getAllAndOverride<boolean | undefined>(
       HOUSEHOLD_CREATOR_KEY,

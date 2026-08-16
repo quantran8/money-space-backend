@@ -33,7 +33,6 @@ const DISMISSIBLE_RULE_CODES: readonly DerivedAttentionRuleCode[] = [
   'cashflow_required_due_soon',
   'cashflow_overdue',
   'low_projected_balance',
-  'reserve_at_risk',
   'stale_data',
 ];
 
