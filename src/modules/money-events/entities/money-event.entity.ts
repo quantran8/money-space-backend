@@ -8,6 +8,10 @@ export type MoneyEventType =
   // quantity, term…). `neutral` — records why the value changed for history, but
   // moves no wallet and is excluded from income/expense reports. See [[asset-valuation]].
   | 'asset_update'
+  // Settling a cashflow event (an outgoing one marked done). Present in the DB
+  // enum and written by `completeCashflowEvent`; it was missing from this union,
+  // which an `as never` cast at the call site hid.
+  | 'payment_paid'
   | 'goal_contribution'
   | 'debt_update'
   | 'adjustment';

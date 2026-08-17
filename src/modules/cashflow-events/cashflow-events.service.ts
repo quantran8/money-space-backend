@@ -10,6 +10,7 @@ import { PrismaService } from '../../database/prisma/prisma.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { nextOccurrenceAfter } from '../../common/utils/recurrence';
 import { MoneyEventsService } from '../money-events/money-events.service';
+import { AssetsService } from '../assets/assets.service';
 import {
   CashflowEvent,
   CashflowRequirement,
@@ -29,6 +30,8 @@ export class CashflowEventsService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => MoneyEventsService))
     private readonly moneyEvents: MoneyEventsService,
+    @Inject(forwardRef(() => AssetsService))
+    private readonly assets: AssetsService,
   ) {}
 
   async listCashflowEvents(
@@ -130,6 +133,10 @@ export class CashflowEventsService {
         payload.plannedAssetId !== undefined
           ? payload.plannedAssetId
           : event.plannedAssetId,
+      settlementAssetId:
+        payload.settlementAssetId !== undefined
+          ? payload.settlementAssetId
+          : event.settlementAssetId,
       note: payload.note?.trim() ?? event.note,
     };
 
@@ -194,6 +201,24 @@ export class CashflowEventsService {
       throw new BadRequestException('amount cannot be negative');
     }
 
+    // Completing an event MOVES MONEY, so it has to say which wallet it moved
+    // through. Fall back to the one chosen when the event was created; that is
+    // optional precisely because the household often does not know yet at
+    // planning time.
+    //
+    // Without a wallet the money event is still written but `applyWalletEffects`
+    // debits and credits nothing — the household confirms "lương 20tr" and no
+    // balance changes anywhere. That silent no-op is worse than a rejection: the
+    // item leaves the overdue list looking settled while every figure it should
+    // have moved stays put.
+    const settlementAssetId = payload.assetId ?? event.settlementAssetId;
+    if (!settlementAssetId) {
+      throw new BadRequestException(
+        'assetId is required — completing an event must say which wallet the money moved through',
+      );
+    }
+    await this.assertSettlementAsset(householdId, settlementAssetId);
+
     const advancedTo =
       event.recurrence === 'once'
         ? null
@@ -214,7 +239,7 @@ export class CashflowEventsService {
           : event.expectedDate,
       lastCompletedAt: new Date().toISOString(),
       lastCompletedAmount: amount,
-      lastCompletedAssetId: payload.assetId ?? null,
+      lastCompletedAssetId: settlementAssetId,
     };
 
     const moneyEvent = await this.prisma.runInTransaction(
@@ -222,24 +247,23 @@ export class CashflowEventsService {
         // Go through MoneyEventsService rather than a raw insert so the wallet
         // debit/credit, valuation points and the goal mirror all fire.
         const created = await this.moneyEvents.createMoneyEvent(householdId, {
-          description: event.name,
           type: event.direction === 'outgoing' ? 'payment_paid' : 'income',
           category: event.direction === 'outgoing' ? 'other' : 'income',
           amount,
           isoDate: occurrenceDate,
           fromAssetId:
-            event.direction === 'outgoing'
-              ? (payload.assetId ?? undefined)
-              : undefined,
+            event.direction === 'outgoing' ? settlementAssetId : undefined,
           toAssetId:
-            event.direction === 'incoming'
-              ? (payload.assetId ?? undefined)
-              : undefined,
+            event.direction === 'incoming' ? settlementAssetId : undefined,
           cashflowEventId: event.id,
           debtId: event.debtId ?? undefined,
           financialGoalId: event.financialGoalId ?? undefined,
-          note: payload.note,
-        } as never);
+          // `note` IS the `description` column. The call used to pass both a
+          // `description: event.name` (silently dropped — no such DTO field)
+          // and this, so a completed item recorded a blank description unless
+          // the user typed a note. Fall back to the event's own name.
+          note: payload.note?.trim() || event.name,
+        });
 
         await this.cashflowEventsRepository.updateCashflowEvent(eventId, next);
         return created;
@@ -351,6 +375,7 @@ export class CashflowEventsService {
       debtId: payload.debtId ?? null,
       financialGoalId: payload.financialGoalId ?? null,
       plannedAssetId: payload.plannedAssetId ?? null,
+      settlementAssetId: payload.settlementAssetId ?? null,
       note: payload.note?.trim() ?? '',
       lastCompletedAt: null,
       lastCompletedById: null,
@@ -411,6 +436,36 @@ export class CashflowEventsService {
       throw new NotFoundException(`Cashflow event "${eventId}" was not found`);
     }
     return event;
+  }
+
+  /**
+   * The wallet a completion moves money through must actually be able to move
+   * it. Two conditions, and failing either one means the balance would not
+   * change — the exact silent no-op this guard exists to prevent:
+   *
+   *  - **It counts as flexible money** (`liquidity = usable_now`). Settling a
+   *    bill from a long-term holding is not what happened; the household picked
+   *    which assets are spendable and this must respect that answer
+   *    (see `memory/assets.md`).
+   *  - **It is a wallet type** (`cash` / `bank_account`). `debitManualAsset`
+   *    and `creditManualAsset` return early for every other type, because a
+   *    stock or a gold bar has no stored cash balance to move.
+   */
+  private async assertSettlementAsset(householdId: string, assetId: string) {
+    // Throws NotFound when the asset is not in this household.
+    const asset = await this.assets.getAssetDetail(householdId, assetId);
+
+    if (asset.liquidity !== 'usable_now') {
+      throw new BadRequestException(
+        `Asset "${assetId}" is not counted as flexible money, so it cannot settle a cashflow event`,
+      );
+    }
+
+    if (asset.type !== 'cash' && asset.type !== 'bank_account') {
+      throw new BadRequestException(
+        `Asset "${assetId}" does not hold a spendable balance, so it cannot settle a cashflow event`,
+      );
+    }
   }
 
   /** Today in the household timezone — the only clock read in this service. */

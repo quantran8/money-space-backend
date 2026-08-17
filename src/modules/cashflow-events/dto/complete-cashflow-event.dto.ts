@@ -7,7 +7,12 @@ export interface CompleteCashflowEventDto {
   occurrenceDate?: string;
   /** What was actually moved. Defaults to the planned `amount`. */
   amount?: number;
-  /** The wallet debited (outgoing) or credited (incoming). */
+  /**
+   * The wallet debited (outgoing) or credited (incoming). **Required** —
+   * without it the completion moves no balance at all (`applyWalletEffects`
+   * no-ops when both asset ids are absent). Optional in the type only because
+   * the whole payload is optional; the service rejects a missing one.
+   */
   assetId?: string;
   note?: string;
 }

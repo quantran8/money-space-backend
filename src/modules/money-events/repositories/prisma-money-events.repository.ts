@@ -180,7 +180,7 @@ export class PrismaMoneyEventsRepository
         (id, household_id, description, event_type, category, amount,
          fee_amount, sold_quantity, sold_value, currency, event_date, direction,
          from_asset_id, to_asset_id,
-         upcoming_payment_id, debt_id, financial_goal_id, created_by, updated_at)
+         cashflow_event_id, debt_id, financial_goal_id, created_by, updated_at)
       SELECT
         ${event.id}::uuid,
         h.id,
@@ -224,14 +224,20 @@ export class PrismaMoneyEventsRepository
         feeAmount: event.feeAmount ?? 0,
         soldQuantity: event.soldQuantity ?? null,
         soldValue: event.soldValue ?? null,
-        eventDate: this.toDate(event.isoDate),
+        // `event_date` is NOT NULL, and `toDate` yields null only for an absent
+        // value — so leave the stored date alone rather than writing null.
+        eventDate: this.toDate(event.isoDate) ?? undefined,
         direction: event.direction,
         fromAssetId: event.fromAssetId,
         toAssetId: event.toAssetId,
-        upcomingPaymentId: event.upcomingPaymentId,
+        // The column was renamed to `cashflow_event_id`; the domain entity
+        // still calls it `upcomingPaymentId`. The cast that used to sit here
+        // hid the mismatch from the compiler — without it, a stale field name
+        // fails the build instead of the request.
+        cashflowEventId: event.upcomingPaymentId,
         debtId: event.debtId,
         financialGoalId: event.financialGoalId,
-      } as any,
+      },
     });
   }
 

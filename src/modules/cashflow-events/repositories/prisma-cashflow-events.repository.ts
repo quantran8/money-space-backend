@@ -157,7 +157,8 @@ export class PrismaCashflowEventsRepository
          recurrence, recurrence_end_date, requirement, certainty,
          status, attention_level,
          owner_member_id, debt_id,
-         financial_goal_id, planned_asset_id, note, created_by, updated_at)
+         financial_goal_id, planned_asset_id, settlement_asset_id,
+         note, created_by, updated_at)
       SELECT
         ${event.id}::uuid,
         h.id,
@@ -175,6 +176,7 @@ export class PrismaCashflowEventsRepository
         ${event.debtId ?? null}::uuid,
         ${event.financialGoalId ?? null}::uuid,
         ${event.plannedAssetId ?? null}::uuid,
+        ${event.settlementAssetId ?? null}::uuid,
         ${event.note ?? null},
         h.created_by,
         now()
@@ -225,6 +227,7 @@ export class PrismaCashflowEventsRepository
         debtId: event.debtId ?? null,
         financialGoalId: event.financialGoalId ?? null,
         plannedAssetId: event.plannedAssetId ?? null,
+        settlementAssetId: event.settlementAssetId ?? null,
         note: event.note ?? null,
         createdById: household.createdById,
       })) as never,
@@ -252,6 +255,7 @@ export class PrismaCashflowEventsRepository
         debtId: event.debtId ?? null,
         financialGoalId: event.financialGoalId ?? null,
         plannedAssetId: event.plannedAssetId ?? null,
+        settlementAssetId: event.settlementAssetId ?? null,
         note: event.note ?? null,
         lastCompletedAt: event.lastCompletedAt
           ? new Date(event.lastCompletedAt)

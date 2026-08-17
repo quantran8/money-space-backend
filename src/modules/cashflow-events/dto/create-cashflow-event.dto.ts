@@ -22,6 +22,8 @@ export interface CreateCashflowEventDto {
   debtId?: string | null;
   financialGoalId?: string | null;
   plannedAssetId?: string | null;
+  /** Optional wallet this event will settle through. See the entity field. */
+  settlementAssetId?: string | null;
   attentionLevel?: AttentionLevel;
   note?: string;
 }

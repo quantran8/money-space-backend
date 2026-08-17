@@ -64,6 +64,19 @@ Two behaviours worth knowing:
    already moved past the occurrence being completed. Without it a double-tap
    creates two money events *and* advances a monthly series two months, silently
    dropping a month from the forecast.
+1b. **A settling wallet is REQUIRED** (`assertSettlementAsset`). Resolution order
+   is `payload.assetId` → the event's own `settlement_asset_id` → **400**. It
+   must be `liquidity = usable_now` (flexible money — the household's own answer
+   to "is this spendable", see [[assets]]) **and** a wallet type
+   (`cash`/`bank_account`), because `debitManualAsset`/`creditManualAsset`
+   return early for every other type.
+   Why it is a hard error rather than a default: with no asset on either side
+   `applyWalletEffects` debits and credits nothing, so the money event was
+   written, the event left the overdue list looking settled, and **not one
+   balance moved**. A completion that moves no money is worse than a rejection.
+   `settlement_asset_id` on the event itself is nullable on purpose — at
+   planning time the household often does not know which account a bill comes
+   out of, so it is optional at create and only forced at completion.
 2. **Create the money event via `MoneyEventsService.createMoneyEvent`** (never a
    raw insert), so wallet debit/credit, valuation points and the goal mirror all
    fire. `outgoing` → `payment_paid` debiting `fromAssetId`; `incoming` →

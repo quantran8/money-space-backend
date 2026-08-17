@@ -513,6 +513,7 @@ model Asset {
   fromMoneyEvents             MoneyEvent[]           @relation("MoneyEventFromAsset")
   toMoneyEvents               MoneyEvent[]           @relation("MoneyEventToAsset")
   plannedCashflowEvents       CashflowEvent[]        @relation("CashflowEventPlannedAsset")
+  settlingCashflowEvents      CashflowEvent[]        @relation("CashflowEventSettlementAsset")
   completedFromCashflowEvents CashflowEvent[]        @relation("CashflowEventLastCompletedAsset")
   receivedDebts               Debt[]                 @relation("DebtReceivedToAsset")
 
@@ -794,6 +795,13 @@ model CashflowEvent {
   financialGoalId      String?              @map("financial_goal_id") @db.Uuid
   /// The asset this event is earmarked to buy/fund, when known.
   plannedAssetId       String?              @map("planned_asset_id") @db.Uuid
+  /// The wallet this event is EXPECTED to move through — debited when outgoing,
+  /// credited when incoming. Optional: at planning time the household often does
+  /// not know yet. Completing the event uses it as the default, and requires a
+  /// wallet to be chosen when it is null, because a completion that names no
+  /// wallet moves no balance at all. Distinct from `plannedAssetId`, which is
+  /// what the money BUYS, not where it comes from.
+  settlementAssetId    String?              @map("settlement_asset_id") @db.Uuid
   status               CashflowEventStatus  @default(expected)
   // attentionLevel stays: it carries the UI's "important" flag that status
   // can't express. `is_attention_needed` was a derived mirror → dropped.
@@ -815,6 +823,7 @@ model CashflowEvent {
   debt                 Debt?                @relation(fields: [debtId], references: [id])
   financialGoal        FinancialGoal?       @relation("CashflowEventFinancialGoal", fields: [financialGoalId], references: [id])
   plannedAsset         Asset?               @relation("CashflowEventPlannedAsset", fields: [plannedAssetId], references: [id])
+  settlementAsset      Asset?               @relation("CashflowEventSettlementAsset", fields: [settlementAssetId], references: [id])
   lastCompletedBy      Profile?             @relation("CashflowEventLastCompletedBy", fields: [lastCompletedById], references: [id])
   lastCompletedAsset   Asset?               @relation("CashflowEventLastCompletedAsset", fields: [lastCompletedAssetId], references: [id])
   createdBy            Profile              @relation("CashflowEventCreatedBy", fields: [createdById], references: [id])

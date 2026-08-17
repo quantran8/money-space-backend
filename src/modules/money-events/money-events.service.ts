@@ -217,7 +217,9 @@ export class MoneyEventsService {
       direction: deriveDirection(payload.type, payload.direction),
       fromAssetId: payload.fromAssetId,
       toAssetId: payload.toAssetId,
-      upcomingPaymentId: payload.upcomingPaymentId,
+      // Accept either spelling — `cashflowEventId` is the current column name,
+      // `upcomingPaymentId` the pre-rename one still used by the entity.
+      upcomingPaymentId: payload.cashflowEventId ?? payload.upcomingPaymentId,
       debtId: payload.debtId,
       financialGoalId: payload.financialGoalId,
     };

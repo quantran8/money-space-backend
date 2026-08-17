@@ -47,15 +47,27 @@ describe('CashflowEventsService — completion (§18)', () => {
     } as never;
     const createMoneyEvent = jest.fn(async () => ({ id: 'me-1' }));
     const moneyEvents = { createMoneyEvent } as never;
+    // A usable_now wallet — the only kind that can settle an event.
+    const getAssetDetail = jest.fn(async () => ({
+      id: 'asset-vcb',
+      type: 'bank_account',
+      liquidity: 'usable_now',
+    }));
+    const assets = { getAssetDetail } as never;
 
-    const service = new CashflowEventsService(repository, prisma, moneyEvents);
-    return { service, updateCashflowEvent, createMoneyEvent };
+    const service = new CashflowEventsService(
+      repository,
+      prisma,
+      moneyEvents,
+      assets,
+    );
+    return { service, updateCashflowEvent, createMoneyEvent, getAssetDetail };
   }
 
   it('closes a one-off and leaves its date alone', async () => {
     const { service, updateCashflowEvent } = setup({ recurrence: 'once' });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1');
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
 
     expect(result.event.status).toBe('completed');
     expect(result.event.expectedDate).toBe('2026-08-15');
@@ -67,7 +79,7 @@ describe('CashflowEventsService — completion (§18)', () => {
   it('ADVANCES a recurring event and keeps it expected', async () => {
     const { service } = setup({ recurrence: 'monthly' });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1');
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
 
     expect(result.event.expectedDate).toBe('2026-09-15');
     expect(result.event.status).toBe('expected');
@@ -80,7 +92,7 @@ describe('CashflowEventsService — completion (§18)', () => {
       expectedDate: '2026-01-31',
     });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1');
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
 
     expect(result.event.expectedDate).toBe('2026-02-28');
   });
@@ -92,7 +104,7 @@ describe('CashflowEventsService — completion (§18)', () => {
       recurrenceEndDate: '2026-09-01',
     });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1');
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
 
     expect(result.event.status).toBe('completed');
     // The date stays on the last real occurrence rather than jumping past the end.
@@ -150,10 +162,82 @@ describe('CashflowEventsService — completion (§18)', () => {
     );
   });
 
+  // The bug this guards: with no wallet on either side `applyWalletEffects`
+  // debits and credits nothing, so the event looked settled and no balance
+  // moved anywhere.
+  it('refuses to complete when no wallet is given or stored', async () => {
+    const { service, createMoneyEvent } = setup({ settlementAssetId: null });
+
+    await expect(
+      service.completeCashflowEvent('hh-1', 'cf-1'),
+    ).rejects.toThrow(BadRequestException);
+    expect(createMoneyEvent).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the wallet chosen when the event was created', async () => {
+    const { service, createMoneyEvent } = setup({
+      direction: 'outgoing',
+      settlementAssetId: 'asset-stored',
+    });
+
+    await service.completeCashflowEvent('hh-1', 'cf-1');
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ fromAssetId: 'asset-stored' }),
+    );
+  });
+
+  it('prefers the wallet passed at completion over the stored one', async () => {
+    const { service, createMoneyEvent } = setup({
+      direction: 'outgoing',
+      settlementAssetId: 'asset-stored',
+    });
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {
+      assetId: 'asset-picked',
+    });
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ fromAssetId: 'asset-picked' }),
+    );
+  });
+
+  // Only flexible money settles an event — see memory/assets.md.
+  it('refuses a wallet that is not counted as flexible money', async () => {
+    const { service, getAssetDetail, createMoneyEvent } = setup();
+    getAssetDetail.mockResolvedValue({
+      id: 'asset-gold',
+      type: 'bank_account',
+      liquidity: 'long_term',
+    });
+
+    await expect(
+      service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-gold' }),
+    ).rejects.toThrow(BadRequestException);
+    expect(createMoneyEvent).not.toHaveBeenCalled();
+  });
+
+  // A stock/gold asset has no stored cash balance, so debit/credit no-op on it.
+  it('refuses a usable_now asset that holds no spendable balance', async () => {
+    const { service, getAssetDetail, createMoneyEvent } = setup();
+    getAssetDetail.mockResolvedValue({
+      id: 'asset-stock',
+      type: 'stock',
+      liquidity: 'usable_now',
+    });
+
+    await expect(
+      service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-stock' }),
+    ).rejects.toThrow(BadRequestException);
+    expect(createMoneyEvent).not.toHaveBeenCalled();
+  });
+
   it('refuses to complete an already-completed event', async () => {
     const { service, createMoneyEvent } = setup({ status: 'completed' });
 
-    await expect(service.completeCashflowEvent('hh-1', 'cf-1')).rejects.toThrow(
+    await expect(service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' })).rejects.toThrow(
       ConflictException,
     );
     expect(createMoneyEvent).not.toHaveBeenCalled();
@@ -179,7 +263,11 @@ describe('CashflowEventsService — completion (§18)', () => {
     const { service } = setup();
 
     await expect(
-      service.completeCashflowEvent('hh-1', 'cf-1', { amount: -1 }),
+      // `assetId` supplied so this fails on the AMOUNT, not the wallet guard.
+      service.completeCashflowEvent('hh-1', 'cf-1', {
+        amount: -1,
+        assetId: 'asset-vcb',
+      }),
     ).rejects.toThrow(BadRequestException);
   });
 });

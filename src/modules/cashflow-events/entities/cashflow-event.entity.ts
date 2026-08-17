@@ -59,6 +59,13 @@ export interface CashflowEvent {
   financialGoalId?: string | null;
   /** The asset this event is earmarked to buy/fund, when known. */
   plannedAssetId?: string | null;
+  /**
+   * The wallet this event is expected to move through — debited when outgoing,
+   * credited when incoming. Optional at planning time; completing the event
+   * falls back to it and requires a wallet when it is null. Must be a
+   * `usable_now` wallet asset (`cash` / `bank_account`).
+   */
+  settlementAssetId?: string | null;
   note?: string;
   // For a RECURRING series these describe the most recent completion, not a
   // terminal state — the record lives on and `expectedDate` moves forward.

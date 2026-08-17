@@ -436,8 +436,11 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     direction: row.direction,
     fromAssetId: row.fromAssetId ?? row.from_asset_id ?? undefined,
     toAssetId: row.toAssetId ?? row.to_asset_id ?? undefined,
+    // Column renamed to `cashflow_event_id`; the entity field keeps its old
+    // name. Both spellings are read because raw SQL yields snake_case rows
+    // while the Prisma client yields camelCase.
     upcomingPaymentId:
-      row.upcomingPaymentId ?? row.upcoming_payment_id ?? undefined,
+      row.cashflowEventId ?? row.cashflow_event_id ?? undefined,
     debtId: row.debtId ?? row.debt_id ?? undefined,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? undefined,
   };
@@ -466,6 +469,8 @@ export function mapCashflowEvent(row: DbRow): CashflowEvent {
     debtId: row.debtId ?? row.debt_id ?? null,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? null,
     plannedAssetId: row.plannedAssetId ?? row.planned_asset_id ?? null,
+    settlementAssetId:
+      row.settlementAssetId ?? row.settlement_asset_id ?? null,
     note: row.note ?? '',
     lastCompletedAt: row.lastCompletedAt ?? row.last_completed_at ?? null,
     lastCompletedById: row.lastCompletedById ?? row.last_completed_by ?? null,
