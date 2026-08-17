@@ -11,6 +11,8 @@ import {
 import { DASHBOARD_REPOSITORY } from './repositories/dashboard.repository.interface';
 import type { DashboardRepository } from './repositories/dashboard.repository.interface';
 import { MarketDataService } from '../market-data/market-data.service';
+import { CacheService } from '../../common/cache/cache.service';
+import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 
 @Injectable()
 export class DashboardService {
@@ -19,9 +21,21 @@ export class DashboardService {
     private readonly dashboardRepository: DashboardRepository,
     private readonly marketData: MarketDataService,
     private readonly assets: AssetsService,
+    private readonly cache: CacheService,
   ) {}
 
+  /**
+   * Cached read-through. The uncached path fans out to ten queries, so this is
+   * the highest-value cache in the app; entries are dropped by
+   * `CacheInvalidator` on any write to the household, with `cacheTtl.household`
+   * as a backstop.
+   */
   async getDashboard(householdId: string) {
+    // Deliberately OUTSIDE the cached region: this is the authorization /
+    // existence check, and a cache hit must never let a caller skip it.
+    // It also throws for an unknown household before any cache key is built.
+    await this.dashboardRepository.assertHousehold(householdId);
+
     // Fire-and-forget: the first dashboard hit of the day for a household kicks
     // off a market-price refresh in the background (deduped + gated to once/day
     // inside the service). We do NOT await it — this response returns today's
@@ -30,6 +44,14 @@ export class DashboardService {
       .refreshMarketValuationsIfStale(householdId)
       .catch(() => undefined);
 
+    return this.cache.wrap(
+      cacheKeys.dashboard(householdId),
+      () => this.buildDashboard(householdId),
+      cacheTtl.household,
+    );
+  }
+
+  private async buildDashboard(householdId: string) {
     const [
       household,
       householdAssets,
@@ -42,6 +64,8 @@ export class DashboardService {
       snapshots,
       totalDebt,
     ] = await Promise.all([
+      // `assertHousehold` already ran in `getDashboard`; re-fetch the row for
+      // the payload without repeating the check.
       this.dashboardRepository.assertHousehold(householdId),
       this.dashboardRepository.findAssetsByHousehold(householdId),
       this.marketData.getMarketPrices(),

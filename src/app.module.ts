@@ -3,7 +3,9 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { CacheModule } from './common/cache/cache.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { CacheInvalidationInterceptor } from './common/interceptors/cache-invalidation.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { DatabaseModule } from './database/database.module';
@@ -18,6 +20,7 @@ import { MoneySpaceModule } from './modules/money-space.module';
     // the file itself), so every other env var reads as undefined.
     ConfigModule.forRoot({ isGlobal: true }),
     DatabaseModule,
+    CacheModule,
     MoneySpaceModule,
   ],
   controllers: [AppController],
@@ -32,6 +35,12 @@ import { MoneySpaceModule } from './modules/money-space.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: ResponseInterceptor,
+    },
+    // Innermost: runs after the handler resolves, so it only invalidates once
+    // the write has actually committed.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: CacheInvalidationInterceptor,
     },
     {
       provide: APP_FILTER,

@@ -10,6 +10,8 @@ import {
   type IsoDate,
 } from '../../common/utils/clock';
 import { runForecast } from './domain/forecast';
+import { CacheService } from '../../common/cache/cache.service';
+import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { computeFlexibleMoney } from './domain/flexible-money';
 import { deriveFinancialState } from './domain/financial-state';
 import {
@@ -83,6 +85,7 @@ export class ForecastService {
     private readonly forecastRepository: ForecastRepository,
     @Inject(GOALS_REPOSITORY)
     private readonly goalsRepository: GoalsRepository,
+    private readonly cache: CacheService,
   ) {}
 
   /** Validate + clamp the requested horizon. */
@@ -123,13 +126,31 @@ export class ForecastService {
     };
   }
 
+  /**
+   * The chokepoint every forecast read funnels through — `flexibleMoney`,
+   * `financialState` and `forecastBundle` are all pure functions of this
+   * result, so caching here covers all of them and nothing needs its own key.
+   *
+   * Only the default `asOfDate` (today) is cached. An explicit `asOfDate` comes
+   * from the snapshot backfill, not from HTTP — no controller passes one — so
+   * caching it would add dated keys that nothing reads twice while making the
+   * key space unbounded. Those callers run uncached.
+   */
   async forecast(
     householdId: string,
     horizonDays: number,
     asOfDate?: IsoDate,
   ): Promise<ForecastResult> {
-    return runForecast(
-      await this.loadInput(householdId, horizonDays, asOfDate),
+    if (asOfDate !== undefined) {
+      return runForecast(
+        await this.loadInput(householdId, horizonDays, asOfDate),
+      );
+    }
+
+    return this.cache.wrap(
+      cacheKeys.forecast(householdId, horizonDays),
+      async () => runForecast(await this.loadInput(householdId, horizonDays)),
+      cacheTtl.household,
     );
   }
 

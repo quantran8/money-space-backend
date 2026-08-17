@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { ForecastService } from './forecast.service';
+import { CacheService } from '../../common/cache/cache.service';
 import type { ForecastBundle } from './repositories/forecast.repository.interface';
 
 const M = 1_000_000;
@@ -34,8 +35,22 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
   const goalsRepository = {
     findFinancialGoalById: jest.fn(async () => goal),
   } as never;
-  const service = new ForecastService(forecastRepository, goalsRepository);
-  return { service, loadForecastBundle, forecastRepository, goalsRepository };
+  // A real CacheService with no Redis configured: `wrap` falls straight through
+  // to the loader, so these tests exercise the actual cached code path rather
+  // than a stub, while staying offline.
+  const cache = new CacheService();
+  const service = new ForecastService(
+    forecastRepository,
+    goalsRepository,
+    cache,
+  );
+  return {
+    service,
+    loadForecastBundle,
+    forecastRepository,
+    goalsRepository,
+    cache,
+  };
 }
 
 describe('ForecastService.parseHorizon', () => {
@@ -180,5 +195,96 @@ describe('ForecastService.whatIf', () => {
     const { service } = setup();
     const result = await service.whatIf('hh-1', spend);
     expect(result.assumptions.map((a) => a.code)).toContain('horizon_days');
+  });
+});
+
+describe('ForecastService caching', () => {
+  /**
+   * Injects a working in-memory cache into the service built by `setup()`.
+   * `CacheService` refuses to build a client under NODE_ENV=test by design, so
+   * the fake stands in for Redis while the real `wrap`/`get`/`set` logic runs.
+   */
+  function withCache(over: Partial<ForecastBundle> = {}) {
+    const store = new Map<string, string>();
+    const fakeRedis = {
+      get: (key: string) => Promise.resolve(store.get(key) ?? null),
+      set: (key: string, value: string) => {
+        store.set(key, value);
+        return Promise.resolve('OK');
+      },
+      on: () => undefined,
+    };
+    const ctx = setup(over);
+    (ctx.cache as unknown as { client: unknown }).client = fakeRedis;
+    return { ...ctx, store };
+  }
+
+  it('loads the bundle once across repeated forecast reads', async () => {
+    const { service, loadForecastBundle } = withCache();
+
+    await service.forecast('hh-1', 30);
+    await service.forecast('hh-1', 30);
+
+    expect(loadForecastBundle).toHaveBeenCalledTimes(1);
+  });
+
+  it('serves flexibleMoney, financialState and the bundle from one load', async () => {
+    // All three are pure functions of the forecast, so caching `forecast()`
+    // must cover every endpoint that derives from it.
+    const { service, loadForecastBundle } = withCache();
+
+    await service.forecast('hh-1', 30);
+    await service.flexibleMoney('hh-1', 30);
+    await service.financialState('hh-1', 30);
+    await service.forecastBundle('hh-1', 30);
+
+    expect(loadForecastBundle).toHaveBeenCalledTimes(1);
+  });
+
+  it('keys by horizon, so a different horizon is not served stale', async () => {
+    const { service, loadForecastBundle } = withCache();
+
+    await service.forecast('hh-1', 30);
+    await service.forecast('hh-1', 90);
+
+    expect(loadForecastBundle).toHaveBeenCalledTimes(2);
+  });
+
+  it('keys by household, so one household never sees another figures', async () => {
+    const { service, loadForecastBundle } = withCache();
+
+    await service.forecast('hh-1', 30);
+    await service.forecast('hh-2', 30);
+
+    expect(loadForecastBundle).toHaveBeenCalledTimes(2);
+  });
+
+  it('never caches an explicit asOfDate', async () => {
+    // Only the snapshot backfill passes a date; caching those would grow the
+    // key space with entries nothing reads twice.
+    const { service, loadForecastBundle, store } = withCache();
+
+    await service.forecast('hh-1', 30, TODAY);
+    await service.forecast('hh-1', 30, TODAY);
+
+    expect(loadForecastBundle).toHaveBeenCalledTimes(2);
+    expect(store.size).toBe(0);
+  });
+
+  it('does not let a what-if read poison the cached forecast', async () => {
+    // what-if runs the engine over a hypothetical event; that result must never
+    // become the household's real cached forecast.
+    const { service, store } = withCache();
+
+    await service.forecast('hh-1', 30);
+    const cachedBefore = store.get('money-space:hh:hh-1:forecast:30');
+
+    await service.whatIf('hh-1', {
+      amount: 5 * M,
+      plannedDate: TODAY,
+      horizonDays: 30,
+    });
+
+    expect(store.get('money-space:hh:hh-1:forecast:30')).toBe(cachedBefore);
   });
 });

@@ -17,6 +17,49 @@ npm run prisma:generate  # regenerate the Prisma client
 npm run db:init          # scripts/init-db.sh
 ```
 
+## Caching (Redis)
+
+Optional and **fail-open**: with `REDIS_URL` unset no client is built and every
+read goes straight to Postgres, so local dev, CI, and tests need no Redis. When
+Redis is configured but unreachable, `CacheService` logs once and reports a miss
+— an outage costs latency, never correctness, and never a 500.
+
+- **Cached today**: the dashboard and the forecast.
+  - **Dashboard** (`GET .../dashboard`) fans out to ten parallel queries.
+    `assertHousehold` runs **outside** the cached region — a cache hit must
+    never let a caller skip the existence/authorization check.
+  - **Forecast** is cached at `ForecastService.forecast()`, the chokepoint that
+    `forecast`, `flexible-money`, `financial-state`, `forecast-bundle` and
+    `goalProjection` all funnel through; `flexibleMoney`/`financialState` are
+    pure functions of its result, so one key covers all five endpoints. Keyed by
+    `horizon_days`, which `parseHorizon` restricts to `[7, 30, 60, 90]` — a
+    bounded key space. An explicit `asOfDate` (snapshot backfill only; no
+    controller passes one) bypasses the cache entirely.
+  - **`POST /what-if` is not cached and must not invalidate.** It needs the raw
+    bundle to re-run the engine over a hypothetical event, and it writes
+    nothing — it is a POST only because it needs a body. It carries
+    `@NoCacheInvalidation()`; without it, tuning an amount would flush a valid
+    cache on every run. Use that decorator for any other write-shaped read.
+- **Build keys only in [src/common/cache/cache.keys.ts](src/common/cache/cache.keys.ts).**
+  Every per-household entry must live under the `hh:<id>:` prefix so one
+  `delByPrefix` drops all of them. A key built ad-hoc in a service silently
+  survives invalidation and serves stale money figures.
+- **Invalidation is automatic.** `CacheInvalidationInterceptor` (global) drops
+  the household's keys after any successful `POST/PUT/PATCH/DELETE` carrying a
+  `:householdId` route param. This is deliberately *not* wired into the ~25
+  individual write sites — a new endpoint is covered the moment it is
+  registered, and there is no hook to forget. TTL (`cacheTtl.household`) is only
+  a backstop.
+- **Never invalidate from inside a transaction.** Dropping keys before commit
+  lets a concurrent read re-cache the *pre-commit* state, leaving a stale entry
+  no later write clears; a rollback would also discard the write while the cache
+  stayed dropped. Use `CacheInvalidator.runInTransactionAndInvalidate(...)`,
+  which flushes only after the outermost transaction commits (and skips
+  entirely on rollback). A bare `invalidateHousehold` called inside a
+  transaction defers automatically.
+- **Anything cached must be JSON round-trippable** — `undefined`, `Date`, and
+  `Decimal` do not survive. The dashboard already returns plain numbers/strings.
+
 ## Data-writing conventions
 
 Two cross-cutting rules for any create/update/delete flow:

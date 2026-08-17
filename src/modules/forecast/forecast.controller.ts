@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { ForecastService } from './forecast.service';
+import { NoCacheInvalidation } from '../../common/cache/no-cache-invalidation.decorator';
 import type { WhatIfRequestDto } from './dto/what-if.dto';
 
 /**
@@ -63,6 +64,9 @@ export class ForecastController {
     );
   }
 
+  // Writes nothing (see the class doc), so it must not drop the household's
+  // cache — what-if is run repeatedly in a row while tuning an amount.
+  @NoCacheInvalidation()
   @Post('what-if')
   runWhatIf(
     @Param('householdId') householdId: string,

@@ -1,0 +1,42 @@
+# Runs the backend together with the Redis it caches into.
+#
+# Postgres is deliberately absent: this app talks to Supabase, so DATABASE_URL /
+# DIRECT_URL in .env point at the hosted database. Only Redis is local.
+#
+#   docker compose up --build
+services:
+  redis:
+    image: redis:7-alpine
+    # maxmemory + LRU so a full cache evicts cold keys instead of refusing
+    # writes. Every entry is rebuildable from Postgres, so eviction is safe.
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: .
+    env_file: .env
+    environment:
+      # Overrides any REDIS_URL in .env: inside the compose network the host is
+      # the service name, not localhost.
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+# No named volume for Redis on purpose — persistence is off (`--save ""`), since
+# a cache that survives restarts would just serve staler data than a cold start.
