@@ -1,0 +1,239 @@
+# Build the backend image for arm64, push it to OCIR, and roll it out on the
+# Oracle Cloud Ampere instance that terraform/ provisions.
+#
+# Terraform owns the host; this workflow owns what runs on it. Secrets live in
+# GitHub, never in Terraform state.
+name: Deploy backend to OCI
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: 'Run `prisma migrate deploy` before restarting'
+        type: boolean
+        default: false
+
+concurrency:
+  # One rollout at a time; a newer push supersedes an in-flight one.
+  group: deploy-oci
+  cancel-in-progress: false
+
+env:
+  IMAGE: ${{ secrets.OCIR_REGISTRY }}/${{ secrets.OCIR_NAMESPACE }}/${{ secrets.OCIR_REPOSITORY }}
+
+jobs:
+  build:
+    # Production only ever runs code from master. The push trigger already
+    # guarantees that, but "Run workflow" accepts any branch from the UI — this
+    # stops a feature branch from being deployed by an accidental click.
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image architecture must match the instance's. A1 is aarch64, while
+      # E2.1.Micro is x86_64 — build for the wrong one and the container dies
+      # immediately with "exec format error". `terraform output image_platform`
+      # prints the right value; BUILD_PLATFORM carries it here.
+      #
+      # QEMU is only needed to cross-build arm64 on an x86 runner. It is slow,
+      # so an arm64 build is much faster on a native runner (`ubuntu-24.04-arm`)
+      # and an amd64 build needs no emulation at all.
+      - uses: docker/setup-qemu-action@v3
+        if: vars.BUILD_PLATFORM != 'linux/amd64'
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to OCIR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.OCIR_REGISTRY }}
+          username: ${{ secrets.OCIR_USERNAME }}
+          password: ${{ secrets.OCIR_TOKEN }}
+
+      - name: Compute image reference
+        id: meta
+        run: echo "image_ref=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ vars.BUILD_PLATFORM || 'linux/arm64' }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}
+            ${{ env.IMAGE }}:latest
+          # Registry-backed layer cache, so unchanged pnpm layers are reused.
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open SSH session to the instance
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          # Trust on first use: the host is created fresh by Terraform, so
+          # there is no pre-existing key to pin. Replace with a known_hosts
+          # entry from `ssh-keyscan` if you want strict checking.
+          cat >> ~/.ssh/config <<CFG
+          Host oci
+            HostName ${{ secrets.OCI_HOST }}
+            User ${{ secrets.OCI_SSH_USER }}
+            IdentityFile ~/.ssh/id_deploy
+            StrictHostKeyChecking accept-new
+            ConnectTimeout 20
+          CFG
+
+      - name: Wait for cloud-init to finish
+        # First deploy after `terraform apply` can race the Docker install.
+        run: |
+          for i in $(seq 1 30); do
+            if ssh oci 'test -f /var/lib/cloud/instance/provisioning-complete'; then
+              echo "host provisioned"; exit 0
+            fi
+            echo "waiting for cloud-init ($i/30)..."; sleep 20
+          done
+          echo "cloud-init did not complete in time" >&2
+          ssh oci 'sudo tail -40 /var/log/cloud-init-output.log' || true
+          exit 1
+
+      - name: Upload compose file and Caddyfile
+        run: |
+          scp deploy/docker-compose.prod.yml oci:"${{ secrets.APP_DIR }}/docker-compose.yml"
+          scp deploy/Caddyfile               oci:"${{ secrets.APP_DIR }}/Caddyfile"
+
+      - name: Write .env on the instance
+        # Piped over stdin so no secret is ever an argv entry (visible in `ps`)
+        # or a file on the runner. Written 0600, owned by the deploy user.
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_JWKS_URL: ${{ secrets.SUPABASE_JWKS_URL }}
+          BACKEND_IMAGE: ${{ needs.build.outputs.image_ref }}
+          APP_PORT: ${{ vars.APP_PORT || '3000' }}
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+          REDIS_MAXMEMORY: ${{ vars.REDIS_MAXMEMORY || '256mb' }}
+        run: |
+          {
+            for key in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_ANON_KEY \
+                       SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWKS_URL \
+                       BACKEND_IMAGE APP_PORT DOMAIN_NAME ACME_EMAIL \
+                       REDIS_MAXMEMORY; do
+              # ACME_EMAIL goes to Caddy's own env file, written below.
+              if [ "$key" = "ACME_EMAIL" ]; then continue; fi
+              # Compose parses env_file with dotenv rules, not shell rules:
+              # inside double quotes only \ and " are escapes, and $ / # are
+              # literal. Shell-style '\'' quoting would make Compose drop the
+              # line entirely, so escape for dotenv instead.
+              value=${!key}
+              value=${value//\\/\\\\}
+              value=${value//\"/\\\"}
+              printf '%s="%s"\n' "$key" "$value"
+            done
+          } | ssh oci "umask 077 && cat > ${{ secrets.APP_DIR }}/.env"
+
+      - name: Write Caddy's env file
+        if: vars.DOMAIN_NAME != ''
+        env:
+          ACME_EMAIL: ${{ vars.ACME_EMAIL }}
+        run: |
+          # Kept separate from the app's .env so the proxy never sees the
+          # Supabase keys. The ACME_EMAIL line is omitted entirely when no
+          # address is configured: the Caddyfile falls back to a placeholder
+          # contact for an ABSENT variable, but an empty one is a parse error
+          # that would crash-loop Caddy.
+          {
+            if [ -n "$ACME_EMAIL" ]; then
+              printf 'ACME_EMAIL="%s"\n' "${ACME_EMAIL//\"/\\\"}"
+            fi
+          } | ssh oci "umask 077 && cat > ${{ secrets.APP_DIR }}/.env.caddy"
+
+      - name: Log the instance in to OCIR
+        run: |
+          printf '%s' '${{ secrets.OCIR_TOKEN }}' | ssh oci \
+            "docker login ${{ secrets.OCIR_REGISTRY }} \
+               --username '${{ secrets.OCIR_USERNAME }}' --password-stdin"
+
+      - name: Pull and restart
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+        run: |
+          # The caddy service sits behind the `tls` profile, so it starts only
+          # when a domain is actually configured. --remove-orphans then also
+          # tears Caddy down cleanly if the domain is ever unset.
+          profile=""
+          if [ -n "$DOMAIN_NAME" ]; then profile="--profile tls"; fi
+
+          ssh oci "cd ${{ secrets.APP_DIR }} && \
+            docker compose $profile pull && \
+            docker compose $profile up -d --remove-orphans"
+
+      - name: Run database migrations
+        if: inputs.run_migrations
+        # The image ships prisma/ but not the prisma CLI (a dev dependency), so
+        # fetch it at run time. --env-file supplies DATABASE_URL/DIRECT_URL.
+        run: |
+          ssh oci "cd ${{ secrets.APP_DIR }} && \
+            docker run --rm --env-file .env \
+              --entrypoint sh '${{ needs.build.outputs.image_ref }}' \
+              -c 'npx --yes prisma@6.19.3 migrate deploy'"
+
+      - name: Verify health
+        run: |
+          for i in $(seq 1 20); do
+            if ssh oci "curl -fsS localhost:${{ vars.APP_PORT || '3000' }}/health" ; then
+              echo; echo "backend healthy"; exit 0
+            fi
+            echo "waiting for backend ($i/20)..."; sleep 6
+          done
+          echo "backend never became healthy" >&2
+          ssh oci "cd ${{ secrets.APP_DIR }} && docker compose ps && docker compose logs --tail 80 backend" >&2
+          exit 1
+
+      - name: Verify HTTPS
+        if: vars.DOMAIN_NAME != ''
+        env:
+          DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+        run: |
+          # Issuing the first certificate takes Caddy a few seconds after the
+          # ACME HTTP-01 challenge round-trip, so this polls rather than
+          # checking once. Run from the runner, not the VM: that exercises the
+          # public DNS record and the real certificate chain.
+          for i in $(seq 1 20); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+                     "https://$DOMAIN_NAME/health" 2>/dev/null || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "https://$DOMAIN_NAME/health -> 200"
+              curl -sS --max-time 10 "https://$DOMAIN_NAME/health"; echo
+              exit 0
+            fi
+            echo "waiting for certificate ($i/20, last status $code)..."; sleep 10
+          done
+
+          echo "::error::HTTPS on $DOMAIN_NAME did not come up." >&2
+          echo "Most likely the A record does not point at this instance yet." >&2
+          echo "DNS currently resolves to:" >&2
+          getent hosts "$DOMAIN_NAME" >&2 || echo "  (no A record found)" >&2
+          echo "Instance address: ${{ secrets.OCI_HOST }}" >&2
+          ssh oci "cd ${{ secrets.APP_DIR }} && docker compose logs --tail 60 caddy" >&2
+          exit 1
+
+      - name: Prune old images
+        if: always()
+        run: ssh oci 'docker image prune -af --filter "until=168h"'

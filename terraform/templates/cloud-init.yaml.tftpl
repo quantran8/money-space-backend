@@ -1,0 +1,82 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# Machine preparation only. No application code, no secrets: GitHub Actions
+# owns the deployment, and anything written here would otherwise be readable in
+# Terraform state and in the instance metadata service.
+# ---------------------------------------------------------------------------
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+
+users:
+  - default
+%{ if deploy_user_enabled ~}
+  # Dedicated CI identity: owns ${app_dir}, no sudo. It is NOT given `groups:
+  # [docker]` here — the docker group does not exist until the package is
+  # installed in runcmd, and cloud-init fails the user outright if a listed
+  # group is missing. runcmd adds the membership after the install instead.
+  - name: ${deploy_user}
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${deploy_ssh_public_key}
+%{ endif ~}
+
+write_files:
+  # Docker's default is to write iptables rules that bypass ufw. The instance is
+  # already firewalled by the VCN security list, so ufw stays off and the OCI
+  # image's default REJECT rules are what we clear below.
+  - path: /etc/docker/daemon.json
+    permissions: '0644'
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": { "max-size": "10m", "max-file": "3" }
+      }
+
+runcmd:
+  # ---- Host firewall ----
+  # Ubuntu images on OCI ship iptables rules that REJECT everything except 22.
+  # The VCN security list is the real control point, so flush the INPUT chain
+  # additions and persist the result.
+  - netfilter-persistent flush || true
+  - iptables -F INPUT || true
+  - iptables -P INPUT ACCEPT || true
+  - netfilter-persistent save || true
+
+  # ---- Docker Engine + compose plugin from Docker's own apt repo (arm64) ----
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >-
+    echo "deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable"
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+
+  # ---- Application directory, owned by whoever CI logs in as ----
+  - mkdir -p ${app_dir}
+%{ if deploy_user_enabled ~}
+  - usermod -aG docker ${deploy_user}
+  - chown -R ${deploy_user}:${deploy_user} ${app_dir}
+%{ else ~}
+  - chown -R ubuntu:ubuntu ${app_dir}
+%{ endif ~}
+
+  # ---- Marker polled by CI/readiness checks ----
+  - touch /var/lib/cloud/instance/provisioning-complete
+
+%{ if domain_name != "" ~}
+# TLS is served for ${domain_name}. Caddy answers the ACME HTTP-01 challenge on
+# port 80, so that port must stay reachable for renewals, not just first issue.
+%{ endif ~}
+final_message: "money-space host ready after $UPTIME seconds — deploy via GitHub Actions"

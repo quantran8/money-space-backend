@@ -1,0 +1,100 @@
+# Production stack, copied to the VM by the deploy workflow.
+#
+# Unlike the root docker-compose.yml this never builds: the image is built by
+# GitHub Actions, pushed to OCIR and pulled here by digest-pinned tag.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+services:
+  redis:
+    image: redis:7-alpine
+    # maxmemory + LRU so a full cache evicts cold keys instead of refusing
+    # writes. Every entry is rebuildable from Postgres, so eviction is safe.
+    # 256 MB suits the A1 shape. On a 1 GB E2.1.Micro that is a quarter of the
+    # machine, so the deploy lowers it via REDIS_MAXMEMORY. Every entry is
+    # rebuildable from Postgres, so a smaller cache costs latency, not data.
+    command: >
+      redis-server
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    # Not published on the host: only the backend container needs to reach it.
+
+  backend:
+    # Set by the workflow in the .env it uploads alongside this file.
+    image: ${BACKEND_IMAGE}
+    env_file: .env
+    environment:
+      # Overrides any REDIS_URL in .env — inside the compose network the host is
+      # the service name, not localhost.
+      REDIS_URL: redis://redis:6379
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - '${APP_PORT:-3000}:3000'
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # The image has no curl, but it does have node. /health is marked @Public
+      # in app.controller.ts, so this probe carries no bearer token by design.
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # TLS terminator. Caddy obtains and renews a Let's Encrypt certificate for
+  # DOMAIN_NAME on its own; the only prerequisite is that the name already
+  # resolves here and ports 80/443 are reachable, since the ACME HTTP-01
+  # challenge is answered on port 80.
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - '80:80'
+      - '443:443'
+    # Started only when the deploy enables the `tls` profile, which the workflow
+    # does exactly when a domain is configured. Without a domain there is
+    # nothing to request a certificate for, so the service stays down and the
+    # app is reached on its own port instead.
+    profiles: ['tls']
+    # A dedicated env file, not the app's: Caddy has no business holding the
+    # Supabase service-role key.
+    #
+    # ACME_EMAIL is deliberately absent from `environment:` too. Naming it there
+    # makes Compose inject it as an empty string whenever it has no value, and
+    # an empty ACME_EMAIL leaves the Caddyfile's `email` directive without an
+    # argument — a parse error that crash-loops the container. Coming from a
+    # file, the variable is simply missing when unset, which is exactly what
+    # {$ACME_EMAIL:default} needs in order to apply.
+    env_file: .env.caddy
+    environment:
+      DOMAIN_NAME: ${DOMAIN_NAME:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Without this volume every restart
+      # re-issues from scratch and quickly trips Let's Encrypt's rate limit
+      # (5 duplicate certificates per week).
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+# Redis persistence stays off (`--save ""`): a cache that survives restarts
+# would just serve staler data than a cold start.
