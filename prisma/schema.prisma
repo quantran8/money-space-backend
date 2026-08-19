@@ -218,7 +218,6 @@ enum MoneyEventType {
   asset_sale
   asset_update
   payment_paid
-  goal_contribution
   debt_update
   adjustment
   other
@@ -264,6 +263,30 @@ enum GoalStatus {
   cancelled
 }
 
+/// How much of an asset a goal claims. `fixed` is a declared amount that stays
+/// put when the asset reprices; `percent` is a share that moves with it. Chosen
+/// per allocation, because "50tr of my stocks" and "all of my gold" are both
+/// things a household means.
+enum GoalAllocationKind {
+  fixed
+  percent
+}
+
+/// What an allocation is FOR. Both count towards the goal's progress; only
+/// `contribution` counts towards its monthly pace.
+///
+/// `holding` is value already accumulated (gold, stocks) — it moves with the
+/// market, which is not the household keeping or missing a savings pace.
+/// `contribution` is the wallet money flows through, and a wallet has no market
+/// price, so a pace measured from it needs no separating of price from principal.
+///
+/// The household chooses; the asset type only seeds the default (wallet →
+/// `contribution`). Deriving it would count a spending wallet as savings.
+enum GoalAllocationRole {
+  contribution
+  holding
+}
+
 enum RelatedObjectType {
   asset
   cashflow_event
@@ -295,6 +318,49 @@ enum AttentionItemStatus {
 /// column across the schema is a 3-letter code validated against this table at
 /// the app layer (and by a DB FK added in the migration). Not exposed as a
 /// Prisma relation on each owner to avoid ~11 back-relations; query it directly.
+
+/// One goal's progress, frozen into a snapshot.
+///
+/// A goal's progress is DERIVED from live asset values, so "what did this goal
+/// hold in June?" cannot be recomputed later: allocations carry no history, and
+/// adding an asset today would retroactively raise every past month. Recording
+/// the resolved figure here is what keeps the history honest.
+///
+/// It is also what makes the month-to-month question answerable — "we meant to
+/// set aside 10tr, we managed 8tr" is the difference between two month-end
+/// snapshots, and it already accounts for both spending and price moves.
+///
+/// Name and target are denormalized alongside the value for the same reason
+/// `snapshot_asset_values` freezes its asset's name: renaming a goal must not
+/// rewrite what a past snapshot meant (spec §17).
+model SnapshotGoalValue {
+  id                         String        @id @default(uuid(7)) @db.Uuid
+  householdId                String        @map("household_id") @db.Uuid
+  snapshotId                 String        @map("snapshot_id") @db.Uuid
+  financialGoalId            String        @map("financial_goal_id") @db.Uuid
+  goalName                   String        @map("goal_name")
+  targetAmount               Decimal       @map("target_amount") @db.Decimal(14, 2)
+  progressAmount             Decimal       @map("progress_amount") @db.Decimal(14, 2)
+  /// The `contribution`-role share of `progressAmount` — the part that moves
+  /// only when the household puts money in or takes it out, never with the
+  /// market. Frozen, not recomputed: allocations carry no history, so deriving
+  /// it later would rewrite what past months "were". 0 on rows written before
+  /// the column existed — a total > 0 with this at 0 means "not recorded", and
+  /// readers must show "—" rather than report a missed month.
+  contributionProgressAmount Decimal       @default(0) @map("contribution_progress_amount") @db.Decimal(14, 2)
+  createdAt                  DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  household                  Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  snapshot                   Snapshot      @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  financialGoal              FinancialGoal @relation(fields: [financialGoalId], references: [id], onDelete: Cascade)
+
+  // One line per goal per snapshot — the per-day upsert rewrites today's lines,
+  // and two rows for one goal on one day would double its history. The unique
+  // index lives in migration SQL.
+  @@index([financialGoalId])
+  @@index([householdId, snapshotId])
+  @@map("snapshot_goal_values")
+}
+
 model Currency {
   code     String  @id @db.Char(3)
   name     String
@@ -306,38 +372,40 @@ model Currency {
 }
 
 model Profile {
-  id                       String             @id @db.Uuid
-  fullName                 String?            @map("full_name")
-  displayName              String?            @map("display_name")
-  avatarUrl                String?            @map("avatar_url")
+  id                       String                @id @db.Uuid
+  fullName                 String?               @map("full_name")
+  displayName              String?               @map("display_name")
+  avatarUrl                String?               @map("avatar_url")
   email                    String?
   phone                    String?
-  createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
-  householdsCreated        Household[]        @relation("HouseholdCreatedBy")
-  householdMembers         HouseholdMember[]  @relation("HouseholdMemberUser")
-  invitedHouseholdMembers  HouseholdMember[]  @relation("HouseholdMemberInvitedBy")
-  householdInvitesSent     HouseholdInvite[]  @relation("HouseholdInviteInvitedBy")
-  householdInvitesAccepted HouseholdInvite[]  @relation("HouseholdInviteAcceptedBy")
-  snapshotsCreated         Snapshot[]         @relation("SnapshotCreatedBy")
-  assetsCreated            Asset[]            @relation("AssetCreatedBy")
-  assetsUpdated            Asset[]            @relation("AssetUpdatedBy")
-  assetValuationsCreated   AssetValuation[]   @relation("AssetValuationCreatedBy")
-  assetValuationsUpdated   AssetValuation[]   @relation("AssetValuationUpdatedBy")
-  cashflowEventsCreated    CashflowEvent[]    @relation("CashflowEventCreatedBy")
-  cashflowEventsUpdated    CashflowEvent[]    @relation("CashflowEventUpdatedBy")
-  cashflowEventsCompleted  CashflowEvent[]    @relation("CashflowEventLastCompletedBy")
-  debtsCreated             Debt[]             @relation("DebtCreatedBy")
-  debtsUpdated             Debt[]             @relation("DebtUpdatedBy")
-  financialGoalsCreated    FinancialGoal[]    @relation("FinancialGoalCreatedBy")
-  financialGoalsUpdated    FinancialGoal[]    @relation("FinancialGoalUpdatedBy")
-  moneyEventsCreated       MoneyEvent[]       @relation("MoneyEventCreatedBy")
-  moneyEventsUpdated       MoneyEvent[]       @relation("MoneyEventUpdatedBy")
-  attentionItemsCreated    AttentionItem[]    @relation("AttentionItemCreatedBy")
-  attentionItemsSeen       AttentionItem[]    @relation("AttentionItemSeenBy")
-  attentionItemsResolved   AttentionItem[]    @relation("AttentionItemResolvedBy")
-  attentionItemsDismissed  AttentionItem[]    @relation("AttentionItemDismissedBy")
-  auditLogsActed           AuditLog[]         @relation("AuditLogActor")
+  createdAt                DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  householdsCreated        Household[]           @relation("HouseholdCreatedBy")
+  householdMembers         HouseholdMember[]     @relation("HouseholdMemberUser")
+  invitedHouseholdMembers  HouseholdMember[]     @relation("HouseholdMemberInvitedBy")
+  householdInvitesSent     HouseholdInvite[]     @relation("HouseholdInviteInvitedBy")
+  householdInvitesAccepted HouseholdInvite[]     @relation("HouseholdInviteAcceptedBy")
+  snapshotsCreated         Snapshot[]            @relation("SnapshotCreatedBy")
+  assetsCreated            Asset[]               @relation("AssetCreatedBy")
+  assetsUpdated            Asset[]               @relation("AssetUpdatedBy")
+  assetValuationsCreated   AssetValuation[]      @relation("AssetValuationCreatedBy")
+  assetValuationsUpdated   AssetValuation[]      @relation("AssetValuationUpdatedBy")
+  cashflowEventsCreated    CashflowEvent[]       @relation("CashflowEventCreatedBy")
+  cashflowEventsUpdated    CashflowEvent[]       @relation("CashflowEventUpdatedBy")
+  cashflowEventsCompleted  CashflowEvent[]       @relation("CashflowEventLastCompletedBy")
+  debtsCreated             Debt[]                @relation("DebtCreatedBy")
+  debtsUpdated             Debt[]                @relation("DebtUpdatedBy")
+  financialGoalsCreated    FinancialGoal[]       @relation("FinancialGoalCreatedBy")
+  financialGoalsUpdated    FinancialGoal[]       @relation("FinancialGoalUpdatedBy")
+  goalAllocationsCreated   GoalAssetAllocation[] @relation("GoalAssetAllocationCreatedBy")
+  goalAllocationsUpdated   GoalAssetAllocation[] @relation("GoalAssetAllocationUpdatedBy")
+  moneyEventsCreated       MoneyEvent[]          @relation("MoneyEventCreatedBy")
+  moneyEventsUpdated       MoneyEvent[]          @relation("MoneyEventUpdatedBy")
+  attentionItemsCreated    AttentionItem[]       @relation("AttentionItemCreatedBy")
+  attentionItemsSeen       AttentionItem[]       @relation("AttentionItemSeenBy")
+  attentionItemsResolved   AttentionItem[]       @relation("AttentionItemResolvedBy")
+  attentionItemsDismissed  AttentionItem[]       @relation("AttentionItemDismissedBy")
+  auditLogsActed           AuditLog[]            @relation("AuditLogActor")
 
   @@map("profiles")
 }
@@ -370,6 +438,8 @@ model Household {
   debtInterestPeriods     DebtInterestPeriod[]
   cashflowEvents          CashflowEvent[]
   financialGoals          FinancialGoal[]
+  goalAssetAllocations    GoalAssetAllocation[]
+  snapshotGoalValues      SnapshotGoalValue[]
   moneyEvents             MoneyEvent[]
   moneyEventCategories    MoneyEventCategory[]
   attentionItems          AttentionItem[]
@@ -462,6 +532,7 @@ model Snapshot {
   household              Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
   createdBy              Profile?             @relation("SnapshotCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   snapshotAssetValues    SnapshotAssetValue[]
+  snapshotGoalValues     SnapshotGoalValue[]
   moneyEvents            MoneyEvent[]         @relation("MoneyEventSnapshot")
 
   @@index([householdId, snapshotDate(sort: Desc)])
@@ -516,6 +587,7 @@ model Asset {
   settlingCashflowEvents      CashflowEvent[]        @relation("CashflowEventSettlementAsset")
   completedFromCashflowEvents CashflowEvent[]        @relation("CashflowEventLastCompletedAsset")
   receivedDebts               Debt[]                 @relation("DebtReceivedToAsset")
+  goalAllocations             GoalAssetAllocation[]
 
   @@index([holderMemberId])
   // Backs the canonical `WHERE household_id = ? AND deleted_at IS NULL
@@ -841,48 +913,121 @@ model CashflowEvent {
   @@map("cashflow_events")
 }
 
+/// A shared savings goal — a set of SHARES of real assets, storing no figure of
+/// its own.
+///
+/// At least one of those shares must be a `cash`/`bank_account` asset. A goal is
+/// something money is put INTO month after month, and money is only ever put in
+/// through a wallet; a goal backed solely by gold or stocks can move on price
+/// alone, which is the market's doing and not the household's saving. Requiring
+/// a wallet is what makes "did we keep our pace?" answerable at all. Enforced in
+/// `GoalsService` — the rule spans `goal_asset_allocations` and `assets`, which
+/// no CHECK can see.
 model FinancialGoal {
-  id                         String          @id @default(uuid(7)) @db.Uuid
-  householdId                String          @map("household_id") @db.Uuid
+  id                         String                @id @default(uuid(7)) @db.Uuid
+  householdId                String                @map("household_id") @db.Uuid
   name                       String
-  category                   GoalCategory    @default(other)
-  targetAmount               Decimal         @default(0) @map("target_amount") @db.Decimal(14, 2)
-  // STORED and the source of truth for goal progress (spec §20). It is NOT
-  // derived from goal_contribution events, because a new household arrives with
-  // savings that predate any event history — deriving it would show 0.
-  //
-  // The previous cache column was dropped precisely because it drifted: nothing
-  // incremented it on contribution and nothing reversed it on delete. That is
-  // now wired in MoneyEventsService, inside the SAME transaction as the event
-  // (create adds, update applies the delta, delete reverses). If you touch that
-  // flow, keep the mirror — the column is only trustworthy while it holds.
-  currentAmount              Decimal         @default(0) @map("current_amount") @db.Decimal(14, 2)
-  currentAmountUpdatedAt     DateTime?       @map("current_amount_updated_at") @db.Timestamptz(6)
+  category                   GoalCategory          @default(other)
+  targetAmount               Decimal               @default(0) @map("target_amount") @db.Decimal(14, 2)
   // Renamed from `deadline` (spec §20).
-  targetDate                 DateTime?       @map("target_date") @db.Date
-  // Drives the projection. NULL or <= 0 means "no projected completion date" —
-  // show progress only and invite the user to declare a contribution. Never
-  // divide by it without checking.
-  plannedMonthlyContribution Decimal?        @map("planned_monthly_contribution") @db.Decimal(14, 2)
-  priority                   GoalPriority    @default(medium)
-  status                     GoalStatus      @default(active)
-  // No source wallet on the goal — the money source is chosen per contribution
-  // (each goal_contribution money event carries its own fromAssetId).
+  targetDate                 DateTime?             @map("target_date") @db.Date
+  // The declared pace, and a MAINTAINED MIRROR: never sent by a client, always
+  // the sum of `monthly_contribution` over this goal's wallet shares (see
+  // `GoalAssetAllocation`). `GoalsService` rewrites it in the same transaction
+  // as any allocation write, so the two can only be read apart, never written
+  // apart.
+  //
+  // Stored rather than summed on read because every goal surface shows it — the
+  // list, the dashboard, the forecast — and none of them otherwise needs the
+  // allocation rows at all.
+  //
+  // NULL means "no wallet declared an amount": show progress only, and never a
+  // monthly verdict. NULL or <= 0 also means "no projected completion date" —
+  // never divide by it without checking.
+  plannedMonthlyContribution Decimal?              @map("planned_monthly_contribution") @db.Decimal(14, 2)
+  priority                   GoalPriority          @default(medium)
+  status                     GoalStatus            @default(active)
+  // No source wallet on the goal. An `earmark` contribution names no wallet at
+  // all (nothing is debited — the money is already the household's and stays
+  // where it is); an `asset_backed` goal names its assets through
+  // `allocations`, with a share each, not a single owning wallet.
   note                       String?
-  createdById                String          @map("created_by") @db.Uuid
-  createdAt                  DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById                String?         @map("updated_by") @db.Uuid
-  updatedAt                  DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt                  DateTime?       @map("deleted_at") @db.Timestamptz(6)
-  household                  Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy                  Profile         @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
-  updatedBy                  Profile?        @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
-  moneyEvents                MoneyEvent[]    @relation("MoneyEventFinancialGoal")
-  cashflowEvents             CashflowEvent[] @relation("CashflowEventFinancialGoal")
+  createdById                String                @map("created_by") @db.Uuid
+  createdAt                  DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById                String?               @map("updated_by") @db.Uuid
+  updatedAt                  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt                  DateTime?             @map("deleted_at") @db.Timestamptz(6)
+  household                  Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy                  Profile               @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
+  updatedBy                  Profile?              @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
+  moneyEvents                MoneyEvent[]          @relation("MoneyEventFinancialGoal")
+  cashflowEvents             CashflowEvent[]       @relation("CashflowEventFinancialGoal")
+  allocations                GoalAssetAllocation[]
+  snapshotValues             SnapshotGoalValue[]
 
   @@index([householdId, status])
   @@index([householdId, targetDate])
   @@map("financial_goals")
+}
+
+/// One asset's contribution to one `asset_backed` goal.
+///
+/// Assets are shared by the part, not claimed whole: 100tr of stocks can send
+/// 50tr to the car goal and leave the rest unassigned or feeding another goal.
+/// That is why this is a table and not a column on either side.
+///
+/// Exactly one of `allocatedAmount` / `percent` is set, per `kind` — enforced by
+/// the `goal_asset_allocations_kind_matches_value` CHECK, because storing both
+/// would let them disagree about what the household claimed.
+///
+/// Over-allocation (claims summing past an asset's value) is checked in
+/// `GoalsService` at write time, not by a constraint: it needs a total across
+/// rows plus the asset's live value. Later price falls are NOT blocked —
+/// `resolveGoalProgressAmount` caps a `fixed` claim at the asset's current
+/// value, so a goal can never report more money than actually exists.
+model GoalAssetAllocation {
+  id                  String             @id @default(uuid(7)) @db.Uuid
+  householdId         String             @map("household_id") @db.Uuid
+  financialGoalId     String             @map("financial_goal_id") @db.Uuid
+  assetId             String             @map("asset_id") @db.Uuid
+  kind                GoalAllocationKind
+  /// Whether this share is money being contributed (a wallet) or value already
+  /// held (gold, stocks). Only `contribution` feeds the monthly pace.
+  role                GoalAllocationRole @default(holding)
+  /// The monthly pace this wallet is meant to feed the goal at, in VND.
+  ///
+  /// Only a `contribution` share may carry one — enforced by the
+  /// `goal_asset_allocations_monthly_contribution_role` CHECK — and only over a
+  /// `cash`/`bank_account` asset, which `GoalsService` checks because the asset
+  /// type lives in another table.
+  ///
+  /// The goal's declared pace is the SUM of these. "10tr a month" is really "6tr
+  /// out of the salary account and 4tr in cash", and saying it per wallet is what
+  /// lets the plan be read against the wallets it is supposed to come from.
+  monthlyContribution Decimal?           @map("monthly_contribution") @db.Decimal(14, 2)
+  /// Set when `kind = fixed`. A declared VND amount, unmoved by repricing.
+  allocatedAmount     Decimal?           @map("allocated_amount") @db.Decimal(14, 2)
+  /// Set when `kind = percent`. 0 < percent <= 100, tracks the asset's value.
+  percent             Decimal?           @db.Decimal(5, 2)
+  note                String?
+  createdById         String             @map("created_by") @db.Uuid
+  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById         String?            @map("updated_by") @db.Uuid
+  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?          @map("deleted_at") @db.Timestamptz(6)
+  household           Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  financialGoal       FinancialGoal      @relation(fields: [financialGoalId], references: [id], onDelete: Cascade)
+  asset               Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy           Profile            @relation("GoalAssetAllocationCreatedBy", fields: [createdById], references: [id])
+  updatedBy           Profile?           @relation("GoalAssetAllocationUpdatedBy", fields: [updatedById], references: [id])
+
+  // One LIVE claim per (goal, asset) — a second row would be two answers to one
+  // question. Partial (`WHERE deleted_at IS NULL`) so a soft-deleted claim never
+  // blocks re-adding the asset; the index lives in migration SQL.
+  @@index([householdId])
+  @@index([financialGoalId])
+  @@index([assetId])
+  @@map("goal_asset_allocations")
 }
 
 model MoneyEvent {

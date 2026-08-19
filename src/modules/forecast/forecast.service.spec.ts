@@ -35,6 +35,15 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
   const goalsRepository = {
     findFinancialGoalById: jest.fn(async () => goal),
   } as never;
+  // Progress resolution is exercised by `goal-progress.spec.ts`; here it only
+  // has to return the fixture's own figure so the projection assertions below
+  // stay about the projection.
+  const goalsService = {
+    resolveProgressAmount: jest.fn(
+      async (_householdId: string, target: { currentAmount: number }) =>
+        target.currentAmount,
+    ),
+  } as never;
   // A real CacheService with no Redis configured: `wrap` falls straight through
   // to the loader, so these tests exercise the actual cached code path rather
   // than a stub, while staying offline.
@@ -42,6 +51,7 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
   const service = new ForecastService(
     forecastRepository,
     goalsRepository,
+    goalsService,
     cache,
   );
   return {

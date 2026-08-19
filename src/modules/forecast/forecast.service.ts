@@ -31,6 +31,7 @@ import { FORECAST_REPOSITORY } from './repositories/forecast.repository.interfac
 import type { ForecastRepository } from './repositories/forecast.repository.interface';
 import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interface';
 import type { GoalsRepository } from '../goals/repositories/goals.repository.interface';
+import { GoalsService } from '../goals/goals.service';
 import type { WhatIfRequestDto } from './dto/what-if.dto';
 
 /** The horizons the product offers (04 §7). Anything else is a 400. */
@@ -85,6 +86,10 @@ export class ForecastService {
     private readonly forecastRepository: ForecastRepository,
     @Inject(GOALS_REPOSITORY)
     private readonly goalsRepository: GoalsRepository,
+    // Resolves a goal's progress per its backing mode. Forecast's own `assets`
+    // list holds only liquid sources, so a goal backed by gold or crypto could
+    // not be valued here without it.
+    private readonly goalsService: GoalsService,
     private readonly cache: CacheService,
   ) {}
 
@@ -248,7 +253,12 @@ export class ForecastService {
       ? {
           goalId: goal.id,
           targetAmount: goal.targetAmount,
-          currentAmount: goal.currentAmount,
+          // Resolved per backing mode — the stored column is meaningless for an
+          // asset_backed goal, so projecting from it would invent a figure.
+          currentAmount: await this.goalsService.resolveProgressAmount(
+            householdId,
+            goal,
+          ),
           plannedMonthlyContribution: goal.plannedMonthlyContribution,
           targetDate:
             goal.targetDate && goal.targetDate !== 'No deadline'
@@ -349,7 +359,11 @@ export class ForecastService {
     return projectGoal({
       goalId: goal.id,
       targetAmount: goal.targetAmount,
-      currentAmount: goal.currentAmount,
+      // Resolved per backing mode, same as the what-if path above.
+      currentAmount: await this.goalsService.resolveProgressAmount(
+        householdId,
+        goal,
+      ),
       plannedMonthlyContribution: goal.plannedMonthlyContribution,
       targetDate:
         goal.targetDate && goal.targetDate !== 'No deadline'

@@ -43,6 +43,26 @@ export interface CreateSnapshotInput {
   note?: string | null;
   createdById?: string | null;
   lines: SnapshotAssetLine[];
+  /**
+   * Each goal's progress at snapshot time. Frozen because it cannot be
+   * recomputed later — allocations carry no history, so adding an asset today
+   * would retroactively raise every past month.
+   */
+  goalLines: SnapshotGoalLine[];
+}
+
+/** One goal's progress, frozen alongside the asset lines. */
+export interface SnapshotGoalLine {
+  financialGoalId: string;
+  goalName: string;
+  targetAmount: number;
+  progressAmount: number;
+  /**
+   * The `contribution`-role part of `progressAmount`. Frozen separately so the
+   * monthly pace can be read without the market movement that rides along in
+   * the total — see `resolveContributionProgressAmount`.
+   */
+  contributionProgressAmount: number;
 }
 
 export interface SnapshotsRepository {
@@ -53,6 +73,41 @@ export interface SnapshotsRepository {
     householdId: string,
     asOfDate: string,
   ): Promise<SnapshotAssetLine[]>;
+  /**
+   * Each goal's progress right now, resolved from its allocations against the
+   * same live asset values the asset lines were built from — so a goal and the
+   * assets behind it can never disagree within one snapshot.
+   */
+  getGoalLines(householdId: string): Promise<SnapshotGoalLine[]>;
+  /**
+   * One goal's frozen progress across snapshots, oldest first. Feeds
+   * `buildGoalMonthlyProgress`.
+   */
+  findGoalProgressPoints(
+    householdId: string,
+    goalId: string,
+  ): Promise<
+    Array<{
+      date: string;
+      progressAmount: number;
+      /** Null on points frozen before contributions were tracked separately. */
+      contributionAmount: number | null;
+    }>
+  >;
+  /**
+   * The most recent frozen point BEFORE `beforeDate`, with that snapshot's
+   * per-asset values — the basis for explaining why the goal's figure moved.
+   * Null when the goal has no earlier point.
+   */
+  findGoalProgressChangeBasis(
+    householdId: string,
+    goalId: string,
+    beforeDate: string,
+  ): Promise<{
+    date: string;
+    progressAmount: number;
+    assets: Array<{ assetId: string; assetName: string; value: number }>;
+  } | null>;
   getOutstandingDebtTotal(householdId: string): Promise<number>;
   /** When the household last took a snapshot — backs the rate limit. */
   getLastSnapshotCreatedAt(householdId: string): Promise<Date | null>;

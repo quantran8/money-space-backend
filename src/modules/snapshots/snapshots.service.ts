@@ -102,9 +102,12 @@ export class SnapshotsService {
     );
 
     // 2–5. Everything expensive, concurrently, and all outside the transaction.
-    const [lines, totalDebt, forecastInput, attentionCount] = await Promise.all(
-      [
+    const [lines, goalLines, totalDebt, forecastInput, attentionCount] =
+      await Promise.all([
         this.snapshotsRepository.getClassifiedAssetLines(householdId, asOfDate),
+        // Frozen alongside the assets: a goal's progress cannot be recomputed
+        // later, because its allocations carry no history.
+        this.snapshotsRepository.getGoalLines(householdId),
         this.snapshotsRepository.getOutstandingDebtTotal(householdId),
         this.forecast.loadInput(householdId, horizonDays, asOfDate),
         // Stored items ONLY. A derived count isn't reproducible — it depends on a
@@ -112,8 +115,7 @@ export class SnapshotsService {
         // freezing it would put a number in the row that nothing can ever
         // recompute or verify.
         this.attention.countOpenStoredItems(householdId),
-      ],
-    );
+      ]);
 
     const forecast = runForecast(forecastInput);
     const flexible = computeFlexibleMoney(forecast);
@@ -149,6 +151,7 @@ export class SnapshotsService {
       note: payload.note?.trim() || null,
       createdById: userId ?? null,
       lines,
+      goalLines,
     });
 
     this.logger.log(

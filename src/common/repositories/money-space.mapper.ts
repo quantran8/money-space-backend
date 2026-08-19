@@ -9,6 +9,7 @@ import type {
 import {
   NO_TARGET_DATE,
   type FinancialGoal,
+  type GoalAssetAllocation,
 } from '../../modules/goals/entities/financial-goal.entity';
 import type {
   Household,
@@ -327,8 +328,9 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
     name: row.name,
-    currentAmount: numberFromDb(row.currentAmount ?? row.current_amount),
     targetAmount: numberFromDb(row.targetAmount ?? row.target_amount),
+    // A maintained mirror of the goal's wallet shares, not an input — see
+    // `FinancialGoal.plannedMonthlyContribution`.
     plannedMonthlyContribution:
       (row.plannedMonthlyContribution ?? row.planned_monthly_contribution) ==
       null
@@ -342,6 +344,31 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
       (row.targetDate ?? row.target_date)
         ? dateOnly(row.targetDate ?? row.target_date)
         : NO_TARGET_DATE,
+  };
+}
+
+export function mapGoalAssetAllocation(row: DbRow): GoalAssetAllocation {
+  const allocatedAmount = row.allocatedAmount ?? row.allocated_amount;
+  const percent = row.percent;
+  const monthlyContribution =
+    row.monthlyContribution ?? row.monthly_contribution;
+  return {
+    id: row.id,
+    householdId: row.householdId ?? row.household_id,
+    financialGoalId: row.financialGoalId ?? row.financial_goal_id,
+    assetId: row.assetId ?? row.asset_id,
+    kind: row.kind,
+    role: row.role ?? 'holding',
+    // Null means "this wallet declares no monthly amount" — the goal then has no
+    // pace at all unless another share declares one. 0 would be a promise to
+    // save nothing.
+    monthlyContribution:
+      monthlyContribution == null ? null : numberFromDb(monthlyContribution),
+    // Exactly one of these is set per `kind` (DB CHECK). Kept as null rather
+    // than 0 for the unused one, so "no fixed amount" never reads as "0đ".
+    allocatedAmount: allocatedAmount == null ? null : numberFromDb(allocatedAmount),
+    percent: percent == null ? null : numberFromDb(percent),
+    note: row.note ?? '',
   };
 }
 
@@ -442,7 +469,6 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     upcomingPaymentId:
       row.cashflowEventId ?? row.cashflow_event_id ?? undefined,
     debtId: row.debtId ?? row.debt_id ?? undefined,
-    financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? undefined,
   };
 }
 

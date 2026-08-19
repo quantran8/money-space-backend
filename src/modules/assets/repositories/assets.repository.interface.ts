@@ -37,10 +37,13 @@ export interface AssetsRepository {
     note?: string;
   }): Promise<void>;
   /**
-   * Record an additional buy merged into an existing market position. The
-   * event is neutral (it does not imply a wallet source) and links to the
-   * position through `toAssetId`, so it appears in both the household ledger
-   * and the asset activity timeline.
+   * Record an acquisition, linked to the asset through `toAssetId` so it shows
+   * in both the household ledger and the asset activity timeline.
+   *
+   * `fundingAssetId` decides which act this is: a wallet means a purchase
+   * (`outflow` from it — the caller debits it, leaving net worth unchanged);
+   * omitting it means the household is declaring something it already owns
+   * (`neutral`, no source, no balance touched). See `CreateAssetDto`.
    */
   insertAssetPurchaseEvent(event: {
     id: string;
@@ -49,6 +52,7 @@ export interface AssetsRepository {
     amount: number;
     isoDate: string;
     note: string;
+    fundingAssetId?: string | null;
   }): Promise<void>;
   updateAsset(assetId: string, asset: Asset): Promise<void>;
   updateAssetCurrentValue(assetId: string, value: number): Promise<void>;

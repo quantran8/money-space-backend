@@ -1,11 +1,11 @@
 import type { CreateFinancialGoalDto } from './create-financial-goal.dto';
 
 /**
- * `currentAmount` is omitted on purpose: once a goal exists, its progress may
- * only change through a `goal_contribution` money event, which updates the
- * column inside the same transaction. Allowing a direct edit here would let the
- * stored total silently diverge from the contribution history.
+ * `allocations` is omitted: which assets back a goal is edited through the
+ * allocation routes (`…/allocations`), one claim at a time, so that each write
+ * can be checked against what the asset still has free. Letting a goal PATCH
+ * replace the whole set would either skip that check or silently drop claims
+ * the caller did not mean to touch.
  */
-export interface UpdateFinancialGoalDto extends Partial<
-  Omit<CreateFinancialGoalDto, 'currentAmount'>
-> {}
+export interface UpdateFinancialGoalDto
+  extends Partial<Omit<CreateFinancialGoalDto, 'allocations'>> {}

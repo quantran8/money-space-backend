@@ -8,6 +8,7 @@ import {
   toGoalCard,
   toMoneyEventCard,
 } from '../../common/utils/money-space.utils';
+import { resolveGoalProgressAmount } from '../goals/domain/goal-progress';
 import { DASHBOARD_REPOSITORY } from './repositories/dashboard.repository.interface';
 import type { DashboardRepository } from './repositories/dashboard.repository.interface';
 import { MarketDataService } from '../market-data/market-data.service';
@@ -63,6 +64,7 @@ export class DashboardService {
       moneyEvents,
       snapshots,
       totalDebt,
+      goalAllocations,
     ] = await Promise.all([
       // `assertHousehold` already ran in `getDashboard`; re-fetch the row for
       // the payload without repeating the check.
@@ -76,6 +78,7 @@ export class DashboardService {
       this.dashboardRepository.findMoneyEventsByHousehold(householdId),
       this.dashboardRepository.getSnapshotsByHousehold(householdId),
       this.dashboardRepository.getOutstandingDebtTotal(householdId),
+      this.dashboardRepository.findGoalAllocationsByHousehold(householdId),
     ]);
     const assets = householdAssets.map((asset) => ({
       ...asset,
@@ -91,6 +94,44 @@ export class DashboardService {
     // latest snapshot) so the header reflects today's asset values + debt,
     // not the last snapshot cadence. Same debt source the snapshot writer uses.
     const totals = computeLiquidityTotals(assets);
+
+    // How much of the household's money already has a job.
+    //
+    // This is a DISPLAY split, not a deduction: `netWorth` below is untouched,
+    // and flexible money keeps its own formula. Setting money aside for a goal
+    // does not make a household poorer, and subtracting earmarks from the
+    // headline figure is the shape that got `protected_reserves` removed —
+    // a goal with a monthly contribution is already pulled down by the
+    // forecast, so subtracting it here too would count it twice.
+    const assetValues = new Map(
+      assets.map((asset) => [asset.id, asset.currentValue]),
+    );
+    const progressOf = (goal: (typeof financialGoals)[number]) =>
+      resolveGoalProgressAmount(
+        goalAllocations
+          .filter((allocation) => allocation.financialGoalId === goal.id)
+          .map((allocation) => ({
+            assetId: allocation.assetId,
+            kind: allocation.kind,
+            allocatedAmount: allocation.allocatedAmount,
+            percent: allocation.percent,
+          })),
+        assetValues,
+      );
+    // Every goal the household still has: `status` is not carried on the entity
+    // (the repository already excludes soft-deleted rows), and a completed goal
+    // is money that is still set aside anyway — it has not been spent yet.
+    const goalProgressAmounts = financialGoals.map(progressOf);
+    // No cap needed: a goal is a set of shares of assets, each bounded by its
+    // asset's live value, and no asset can be over-allocated across goals
+    // (`GoalsService.assertWithinAssetValue`). So the sum is structurally at
+    // most `totalAssets`. The previous `Math.min` existed only to contain an
+    // earmark figure, which was a bare declaration and could outrun what the
+    // household actually held; with that gone the clamp would only hide a bug.
+    const earmarkedForGoals = goalProgressAmounts.reduce(
+      (sum, amount) => sum + amount,
+      0,
+    );
 
     return {
       household,
@@ -110,12 +151,19 @@ export class DashboardService {
         savings: totals.not_immediately_usable,
         debt: totalDebt,
         netWorth: totals.totalAssets - totalDebt,
+        // The display split described above. `netWorth` is deliberately NOT
+        // reduced by these — they say where the money is pointed, not that it
+        // is gone.
+        earmarkedForGoals,
+        unassigned: Math.max(0, totals.totalAssets - earmarkedForGoals),
         attentionCount: attentionItems.length,
       },
       // Raw cashflow events; the client renders them. The forecast
       // endpoints (Phase 3) are what turn these into a timeline.
       payments: cashflowEvents,
-      goals: financialGoals.map((goal) => toGoalCard(goal)),
+      // Each card carries its resolved progress, so an asset_backed goal on the
+      // dashboard shows what its assets are worth rather than an unused column.
+      goals: financialGoals.map((goal) => toGoalCard(goal, progressOf(goal))),
       assetGroups: [
         {
           name: 'Co the dung ngay',

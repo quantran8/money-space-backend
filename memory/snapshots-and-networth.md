@@ -69,6 +69,41 @@ only because every affected row was `household`/NULL).
 Lines are read back from the LINE, never re-read through the asset: the asset may
 have been reclassified since, and a past snapshot must keep meaning what it meant.
 
+## SnapshotGoalValue
+
+Freezes **each goal's resolved progress** at snapshot time (unique per
+`[snapshotId, financialGoalId]`), alongside its name and target.
+
+**Why frozen rather than recomputed.** A goal's progress is derived from its
+allocations against live asset values, and allocations carry no history — so
+recomputing "what did this goal hold in June?" from `SnapshotAssetValue` would
+make an asset added today retroactively raise every past month. The history
+would tell a story that never happened.
+
+This is what makes the month-to-month question answerable: "we meant to set
+aside 10tr, we managed 8tr because we spent 2tr" is the difference between two
+month-end rows. Written by `getGoalLines` inside the same transaction as the
+asset lines; read by `GET /financial-goals/:goalId/monthly-progress` and
+`GET /financial-goals/:goalId/progress-change`.
+
+**Two figures per row, not one.** `progress_amount` is the whole goal, market
+value included. `contribution_progress_amount` is only the `contribution`-role
+share — the wallets money flows through. The pace is measured on the second: a
+wallet has no market price, so gold repricing can no longer answer "did we keep
+our 10tr?" (it used to, wrongly in both directions). Both come from the same
+allocations and the same asset values in one pass, so they cannot disagree about
+one day.
+
+Rows written before that column existed hold 0. A total > 0 with a contribution
+of 0 means **not recorded**, not "nothing went in" — `findGoalProgressPoints`
+reports it as `null` so the panel shows "—" rather than accusing a household of
+missing months it may well have kept. Deliberately not backfilled, for the same
+reason the figure is frozen at all.
+
+`findGoalProgressChangeBasis` reads the latest row BEFORE today together with
+that snapshot's `SnapshotAssetValue` lines — the basis for saying which asset
+moved and by how much. See [[goals]].
+
 ## Snapshots are append-only, created deliberately (v3.1)
 
 Snapshots are created by **`POST /snapshots`**. They are frozen pictures: once

@@ -257,7 +257,6 @@ export class CashflowEventsService {
             event.direction === 'incoming' ? settlementAssetId : undefined,
           cashflowEventId: event.id,
           debtId: event.debtId ?? undefined,
-          financialGoalId: event.financialGoalId ?? undefined,
           // `note` IS the `description` column. The call used to pass both a
           // `description: event.name` (silently dropped — no such DTO field)
           // and this, so a completed item recorded a blank description unless

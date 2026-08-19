@@ -107,9 +107,10 @@ export class MoneyEventsService {
    * (`fromAssetId`) and, where present, the destination (`toAssetId`) must both
    * be spendable wallets (cash / bank_account). A valued asset (gold, stock,
    * saving deposit, …) is never the wallet of an income/expense/transfer — it
-   * changes hands via its own flow (sell / revalue). asset_sale / asset_update /
-   * debt_update / goal_contribution deliberately link non-wallet assets and are
-   * excluded. See [[money-events]].
+   * changes hands via its own flow (sell / revalue). asset_sale /
+   * asset_purchase / asset_update / debt_update deliberately link non-wallet
+   * assets and are excluded — their own flows validate the wallet side. See
+   * [[money-events]].
    */
   private static readonly WALLET_ONLY_EVENT_TYPES: ReadonlySet<string> =
     new Set(['income', 'expense', 'transfer']);
@@ -119,10 +120,6 @@ export class MoneyEventsService {
    * cash / bank_account wallet — money can only flow in or out of a spendable
    * balance. No-op for other event types (which link valued assets on purpose).
    *
-   * `goal_contribution` is handled separately (`assertGoalContributionSource`):
-   * it moves cash out of a spendable wallet INTO a savings goal, so its
-   * `fromAssetId` is required and must be a wallet, but it links no valued
-   * `toAssetId` — the goal is not an asset row.
    */
   private async assertWalletLinks(
     householdId: string,
@@ -139,31 +136,6 @@ export class MoneyEventsService {
     if (toAssetId) {
       await this.assetsService.assertWalletAsset(householdId, toAssetId);
     }
-  }
-
-  /**
-   * A `goal_contribution` moves cash from a spendable wallet into a savings goal
-   * (it debits `fromAssetId` in `applyWalletEffects` — direction stays `neutral`,
-   * so it is NOT counted as spending in the thu/chi summary; it is a move between
-   * the household's own pockets, like a transfer). The source **wallet is
-   * mandatory** — a contribution that debits nothing would let progress rise for
-   * free (the bug this fixes). It must be a `cash` / `bank_account` asset.
-   * No-op for every other event type.
-   */
-  private async assertGoalContributionSource(
-    householdId: string,
-    type: string,
-    fromAssetId?: string,
-  ): Promise<void> {
-    if (type !== 'goal_contribution') {
-      return;
-    }
-    if (!fromAssetId) {
-      throw new BadRequestException(
-        'A goal contribution must specify the wallet the money comes from (fromAssetId).',
-      );
-    }
-    await this.assetsService.assertWalletAsset(householdId, fromAssetId);
   }
 
   /**
@@ -194,13 +166,8 @@ export class MoneyEventsService {
       payload.fromAssetId,
       payload.toAssetId,
     );
-    // A goal_contribution must debit a real wallet (see the method) — reject a
-    // contribution with no / non-wallet source before touching any balance.
-    await this.assertGoalContributionSource(
-      householdId,
-      payload.type,
-      payload.fromAssetId,
-    );
+    // What this event may claim about a goal, per that goal's backing mode
+    // (see the method) — rejected before any balance is touched.
     // `insertMoneyEvent` asserts the household exists (and needs its row to
     // resolve `createdById`), so we don't assert it a second time here.
     const event: MoneyEvent = {
@@ -221,7 +188,6 @@ export class MoneyEventsService {
       // `upcomingPaymentId` the pre-rename one still used by the entity.
       upcomingPaymentId: payload.cashflowEventId ?? payload.upcomingPaymentId,
       debtId: payload.debtId,
-      financialGoalId: payload.financialGoalId,
     };
 
     // An event moves money between wallets: the `fromAsset` is debited and the
@@ -253,9 +219,6 @@ export class MoneyEventsService {
         // any over/under payment. The borrow inflow is a debt_update *inflow* and
         // is excluded — it raises the wallet, it must not pay the debt down.
         await this.applyDebtRepaymentEffects(householdId, event, -1);
-        // A goal_contribution moves the goal's stored progress forward. Same
-        // transaction as the event itself (spec §19/§20) — see the method.
-        await this.applyGoalContributionEffects(householdId, event, 1);
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -465,13 +428,6 @@ export class MoneyEventsService {
       next.fromAssetId,
       next.toAssetId,
     );
-    // An edited goal_contribution must still debit a wallet source.
-    await this.assertGoalContributionSource(
-      householdId,
-      next.type,
-      next.fromAssetId,
-    );
-
     // Editing an event can change its amount or its linked wallets, so reverse
     // the old event's wallet moves and apply the new one's — together with the
     // row update, in one transaction so they can't diverge. For an asset_sale
@@ -551,8 +507,6 @@ export class MoneyEventsService {
         // uses the ORIGINAL event's amount/debt; the re-apply uses the new one.
         await this.applyDebtRepaymentEffects(householdId, event, 1);
         // Reverse the OLD contribution before re-applying the new one below, so
-        // an amount change (or a re-link to a different goal) nets out exactly.
-        await this.applyGoalContributionEffects(householdId, event, -1);
         // Clear this event's old history points before re-applying: the edit may
         // have moved it to a different asset set, and `apply` only writes points
         // for the NEW assets — so any point on a dropped asset would otherwise be
@@ -562,7 +516,6 @@ export class MoneyEventsService {
         await this.applyWalletEffects(next, 'apply');
         await this.applySaleEffects(next);
         await this.applyDebtRepaymentEffects(householdId, next, -1);
-        await this.applyGoalContributionEffects(householdId, next, 1);
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -589,8 +542,6 @@ export class MoneyEventsService {
         // Deleting a repayment restores the debt's outstanding and un-rebalances
         // the next installment it had shifted.
         await this.applyDebtRepaymentEffects(householdId, event, 1);
-        // Deleting a contribution takes the goal's progress back down.
-        await this.applyGoalContributionEffects(householdId, event, -1);
         // The reversal above re-touched this event's linked valuation points
         // (same event id). Removing the event should remove those points from
         // history entirely, so soft-delete them last.
@@ -613,42 +564,6 @@ export class MoneyEventsService {
     return this.moneyEventsRepository.findMoneyEventsByDebt(
       householdId,
       debtId,
-    );
-  }
-
-  /**
-   * Apply (`sign = +1`) or reverse (`sign = -1`) a contribution's effect on its
-   * goal's stored `currentAmount`.
-   *
-   * `financial_goals.current_amount` is a REAL column and the source of truth
-   * for goal progress (spec §20) — deliberately not derived from these events,
-   * because a household arrives with savings that predate the app and there is
-   * no honest event to invent for them.
-   *
-   * That makes THIS function the thing keeping the column honest. An earlier
-   * stored column was dropped precisely because nothing incremented it on
-   * contribution and nothing reversed it on delete, so it drifted. Every path
-   * that writes a `goal_contribution` must call this inside the same
-   * transaction: create applies, delete reverses, edit reverses-then-applies.
-   *
-   * No-op for events that are not goal contributions.
-   */
-  private async applyGoalContributionEffects(
-    householdId: string,
-    event: {
-      type: string;
-      financialGoalId?: string | null;
-      amount: number;
-    },
-    sign: 1 | -1,
-  ): Promise<void> {
-    if (event.type !== 'goal_contribution' || !event.financialGoalId) {
-      return;
-    }
-    await this.moneyEventsRepository.adjustGoalCurrentAmount(
-      householdId,
-      event.financialGoalId,
-      sign * event.amount,
     );
   }
 

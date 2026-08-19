@@ -2,12 +2,16 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapFinancialGoal,
+  mapGoalAssetAllocation,
   mapHousehold,
   nullableDate,
 } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
-import { FinancialGoal } from '../entities/financial-goal.entity';
+import {
+  FinancialGoal,
+  GoalAssetAllocation,
+} from '../entities/financial-goal.entity';
 import { Household } from '../../households/entities/household.entity';
 import { GoalsRepository } from './goals.repository.interface';
 
@@ -39,9 +43,8 @@ export class PrismaGoalsRepository
   async findFinancialGoalsByHousehold(
     householdId: string,
   ): Promise<FinancialGoal[]> {
-    // `current_amount` is a real column (spec §20) maintained transactionally by
-    // MoneyEventsService, so a plain read is the source of truth — no aggregate
-    // over goal_contribution events, and no second round-trip.
+    // Progress is not stored here — the caller resolves it from the goal's
+    // allocations against live asset values.
     const goals = await this.prisma.financialGoal.findMany({
       where: { householdId, deletedAt: null },
       orderBy: { createdAt: 'asc' },
@@ -74,21 +77,18 @@ export class PrismaGoalsRepository
     // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills it
     // on ORM writes, but a raw INSERT must set it explicitly.
     //
-    // `current_amount` IS written here: create is the one moment the caller may
-    // set it, so onboarding can record savings that predate the app. Every
-    // later change goes through a goal_contribution money event.
+    // A goal stores no progress figure of its own — it is the sum of the shares
+    // of real assets recorded in `goal_asset_allocations`, resolved on read.
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO financial_goals
-        (id, household_id, name, target_amount, current_amount,
-         current_amount_updated_at, planned_monthly_contribution,
+        (id, household_id, name, target_amount,
+         planned_monthly_contribution,
          target_date, priority, note, created_by, updated_at)
       SELECT
         ${goal.id}::uuid,
         h.id,
         ${goal.name},
         ${goal.targetAmount}::numeric,
-        ${goal.currentAmount}::numeric,
-        CASE WHEN ${goal.currentAmount}::numeric > 0 THEN now() ELSE NULL END,
         ${goal.plannedMonthlyContribution}::numeric,
         ${targetDate}::date,
         ${goal.priority}::"GoalPriority",
@@ -117,13 +117,23 @@ export class PrismaGoalsRepository
         name: goal.name,
         targetAmount: goal.targetAmount,
         plannedMonthlyContribution: goal.plannedMonthlyContribution,
-        // `currentAmount` is deliberately absent: only a goal_contribution
-        // money event may move progress (see MoneyEventsService), so a plain
-        // goal edit must never rewrite it.
+        // No progress field to write: it is derived from the goal's
+        // allocations, which are edited through their own routes.
         targetDate: this.toDate(nullableDate(goal.targetDate)),
         priority: goal.priority,
         note: goal.note,
       } as any,
+    });
+  }
+
+  async updatePlannedMonthlyContribution(
+    householdId: string,
+    goalId: string,
+    plannedMonthlyContribution: number | null,
+  ): Promise<void> {
+    await this.prisma.financialGoal.updateMany({
+      where: { id: goalId, householdId, deletedAt: null },
+      data: { plannedMonthlyContribution } as any,
     });
   }
 
@@ -134,10 +144,161 @@ export class PrismaGoalsRepository
     });
   }
 
-  async unlinkFinancialGoalFromMoneyEvents(goalId: string): Promise<void> {
+  async unlinkFinancialGoalFromMoneyEvents(
+    householdId: string,
+    goalId: string,
+  ): Promise<void> {
+    // Scoped to the household as well as the goal. Goal ids are uuids so a
+    // collision is not the worry — an unscoped write is simply a write nobody
+    // bounded, and every other statement here carries the household.
     await this.prisma.moneyEvent.updateMany({
-      where: { financialGoalId: goalId },
+      where: { householdId, financialGoalId: goalId },
       data: { financialGoalId: null },
     });
   }
+
+  async findAllocationsByHousehold(
+    householdId: string,
+  ): Promise<GoalAssetAllocation[]> {
+    const rows = await this.prisma.goalAssetAllocation.findMany({
+      where: { householdId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((row) => mapGoalAssetAllocation(row));
+  }
+
+  async findAllocationsByGoal(
+    householdId: string,
+    goalId: string,
+  ): Promise<GoalAssetAllocation[]> {
+    const rows = await this.prisma.goalAssetAllocation.findMany({
+      where: { householdId, financialGoalId: goalId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((row) => mapGoalAssetAllocation(row));
+  }
+
+  /**
+   * Purchases that moved money BETWEEN two assets of the same goal — a wallet
+   * that feeds it paying for a holding it also counts.
+   *
+   * The wallet drop would otherwise read as a withdrawal from the goal, when in
+   * fact the goal's total did not move at all: the household changed the form
+   * it holds. Both ends are required to be in `assetIds`; buying an asset
+   * OUTSIDE the goal really does take money out of it and must keep showing up.
+   *
+   * Only possible because `asset_purchase` now carries `from_asset_id`. Before
+   * that, a wallet falling and gold rising were two unrelated facts.
+   */
+  async findGoalConversionPurchases(
+    householdId: string,
+    assetIds: string[],
+  ): Promise<Array<{ date: string; amount: number }>> {
+    if (assetIds.length < 2) {
+      return [];
+    }
+    const rows = await this.prisma.moneyEvent.findMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        eventType: 'asset_purchase',
+        fromAssetId: { in: assetIds },
+        toAssetId: { in: assetIds },
+      },
+      select: { eventDate: true, amount: true },
+      orderBy: { eventDate: 'asc' },
+    });
+    return rows.map((row) => ({
+      date: row.eventDate.toISOString().slice(0, 10),
+      amount: Number(row.amount),
+    }));
+  }
+
+  async findAllocationById(
+    householdId: string,
+    allocationId: string,
+  ): Promise<GoalAssetAllocation | undefined> {
+    const row = await this.prisma.goalAssetAllocation.findFirst({
+      where: { id: allocationId, householdId, deletedAt: null },
+    });
+    return row ? mapGoalAssetAllocation(row) : undefined;
+  }
+
+  async insertAllocation(allocation: GoalAssetAllocation): Promise<void> {
+    // `created_by` is derived from the household row in the same statement, the
+    // way `insertFinancialGoal` does — one round-trip, and a missing household
+    // inserts nothing rather than writing an orphan.
+    const inserted = await this.prisma.$executeRaw`
+      INSERT INTO goal_asset_allocations
+        (id, household_id, financial_goal_id, asset_id, kind, role,
+         monthly_contribution, allocated_amount, percent, note, created_by,
+         updated_at)
+      SELECT
+        ${allocation.id}::uuid,
+        h.id,
+        ${allocation.financialGoalId}::uuid,
+        ${allocation.assetId}::uuid,
+        ${allocation.kind}::"GoalAllocationKind",
+        ${allocation.role}::"GoalAllocationRole",
+        ${allocation.monthlyContribution}::numeric,
+        ${allocation.allocatedAmount}::numeric,
+        ${allocation.percent}::numeric,
+        ${allocation.note},
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${allocation.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+
+    if (inserted === 0) {
+      throw new NotFoundException(
+        `Household "${allocation.householdId}" was not found`,
+      );
+    }
+  }
+
+  async updateAllocation(
+    allocationId: string,
+    allocation: GoalAssetAllocation,
+  ): Promise<void> {
+    await this.prisma.goalAssetAllocation.updateMany({
+      where: {
+        id: allocationId,
+        householdId: allocation.householdId,
+        deletedAt: null,
+      },
+      data: {
+        kind: allocation.kind,
+        role: allocation.role,
+        monthlyContribution: allocation.monthlyContribution,
+        // Both are written every time, so switching kind clears the column the
+        // new kind does not use — the CHECK constraint requires exactly one.
+        allocatedAmount: allocation.allocatedAmount,
+        percent: allocation.percent,
+        note: allocation.note,
+      } as any,
+    });
+  }
+
+  async deleteAllocation(
+    householdId: string,
+    allocationId: string,
+  ): Promise<void> {
+    await this.prisma.goalAssetAllocation.updateMany({
+      where: { id: allocationId, householdId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  async deleteAllocationsByGoal(
+    householdId: string,
+    goalId: string,
+  ): Promise<void> {
+    await this.prisma.goalAssetAllocation.updateMany({
+      where: { householdId, financialGoalId: goalId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+  }
+
 }

@@ -180,7 +180,7 @@ export class PrismaMoneyEventsRepository
         (id, household_id, description, event_type, category, amount,
          fee_amount, sold_quantity, sold_value, currency, event_date, direction,
          from_asset_id, to_asset_id,
-         cashflow_event_id, debt_id, financial_goal_id, created_by, updated_at)
+         cashflow_event_id, debt_id, created_by, updated_at)
       SELECT
         ${event.id}::uuid,
         h.id,
@@ -198,7 +198,6 @@ export class PrismaMoneyEventsRepository
         ${event.toAssetId ?? null}::uuid,
         ${event.upcomingPaymentId ?? null}::uuid,
         ${event.debtId ?? null}::uuid,
-        ${event.financialGoalId ?? null}::uuid,
         h.created_by,
         now()
       FROM households h
@@ -236,7 +235,6 @@ export class PrismaMoneyEventsRepository
         // fails the build instead of the request.
         cashflowEventId: event.upcomingPaymentId,
         debtId: event.debtId,
-        financialGoalId: event.financialGoalId,
       },
     });
   }
@@ -277,30 +275,6 @@ export class PrismaMoneyEventsRepository
       SET outstanding_amount = GREATEST(0, outstanding_amount + ${delta}::numeric),
           updated_at = now()
       WHERE id = ${debtId}::uuid
-        AND household_id = ${householdId}::uuid
-        AND deleted_at IS NULL
-    `;
-  }
-
-  async adjustGoalCurrentAmount(
-    householdId: string,
-    goalId: string,
-    delta: number,
-  ): Promise<void> {
-    // `financial_goals.current_amount` is a REAL column and the source of truth
-    // for goal progress (spec §20). It is only trustworthy while every
-    // contribution maintains it, so this runs inside the SAME transaction as
-    // the money event that caused it — create passes a positive delta, delete
-    // the negative, edit the difference.
-    //
-    // Floored at 0 in the same statement (GREATEST) so reversing a contribution
-    // that was partly spent elsewhere can't drive progress negative.
-    await this.prisma.$executeRaw`
-      UPDATE financial_goals
-      SET current_amount = GREATEST(0, current_amount + ${delta}::numeric),
-          current_amount_updated_at = now(),
-          updated_at = now()
-      WHERE id = ${goalId}::uuid
         AND household_id = ${householdId}::uuid
         AND deleted_at IS NULL
     `;

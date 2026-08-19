@@ -41,6 +41,9 @@ function setup(
     assertHousehold: jest.fn(async () => ({ id: 'hh-1' })),
     createId: jest.fn(() => 'snap-1'),
     getClassifiedAssetLines: jest.fn(async () => TODAY_LINES),
+    // Goal progress is frozen alongside the asset lines; these tests are about
+    // the snapshot's own columns, so no goals is the neutral fixture.
+    getGoalLines: jest.fn(async () => []),
     getOutstandingDebtTotal: jest.fn(async () => 10 * M),
     getLastSnapshotCreatedAt: jest.fn(
       async () => options.lastCreatedAt ?? null,

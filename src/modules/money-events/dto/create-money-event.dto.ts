@@ -27,5 +27,4 @@ export interface CreateMoneyEventDto {
   /** @deprecated Use {@link cashflowEventId}. */
   upcomingPaymentId?: string;
   debtId?: string;
-  financialGoalId?: string;
 }
