@@ -80,10 +80,37 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Open SSH session to the instance
+        env:
+          # Via env rather than inlined into the script: a multi-line secret
+          # substituted straight into `run` is fragile, and keeping it in a
+          # variable also stops the key from ever appearing in the command line.
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+
+          # OpenSSH rejects a key whose final -----END----- line has no trailing
+          # newline with the opaque "error in libcrypto", and copying a key
+          # through a browser drops that newline routinely. printf '%s\n'
+          # guarantees exactly one, and the CRLF strip covers keys that made a
+          # detour through a Windows editor.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
+
+          # Fail here, with a readable message, rather than 30 rounds of
+          # "Permission denied" further down.
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null 2>&1; then
+            echo "::error::OCI_SSH_PRIVATE_KEY is not a usable private key."
+            echo "Checks, in the order they usually fail:" >&2
+            echo "  1. It must be the PRIVATE half (~/.ssh/money_space_deploy)," >&2
+            echo "     not the .pub file." >&2
+            echo "  2. It must include the -----BEGIN----- and -----END----- lines." >&2
+            echo "  3. Re-copy it with: cat ~/.ssh/money_space_deploy | pbcopy" >&2
+            echo "First and last line of what was received:" >&2
+            head -1 ~/.ssh/id_deploy >&2
+            tail -1 ~/.ssh/id_deploy >&2
+            exit 1
+          fi
+          echo "key loaded: $(ssh-keygen -lf ~/.ssh/id_deploy)"
           # Trust on first use: the host is created fresh by Terraform, so
           # there is no pre-existing key to pin. Replace with a known_hosts
           # entry from `ssh-keyscan` if you want strict checking.
