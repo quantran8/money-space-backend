@@ -1,0 +1,44 @@
+# Reverse proxy in front of the Nest backend.
+#
+# Caddy obtains and renews the Let's Encrypt certificate for {$DOMAIN_NAME} by
+# itself — there is no certbot step and no cron job. The prerequisites are that
+# the name resolves to this host and that port 80 is reachable, because the
+# ACME HTTP-01 challenge is answered there.
+#
+# Certificates live in the caddy_data volume, so restarts reuse them instead of
+# re-issuing and burning through Let's Encrypt's rate limits.
+
+{
+	# ACME_EMAIL is optional, and making it truly optional is fiddly: Caddy's
+	# {$VAR:default} fallback applies only when the variable is ABSENT, not when
+	# it is present-but-empty, and a bare `email` with no argument is a parse
+	# error that stops Caddy from starting at all. The deploy workflow therefore
+	# omits the line from .env entirely when no address is configured, which is
+	# what lets this default take effect. Caddy registers anonymously with a
+	# placeholder contact.
+	email {$ACME_EMAIL:acme@localhost}
+}
+
+{$DOMAIN_NAME} {
+	encode gzip
+
+	# The app sets its own CORS headers via app.enableCors(), so nothing is
+	# added here — duplicating them would produce two Access-Control-Allow-Origin
+	# values, which browsers reject outright.
+	reverse_proxy backend:3000 {
+		header_up X-Forwarded-Proto https
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# Anything arriving on the bare IP or an unrelated hostname. Without this Caddy
+# would answer such requests with the default empty 200, which makes a
+# misconfigured DNS record look like a working deploy.
+:80 {
+	respond /health "caddy: ok, but this host is not {$DOMAIN_NAME}" 200
+	respond "not found" 404
+}

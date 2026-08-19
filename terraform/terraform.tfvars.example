@@ -1,0 +1,60 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+# Every value here is non-secret infrastructure config — application secrets
+# (Supabase keys, database URLs) live in GitHub Actions secrets, not here.
+
+# --- Provider credentials (Console > Profile > API Keys) --------------------
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaa..."
+user_ocid        = "ocid1.user.oc1..aaaaaaaa..."
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "ap-singapore-1"
+
+# Optional: a dedicated compartment. Defaults to the tenancy root.
+# compartment_ocid = "ocid1.compartment.oc1..aaaaaaaa..."
+
+# --- Access ----------------------------------------------------------------
+# Your admin key, for `ssh ubuntu@<ip>`.
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# The CI key. Generate a SEPARATE pair used only by GitHub Actions:
+#   ssh-keygen -t ed25519 -f ~/.ssh/money_space_deploy -C "github-actions"
+# Paste the .pub contents here; put the private half in the
+# OCI_SSH_PRIVATE_KEY GitHub secret.
+deploy_ssh_public_key = "ssh-ed25519 AAAA... github-actions"
+
+# Narrow this to your own IP if you never deploy from GitHub-hosted runners
+# (their egress IPs are not stable, hence the open default).
+# ssh_source_cidr = "0.0.0.0/0"
+
+# --- Compute ---------------------------------------------------------------
+# Defaults consume the entire Always Free Ampere allowance in one instance.
+# instance_ocpus       = 4
+# instance_memory_gbs  = 24
+# boot_volume_size_gbs = 50
+
+# Set explicitly and retry other ADs if you hit "Out of host capacity".
+# availability_domain = "abcd:AP-SINGAPORE-1-AD-1"
+
+# --- Domain & TLS ----------------------------------------------------------
+# Caddy requests a Let's Encrypt certificate for this name automatically. The
+# name must already resolve to the instance's IP — see the DNS step in README.md.
+domain_name = "moneytogether.dpdns.org"
+
+# Optional: Let's Encrypt sends expiry warnings here.
+# acme_email = "you@example.com"
+
+# Keep a RESERVED (static) public IP. DPDNS has no API to drive from Terraform,
+# so the A record is created by hand once; a static address is what keeps it
+# from ever needing an update.
+# use_reserved_ip = true
+
+# --- Application surface ---------------------------------------------------
+# app_port = 3000
+
+# Leave true while testing so http://<ip>:3000 still answers directly. Set to
+# false once HTTPS works, so the backend is only reachable through Caddy.
+# expose_app_port = true
+
+# --- Registry --------------------------------------------------------------
+# create_container_repository = true
+# container_repository_name   = "money-space-backend"
