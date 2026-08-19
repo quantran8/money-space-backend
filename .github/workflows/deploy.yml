@@ -27,12 +27,15 @@ concurrency:
 # build context". None of these three identify anything sensitive; the token
 # that grants access is still a secret.
 #
-# vars.* with a secrets.* fallback, so a repository configured the old way keeps
-# working until the variables are added.
+# No secrets.* fallback on purpose. The fallback defeats the fix: if the
+# variables are missing, the expression resolves to the secret, and the redaction
+# that broke the image reference in the first place applies again — producing the
+# same empty value with no hint as to why. Missing variables must fail loudly
+# instead.
 env:
-  OCIR_REGISTRY: ${{ vars.OCIR_REGISTRY || secrets.OCIR_REGISTRY }}
-  OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE || secrets.OCIR_NAMESPACE }}
-  OCIR_REPOSITORY: ${{ vars.OCIR_REPOSITORY || secrets.OCIR_REPOSITORY }}
+  OCIR_REGISTRY: ${{ vars.OCIR_REGISTRY }}
+  OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE }}
+  OCIR_REPOSITORY: ${{ vars.OCIR_REPOSITORY }}
 
 jobs:
   build:
@@ -41,9 +44,6 @@ jobs:
     # stops a feature branch from being deployed by an accidental click.
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    outputs:
-      image_ref: ${{ steps.meta.outputs.image_ref }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -66,22 +66,24 @@ jobs:
           username: ${{ secrets.OCIR_USERNAME }}
           password: ${{ secrets.OCIR_TOKEN }}
 
-      - name: Compute image reference
-        id: meta
+      - name: Check registry coordinates
         run: |
-          image_ref="${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPOSITORY}:${GITHUB_SHA}"
-          echo "image_ref=${image_ref}" >> "$GITHUB_OUTPUT"
-
-          # An empty component here becomes an unusable reference three steps
-          # later, in a job that reports the failure as a Compose error. Catch it
-          # where the cause is still visible.
+          # Both jobs derive the image reference from these three variables
+          # rather than passing it between them: GitHub silently drops a job
+          # output that matches a registered secret ("Skip output 'image_ref'
+          # since it may contain secret"), which left the deploy job with an
+          # empty image and a misleading Compose error.
           if [ -z "${OCIR_REGISTRY}" ] || [ -z "${OCIR_NAMESPACE}" ] || [ -z "${OCIR_REPOSITORY}" ]; then
-            echo "::error::Registry coordinates are incomplete: ${image_ref}"
-            echo "Set OCIR_REGISTRY, OCIR_NAMESPACE and OCIR_REPOSITORY under" >&2
-            echo "Settings > Secrets and variables > Actions > Variables." >&2
+            echo "::error::Registry coordinates are incomplete."
+            echo "Set all three as VARIABLES (not secrets) under" >&2
+            echo "Settings > Secrets and variables > Actions > Variables:" >&2
+            echo "  OCIR_REGISTRY    e.g. ap-singapore-1.ocir.io" >&2
+            echo "  OCIR_NAMESPACE   e.g. axttup8tl3ug" >&2
+            echo "  OCIR_REPOSITORY  e.g. money-space-backend" >&2
+            echo "Received: registry='${OCIR_REGISTRY}' namespace='${OCIR_NAMESPACE}' repo='${OCIR_REPOSITORY}'" >&2
             exit 1
           fi
-          echo "image: ${image_ref}"
+          echo "image: ${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPOSITORY}:${GITHUB_SHA}"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -90,7 +92,7 @@ jobs:
           platforms: ${{ vars.BUILD_PLATFORM || 'linux/arm64' }}
           push: true
           tags: |
-            ${{ steps.meta.outputs.image_ref }}
+            ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
             ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:latest
           # Registry-backed layer cache, so unchanged pnpm layers are reused.
           cache-from: type=registry,ref=${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:buildcache
@@ -175,7 +177,7 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_JWKS_URL: ${{ secrets.SUPABASE_JWKS_URL }}
-          BACKEND_IMAGE: ${{ needs.build.outputs.image_ref }}
+          BACKEND_IMAGE: ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
           APP_PORT: ${{ vars.APP_PORT || '3000' }}
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
@@ -251,7 +253,7 @@ jobs:
         run: |
           ssh oci "cd ${{ secrets.APP_DIR }} && \
             docker run --rm --env-file .env \
-              --entrypoint sh '${{ needs.build.outputs.image_ref }}' \
+              --entrypoint sh '${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}' \
               -c 'npx --yes prisma@6.19.3 migrate deploy'"
 
       - name: Verify health
