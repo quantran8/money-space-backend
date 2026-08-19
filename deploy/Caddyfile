@@ -9,14 +9,14 @@
 # re-issuing and burning through Let's Encrypt's rate limits.
 
 {
-	# ACME_EMAIL is optional, and making it truly optional is fiddly: Caddy's
-	# {$VAR:default} fallback applies only when the variable is ABSENT, not when
-	# it is present-but-empty, and a bare `email` with no argument is a parse
-	# error that stops Caddy from starting at all. The deploy workflow therefore
-	# omits the line from .env entirely when no address is configured, which is
-	# what lets this default take effect. Caddy registers anonymously with a
-	# placeholder contact.
-	email {$ACME_EMAIL:acme@localhost}
+	# The default is a real address, not a placeholder: Let's Encrypt validates
+	# the contact and rejects anything without a dot in the domain ("contact
+	# email has invalid domain"), so acme@localhost fails account registration
+	# and no certificate is ever issued. Leaving the value empty is no better —
+	# a bare `email` with no argument will not parse.
+	#
+	# Override with the ACME_EMAIL variable; this is only the fallback.
+	email {$ACME_EMAIL:quan5080@gmail.com}
 }
 
 {$DOMAIN_NAME} {

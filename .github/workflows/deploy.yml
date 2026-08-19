@@ -20,8 +20,22 @@ concurrency:
   group: deploy-oci
   cancel-in-progress: false
 
+# Registry coordinates come from vars, not secrets, and that is load-bearing:
+# GitHub redacts secret values wherever they appear in step outputs, so an image
+# reference built from secrets arrives at the next job as an empty string —
+# which Compose then rejects with "service backend has neither an image nor a
+# build context". None of these three identify anything sensitive; the token
+# that grants access is still a secret.
+#
+# No secrets.* fallback on purpose. The fallback defeats the fix: if the
+# variables are missing, the expression resolves to the secret, and the redaction
+# that broke the image reference in the first place applies again — producing the
+# same empty value with no hint as to why. Missing variables must fail loudly
+# instead.
 env:
-  IMAGE: ${{ secrets.OCIR_REGISTRY }}/${{ secrets.OCIR_NAMESPACE }}/${{ secrets.OCIR_REPOSITORY }}
+  OCIR_REGISTRY: ${{ vars.OCIR_REGISTRY }}
+  OCIR_NAMESPACE: ${{ vars.OCIR_NAMESPACE }}
+  OCIR_REPOSITORY: ${{ vars.OCIR_REPOSITORY }}
 
 jobs:
   build:
@@ -30,9 +44,6 @@ jobs:
     # stops a feature branch from being deployed by an accidental click.
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    outputs:
-      image_ref: ${{ steps.meta.outputs.image_ref }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -51,13 +62,28 @@ jobs:
       - name: Log in to OCIR
         uses: docker/login-action@v3
         with:
-          registry: ${{ secrets.OCIR_REGISTRY }}
+          registry: ${{ env.OCIR_REGISTRY }}
           username: ${{ secrets.OCIR_USERNAME }}
           password: ${{ secrets.OCIR_TOKEN }}
 
-      - name: Compute image reference
-        id: meta
-        run: echo "image_ref=${IMAGE}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: Check registry coordinates
+        run: |
+          # Both jobs derive the image reference from these three variables
+          # rather than passing it between them: GitHub silently drops a job
+          # output that matches a registered secret ("Skip output 'image_ref'
+          # since it may contain secret"), which left the deploy job with an
+          # empty image and a misleading Compose error.
+          if [ -z "${OCIR_REGISTRY}" ] || [ -z "${OCIR_NAMESPACE}" ] || [ -z "${OCIR_REPOSITORY}" ]; then
+            echo "::error::Registry coordinates are incomplete."
+            echo "Set all three as VARIABLES (not secrets) under" >&2
+            echo "Settings > Secrets and variables > Actions > Variables:" >&2
+            echo "  OCIR_REGISTRY    e.g. ap-singapore-1.ocir.io" >&2
+            echo "  OCIR_NAMESPACE   e.g. axttup8tl3ug" >&2
+            echo "  OCIR_REPOSITORY  e.g. money-space-backend" >&2
+            echo "Received: registry='${OCIR_REGISTRY}' namespace='${OCIR_NAMESPACE}' repo='${OCIR_REPOSITORY}'" >&2
+            exit 1
+          fi
+          echo "image: ${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPOSITORY}:${GITHUB_SHA}"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -66,11 +92,11 @@ jobs:
           platforms: ${{ vars.BUILD_PLATFORM || 'linux/arm64' }}
           push: true
           tags: |
-            ${{ steps.meta.outputs.image_ref }}
-            ${{ env.IMAGE }}:latest
+            ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
+            ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:latest
           # Registry-backed layer cache, so unchanged pnpm layers are reused.
-          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+          cache-from: type=registry,ref=${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:buildcache
+          cache-to: type=registry,ref=${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:buildcache,mode=max
 
   deploy:
     needs: build
@@ -80,10 +106,37 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Open SSH session to the instance
+        env:
+          # Via env rather than inlined into the script: a multi-line secret
+          # substituted straight into `run` is fragile, and keeping it in a
+          # variable also stops the key from ever appearing in the command line.
+          SSH_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.OCI_SSH_PRIVATE_KEY }}" > ~/.ssh/id_deploy
+
+          # OpenSSH rejects a key whose final -----END----- line has no trailing
+          # newline with the opaque "error in libcrypto", and copying a key
+          # through a browser drops that newline routinely. printf '%s\n'
+          # guarantees exactly one, and the CRLF strip covers keys that made a
+          # detour through a Windows editor.
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
+
+          # Fail here, with a readable message, rather than 30 rounds of
+          # "Permission denied" further down.
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy > /dev/null 2>&1; then
+            echo "::error::OCI_SSH_PRIVATE_KEY is not a usable private key."
+            echo "Checks, in the order they usually fail:" >&2
+            echo "  1. It must be the PRIVATE half (~/.ssh/money_space_deploy)," >&2
+            echo "     not the .pub file." >&2
+            echo "  2. It must include the -----BEGIN----- and -----END----- lines." >&2
+            echo "  3. Re-copy it with: cat ~/.ssh/money_space_deploy | pbcopy" >&2
+            echo "First and last line of what was received:" >&2
+            head -1 ~/.ssh/id_deploy >&2
+            tail -1 ~/.ssh/id_deploy >&2
+            exit 1
+          fi
+          echo "key loaded: $(ssh-keygen -lf ~/.ssh/id_deploy)"
           # Trust on first use: the host is created fresh by Terraform, so
           # there is no pre-existing key to pin. Replace with a known_hosts
           # entry from `ssh-keyscan` if you want strict checking.
@@ -124,12 +177,21 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_JWKS_URL: ${{ secrets.SUPABASE_JWKS_URL }}
-          BACKEND_IMAGE: ${{ needs.build.outputs.image_ref }}
+          BACKEND_IMAGE: ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
           APP_PORT: ${{ vars.APP_PORT || '3000' }}
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           REDIS_MAXMEMORY: ${{ vars.REDIS_MAXMEMORY || '256mb' }}
         run: |
+          # An empty image reference here surfaces on the VM as "service backend
+          # has neither an image nor a build context", which points at the
+          # compose file rather than at the build job that actually failed to
+          # pass its output along.
+          if [ -z "$BACKEND_IMAGE" ]; then
+            echo "::error::BACKEND_IMAGE is empty — the build job produced no image reference." >&2
+            exit 1
+          fi
+
           {
             for key in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_ANON_KEY \
                        SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWKS_URL \
@@ -167,7 +229,7 @@ jobs:
       - name: Log the instance in to OCIR
         run: |
           printf '%s' '${{ secrets.OCIR_TOKEN }}' | ssh oci \
-            "docker login ${{ secrets.OCIR_REGISTRY }} \
+            "docker login ${{ env.OCIR_REGISTRY }} \
                --username '${{ secrets.OCIR_USERNAME }}' --password-stdin"
 
       - name: Pull and restart
@@ -191,7 +253,7 @@ jobs:
         run: |
           ssh oci "cd ${{ secrets.APP_DIR }} && \
             docker run --rm --env-file .env \
-              --entrypoint sh '${{ needs.build.outputs.image_ref }}' \
+              --entrypoint sh '${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}' \
               -c 'npx --yes prisma@6.19.3 migrate deploy'"
 
       - name: Verify health
