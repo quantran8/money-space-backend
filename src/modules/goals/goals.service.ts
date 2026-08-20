@@ -10,7 +10,7 @@ import {
   NO_TARGET_DATE,
 } from './entities/financial-goal.entity';
 import { toGoalCard } from '../../common/utils/money-space.utils';
-import { todayInTimeZone } from '../../common/utils/clock';
+import { endOfMonthIso, todayInTimeZone } from '../../common/utils/clock';
 import {
   projectGoal,
   projectGoalDelayFromSpend,
@@ -52,6 +52,10 @@ import { SNAPSHOTS_REPOSITORY } from '../snapshots/repositories/snapshots.reposi
 import type { SnapshotsRepository } from '../snapshots/repositories/snapshots.repository.interface';
 import { GOALS_REPOSITORY } from './repositories/goals.repository.interface';
 import type { GoalsRepository } from './repositories/goals.repository.interface';
+import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import type { CashflowEventsRepository } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import { walletValuesAfterPendingOutflows } from './domain/wallet-values-after-pending';
+import { LIVE_CASHFLOW_STATUSES } from '../cashflow-events/entities/cashflow-event.entity';
 
 @Injectable()
 export class GoalsService {
@@ -62,6 +66,11 @@ export class GoalsService {
     private readonly assetsService: AssetsService,
     @Inject(SNAPSHOTS_REPOSITORY)
     private readonly snapshotsRepository: SnapshotsRepository,
+    // The repository, not CashflowEventsService: only the plain read is needed,
+    // and the service pulls in MoneyEvents/Assets — a far heavier edge for no
+    // gain. Cashflow knows nothing about goals, so this direction has no cycle.
+    @Inject(CASHFLOW_EVENTS_REPOSITORY)
+    private readonly cashflowEventsRepository: CashflowEventsRepository,
   ) {}
 
   /**
@@ -923,27 +932,40 @@ export class GoalsService {
     const [
       points,
       allocations,
-      assetValues,
+      liveAssetValues,
       householdAllocations,
       householdGoals,
+      cashflowEvents,
     ] = await Promise.all([
       this.snapshotsRepository.findGoalProgressPoints(householdId, goalId),
       this.goalsRepository.findAllocationsByGoal(householdId, goalId),
       this.assetValueMap(householdId),
       this.goalsRepository.findAllocationsByHousehold(householdId),
       this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
     ]);
+
+    /**
+     * Measured against the wallet AS IT STANDS, scheduled outflows left in.
+     * Money that has not moved has not been spent, and a bill can still be
+     * cancelled. What those outflows will cost is answered in one place —
+     * `scheduledOutflowImpact` — rather than folded in here.
+     */
+    const today = todayInTimeZone();
+
     const inputs = allocations.map(toAllocationInput);
-    const walletShares = resolveWalletShareByGoal(
-      householdGoals.map((item) => ({
-        goalId: item.id,
-        priority: item.priority,
-        allocations: householdAllocations
-          .filter((allocation) => allocation.financialGoalId === item.id)
-          .map(toAllocationInput),
-      })),
-      assetValues,
-    );
+    const claims = householdGoals.map((item) => ({
+      goalId: item.id,
+      priority: item.priority,
+      allocations: householdAllocations
+        .filter((allocation) => allocation.financialGoalId === item.id)
+        .map(toAllocationInput),
+    }));
+    // Percent claims stay a percentage of the wallet BEFORE any outflow, for the
+    // reason `allocationValue` documents: "90% of this wallet" is a standing
+    // arrangement, and re-reading it against a lowered value would shave every
+    // goal even when the bill fits inside unassigned money.
+    const walletShares = resolveWalletShareByGoal(claims, liveAssetValues);
     const share = walletShares.get(goalId);
     const conversions = await this.goalsRepository.findGoalConversionPurchases(
       householdId,
@@ -959,11 +981,12 @@ export class GoalsService {
         goal.plannedMonthlyContribution,
         {
           current: {
-            date: todayInTimeZone(),
-            progressAmount: resolveGoalProgressAmount(inputs, assetValues),
+            date: today,
+            // Actual: the wallet as it stands, outflows still in it.
+            progressAmount: resolveGoalProgressAmount(inputs, liveAssetValues),
             contributionAmount: resolveContributionProgressAmount(
               inputs,
-              assetValues,
+              liveAssetValues,
             ),
           },
           hasContributionSource: inputs.some(
@@ -1058,12 +1081,131 @@ export class GoalsService {
     return new Map(assets.map((asset) => [asset.id, asset.name]));
   }
 
+  /**
+   * Everything this goal loses to money already scheduled to leave its wallets.
+   *
+   * ## Why it is ONE endpoint rather than a field on several
+   *
+   * The figures a scheduled outflow moves are spread across the goal screen —
+   * the total held, the month's pace, each affected wallet. Answering "what does
+   * this bill cost me" by hanging a projected number off each of them fragments
+   * one fact into four, repeats it without ever explaining it, and leaves the
+   * household to reassemble the story. Worse, the cause (a named bill, on a
+   * date) has nowhere to live.
+   *
+   * So the whole picture is assembled here and rendered as a single section: the
+   * events by name and date, and what they leave behind. The figures elsewhere
+   * on the screen stay untouched — actual, as `wallet-values-after-pending`
+   * describes — and this is the one place that says what is coming.
+   *
+   * `null` when nothing is scheduled that touches this goal's wallets, so the
+   * section simply does not render.
+   */
+  async scheduledOutflowImpact(householdId: string, goalId: string) {
+    const goal = await this.ensureFinancialGoal(householdId, goalId);
+    const [allocations, householdAllocations, householdGoals, assetValues, assetNames, cashflowEvents] =
+      await Promise.all([
+        this.goalsRepository.findAllocationsByGoal(householdId, goalId),
+        this.goalsRepository.findAllocationsByHousehold(householdId),
+        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+        this.assetValueMap(householdId),
+        this.assetNameMap(householdId),
+        this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+      ]);
+
+    const through = endOfMonthIso(todayInTimeZone());
+    const projectedValues = walletValuesAfterPendingOutflows(
+      assetValues,
+      cashflowEvents,
+      through,
+    );
+
+    // Only the wallets THIS goal draws on. A bill against an unrelated account
+    // costs this goal nothing and must not appear on its screen.
+    const goalAssetIds = new Set(
+      allocations.map((allocation) => allocation.assetId),
+    );
+    const events = cashflowEvents
+      .filter(
+        (event) =>
+          event.direction === 'outgoing' &&
+          event.settlementAssetId !== null &&
+          event.settlementAssetId !== undefined &&
+          goalAssetIds.has(event.settlementAssetId) &&
+          LIVE_CASHFLOW_STATUSES.includes(event.status) &&
+          event.expectedDate <= through,
+      )
+      .map((event) => ({
+        id: event.id,
+        name: event.name,
+        amount: event.amount,
+        expectedDate: event.expectedDate,
+        assetId: event.settlementAssetId as string,
+        assetName: assetNames.get(event.settlementAssetId as string) ?? '',
+      }))
+      .sort((a, b) => a.expectedDate.localeCompare(b.expectedDate));
+
+    if (events.length === 0) {
+      return null;
+    }
+
+    const inputs = allocations.map(toAllocationInput);
+    const claims = householdGoals.map((item) => ({
+      goalId: item.id,
+      priority: item.priority,
+      allocations: householdAllocations
+        .filter((allocation) => allocation.financialGoalId === item.id)
+        .map(toAllocationInput),
+    }));
+
+    // Percent claims keep the untouched wallet as their basis throughout — see
+    // `allocationValue`. Only the cap moves, which is what makes a bill big
+    // enough to eat into set-aside money show up and a smaller one not.
+    const currentAmount = resolveGoalProgressAmount(inputs, assetValues);
+    const projectedAmount = resolveGoalProgressAmount(
+      inputs,
+      projectedValues,
+      assetValues,
+    );
+    const currentPace = resolveWalletShareByGoal(claims, assetValues).get(goalId);
+    const projectedPace = resolveWalletShareByGoal(
+      claims,
+      projectedValues,
+      assetValues,
+    ).get(goalId);
+
+    return {
+      householdId,
+      goalId,
+      /** Last day covered — the end of the current month. */
+      throughDate: through,
+      events,
+      outflowAmount: events.reduce((sum, event) => sum + event.amount, 0),
+      /** What the goal holds now, and once these land. */
+      currentAmount,
+      projectedAmount,
+      /**
+       * This month's contribution, now and after. The DECLARED pace is left
+       * alone: it is what the household committed to, and the projection here
+       * describes this month only — the wallet refills next month, so carrying
+       * a squeezed month into the long-range chart would report a pessimistic
+       * finish date the household never chose.
+       */
+      plannedMonthlyContribution: goal.plannedMonthlyContribution,
+      currentPace: currentPace?.amount ?? 0,
+      projectedPace: projectedPace?.amount ?? 0,
+    };
+  }
+
   async listAllocations(householdId: string, goalId: string) {
     await this.ensureFinancialGoal(householdId, goalId);
     const [allocations, assetValues] = await Promise.all([
       this.goalsRepository.findAllocationsByGoal(householdId, goalId),
       this.assetValueMap(householdId),
     ]);
+    // Cards report what each claim is worth NOW. What scheduled outflows will
+    // cost is answered once, by `scheduledOutflowImpact`, so the same fact is
+    // not restated on every row.
     const items = allocations.map((allocation) =>
       toAllocationCard(allocation, assetValues),
     );
@@ -1606,6 +1748,11 @@ function toAllocationCard(
   assetValues: ReadonlyMap<string, number>,
 ) {
   const assetValue = assetValues.get(allocation.assetId) ?? 0;
+  const currentValue = resolveGoalProgressAmount(
+    [toAllocationInput(allocation)],
+    assetValues,
+  );
+
   return {
     id: allocation.id,
     financialGoalId: allocation.financialGoalId,
@@ -1616,10 +1763,7 @@ function toAllocationCard(
     allocatedAmount: allocation.allocatedAmount,
     percent: allocation.percent,
     assetValue,
-    currentValue: resolveGoalProgressAmount(
-      [toAllocationInput(allocation)],
-      assetValues,
-    ),
+    currentValue,
     note: allocation.note,
   };
 }

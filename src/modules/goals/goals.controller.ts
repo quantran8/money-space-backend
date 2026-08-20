@@ -66,6 +66,19 @@ export class GoalsController {
    * Month by month: what actually went into this goal, against the declared
    * pace. Read from the progress frozen into each snapshot.
    */
+  /**
+   * What money already scheduled to leave this goal's wallets will cost it.
+   * One endpoint, so the screen explains the whole thing in one place instead
+   * of hanging a projected figure off every metric it touches.
+   */
+  @Get(':goalId/scheduled-outflow-impact')
+  scheduledOutflowImpact(
+    @Param('householdId') householdId: string,
+    @Param('goalId') goalId: string,
+  ) {
+    return this.goalsService.scheduledOutflowImpact(householdId, goalId);
+  }
+
   @Get(':goalId/monthly-progress')
   monthlyProgress(
     @Param('householdId') householdId: string,

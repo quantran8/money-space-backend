@@ -68,6 +68,19 @@ export function addMonthsIso(isoDate: IsoDate, months: number): IsoDate {
   return target.toISOString().slice(0, 10);
 }
 
+/**
+ * The last day of the month `isoDate` falls in.
+ *
+ * Day 0 of the NEXT month is the last day of this one, which handles February
+ * and leap years without a table.
+ */
+export function endOfMonthIso(isoDate: IsoDate): IsoDate {
+  const d = toUtcDate(isoDate);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))
+    .toISOString()
+    .slice(0, 10);
+}
+
 /** Whole calendar days from `from` to `to`. Negative when `to` precedes `from`. */
 export function daysBetweenIso(from: IsoDate, to: IsoDate): number {
   const ms = toUtcDate(to).getTime() - toUtcDate(from).getTime();

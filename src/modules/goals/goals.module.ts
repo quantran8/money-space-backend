@@ -4,6 +4,8 @@ import { AssetsModule } from '../assets/assets.module';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { SNAPSHOTS_REPOSITORY } from '../snapshots/repositories/snapshots.repository.interface';
 import { PrismaSnapshotsRepository } from '../snapshots/repositories/prisma-snapshots.repository';
+import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import { PrismaCashflowEventsRepository } from '../cashflow-events/repositories/prisma-cashflow-events.repository';
 import { AssetGoalUsageController } from './asset-goal-usage.controller';
 import { GoalsController } from './goals.controller';
 import { GoalsService } from './goals.service';
@@ -31,6 +33,14 @@ import { PrismaGoalsRepository } from './repositories/prisma-goals.repository';
     {
       provide: SNAPSHOTS_REPOSITORY,
       useClass: PrismaSnapshotsRepository,
+    },
+    // Same reasoning as SNAPSHOTS_REPOSITORY above: the running month's pace
+    // must be net of outflows already scheduled against the backing wallet, and
+    // only the plain read is needed. Importing CashflowEventsModule would drag
+    // in MoneyEvents (which imports Goals) and make the edge a cycle.
+    {
+      provide: CASHFLOW_EVENTS_REPOSITORY,
+      useClass: PrismaCashflowEventsRepository,
     },
   ],
   // GOALS_REPOSITORY is exported so ForecastModule can read goals for the

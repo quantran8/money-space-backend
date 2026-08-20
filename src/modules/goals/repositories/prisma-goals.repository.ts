@@ -123,7 +123,7 @@ export class PrismaGoalsRepository
         targetDate: this.toDate(nullableDate(goal.targetDate)),
         priority: goal.priority,
         note: goal.note,
-      } as any,
+      },
     });
   }
 
@@ -134,7 +134,7 @@ export class PrismaGoalsRepository
   ): Promise<void> {
     await this.prisma.financialGoal.updateMany({
       where: { id: goalId, householdId, deletedAt: null },
-      data: { plannedMonthlyContribution } as any,
+      data: { plannedMonthlyContribution },
     });
   }
 
@@ -280,7 +280,7 @@ export class PrismaGoalsRepository
         allocatedAmount: allocation.allocatedAmount,
         percent: allocation.percent,
         note: allocation.note,
-      } as any,
+      },
     });
   }
 

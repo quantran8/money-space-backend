@@ -385,6 +385,37 @@ describe('resolveGoalCommittedAmount', () => {
     ).toBeCloseTo(28.8 * M);
   });
 
+  /**
+   * A percent claim must keep the SAME basis in both halves of the sum.
+   *
+   * The reported case: tcb holds 28,8tr, a `percent: 90` contribution claim, a
+   * 20tr pace, and a 2tr bill scheduled against the wallet. The caller lowers
+   * the wallet to 26,8tr and passes the UNSPENT 28,8tr as `percentBasis`.
+   *
+   * The set-aside half used to drop that basis and re-derive the claim against
+   * the lowered value — 90% of 26,8 = 24,12tr instead of 90% of 28,8 = 25,92tr —
+   * while the pace half honoured it. The two halves were then measuring
+   * different things, and the 1,8tr difference surfaced on the dashboard as
+   * flexible money that did not exist: every đồng of the wallet was either goal
+   * money or the bill.
+   */
+  it('keeps the percent basis in the set-aside half, not just the pace half', () => {
+    const claims = [
+      claim('a', 'medium', [
+        wallet({ kind: 'percent', percent: 90, allocatedAmount: null }),
+      ]),
+    ];
+    const committed = resolveGoalCommittedAmount(
+      claims,
+      values({ tcb: 26.8 * M }),
+      values({ tcb: 28.8 * M }),
+    );
+    // 25.92 set aside + 0.88 of pace in the room left = the whole wallet.
+    expect(committed).toBeCloseTo(26.8 * M);
+    // Which is what makes flexible money read 0, not 1.8tr.
+    expect(26.8 * M - committed).toBeCloseTo(0);
+  });
+
   // Nothing set aside yet: the whole pace comes out of free money.
   it('counts the full pace when nothing is set aside', () => {
     expect(

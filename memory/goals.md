@@ -28,6 +28,20 @@ pass the ORIGINAL values as the basis. It threads through
 because free room is `value − set aside`, and measuring the two halves against
 different bases makes them stop adding up.
 
+**This has been violated once, and the failure is worth remembering.**
+`resolveGoalCommittedAmount` computed its set-aside half by calling
+`allocationValue(allocation, assetValues)` — dropping the basis — while its pace
+half passed it through `resolveWalletShareByGoal`. With a `percent: 90` claim on
+a 28,8tr wallet and a 2tr bill, the set-aside half read 90% of the LOWERED 26,8tr
+(24,12tr) and the pace half read 90% of the unspent 28,8tr (25,92tr). The 1,8tr
+gap surfaced on the dashboard as flexible money that did not exist — every đồng
+of that wallet was either goal money or the bill.
+
+Guarded by "keeps the percent basis in the set-aside half" in
+`goal-progress.spec.ts`. The lesson generalises: whenever a function takes
+`percentBasis`, EVERY `allocationValue` call inside it must forward it. Dropping
+it is silent — the arithmetic still returns a plausible number.
+
 ## Two different "free" figures — do not mix them up
 
 `assetGoalUsage` returns two pairs, and using the wrong one states a
@@ -185,6 +199,9 @@ nothing can disagree with it.
 
         per wallet: max(0, min(walletValue - setAside, monthlyContribution))
 
+    …where `walletValue` is **net of this month's outflows that have not happened
+    yet** — see "The running month is measured after scheduled outflows" below.
+
     Wallet 22tr with 20tr set aside and a 20tr pace → 2tr. Wallet 30tr → 10tr.
     **Capped by the wallet's own declared pace**: 100tr in the account does not
     mean 80tr goes to the car — the household said 20tr a month, so the estimate
@@ -236,6 +253,52 @@ nothing can disagree with it.
       exists.
 - Exposed at `GET /financial-goals/:goalId/monthly-progress`; rendered by
   `GoalMonthlyProgressSection` on the goal detail page.
+
+### Scheduled outflows are shown BESIDE the figures, in ONE section
+
+A goal's pace, set-aside amounts and totals are measured against the wallets **as
+they stand**, with scheduled outflows still in them. Money that has not moved has
+not been spent — a bill can still be cancelled or postponed, and reporting it as
+already gone would state as fact something that has not happened.
+
+What those outflows will cost is answered by **one endpoint and one section**,
+never by a projected field hung off each metric:
+
+    GET /financial-goals/:goalId/scheduled-outflow-impact
+    -> null | { throughDate, events[], outflowAmount,
+                currentAmount, projectedAmount,
+                plannedMonthlyContribution, currentPace, projectedPace }
+
+`null` when nothing is scheduled against this goal's wallets, so the section does
+not render at all.
+
+**Why one section.** A scheduled outflow moves several figures at once — the
+total held, the month's pace, each affected wallet. The first attempt attached a
+projected number to each of them and read badly: the same fact restated three
+times, explained none, with the cause (a named bill, on a date) having nowhere to
+live. The household was left assembling the story from fragments. One section
+carries the whole thing, names the events, and leaves every other figure alone.
+
+**Only the parts that actually move are rendered.** A percent claim keeps the
+untouched wallet as its basis, so with tcb at 28,8tr, a `percent: 90` claim and a
+2tr bill: the pace line appears (2,88tr → 0,88tr) and the total line does not
+(205,02tr both). A bill has to be large enough to reach past the free room before
+the total moves.
+
+**The long-range projection is deliberately NOT re-forecast.** The finish date and
+the pace line on the chart keep using the DECLARED pace. A squeezed month is this
+month only — the wallet refills — so projecting a one-month dip across years would
+report a pessimistic finish date the household never chose. The section says the
+month is short; it does not restate the goal.
+
+Bounded to the **end of the current month**: a bill due in three months takes
+nothing away from this month.
+
+**Contrast with the forecast**, which DOES lower the figure it reports
+(`walletValuesAfterOutflows`). That is right there: flexible money answers "what
+can I spend", and money earmarked for a bill cannot be spent twice. A goal's pace
+answers "what have we put in" — a different question about a different moment.
+The two must not be "fixed" into agreement.
 
 ### Where the pace comes from: the wallets declare it
 
@@ -379,7 +442,8 @@ every past month, so the history would tell a story that never happened.
 
 - **backend**: `src/modules/goals/` — `goals.service.ts`,
   `domain/goal-progress.ts`, `domain/goal-monthly-progress.ts`,
-  `domain/goal-projection.ts` (all pure), `repositories/`.
+  `domain/goal-projection.ts`, `domain/wallet-values-after-pending.ts` (all
+  pure), `repositories/`.
   Snapshot freezing lives in `src/modules/snapshots/`.
 - **frontend-web**: `src/features/goals/{model,api,hooks,ui}` —
   `goal-allocations-field.tsx` (create form), `goal-allocations-section.tsx`,

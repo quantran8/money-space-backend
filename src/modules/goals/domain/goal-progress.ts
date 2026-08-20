@@ -125,9 +125,17 @@ function allocationValue(
 export function resolveGoalProgressAmount(
   allocations: GoalAllocationInput[],
   assetValues: ReadonlyMap<string, number>,
+  /**
+   * What percent claims are a percentage OF, when the caller has lowered a
+   * wallet (by a scheduled outflow, say). See `allocationValue` — a percent
+   * claim is a standing arrangement and must not re-derive itself against the
+   * lowered value. Omitted, each claim reads against `assetValues` itself.
+   */
+  percentBasis?: ReadonlyMap<string, number>,
 ): number {
   return allocations.reduce(
-    (sum, allocation) => sum + allocationValue(allocation, assetValues),
+    (sum, allocation) =>
+      sum + allocationValue(allocation, assetValues, percentBasis),
     0,
   );
 }
@@ -602,7 +610,7 @@ export function resolveGoalCommittedAmount(
       claim.allocations.reduce(
         (inner, allocation) =>
           assetValues.has(allocation.assetId)
-            ? inner + allocationValue(allocation, assetValues)
+            ? inner + allocationValue(allocation, assetValues, percentBasis)
             : inner,
         0,
       ),
