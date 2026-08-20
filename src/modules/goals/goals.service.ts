@@ -11,19 +11,32 @@ import {
 } from './entities/financial-goal.entity';
 import { toGoalCard } from '../../common/utils/money-space.utils';
 import { todayInTimeZone } from '../../common/utils/clock';
-import { projectGoal } from './domain/goal-projection';
+import {
+  projectGoal,
+  projectGoalDelayFromSpend,
+} from './domain/goal-projection';
 import {
   buildConversionCredit,
   buildGoalMonthlyProgress,
 } from './domain/goal-monthly-progress';
 import { buildGoalProgressChange } from './domain/goal-progress-change';
+import { resolveSpendImpact } from './domain/spend-impact';
 import {
   resolveContributionProgressAmount,
+  resolveGoalCommittedAmount,
+  resolveGoalCommittedAmountByGoal,
+  resolveGoalCommittedPartsByGoal,
+  resolveWalletShareByGoal,
   resolveGoalProgressAmount,
   resolvePlannedMonthlyContribution,
   sumAllocatedAgainstAsset,
 } from './domain/goal-progress';
-import type { GoalAllocationInput } from './domain/goal-progress';
+import type {
+  GoalAllocationInput,
+  GoalPriority,
+  WalletGoalClaim,
+} from './domain/goal-progress';
+import { PRIORITY_RANK } from './domain/goal-progress';
 import { AssetsService } from '../assets/assets.service';
 import type {
   GoalAllocationRole,
@@ -78,8 +91,419 @@ export class GoalsService {
   }> {
     const assets = await this.assetsService.getActiveAssetRecords(householdId);
     return {
-      values: new Map(assets.map((asset) => [asset.id, asset.currentValue ?? 0])),
+      values: new Map(
+        assets.map((asset) => [asset.id, asset.currentValue ?? 0]),
+      ),
       types: new Map(assets.map((asset) => [asset.id, asset.type as string])),
+    };
+  }
+
+  /**
+   * How much of the given liquid money the household's goals already claim.
+   *
+   * Feeds the dashboard's "đã có nhiệm vụ", which used to mean near-term
+   * obligations alone — so money explicitly promised to a goal still counted as
+   * flexible, and a household with 20tr of a 22tr wallet behind the car was told
+   * it had 22tr free.
+   *
+   * `assetValues` is the caller's liquidity filter: pass only what the figure is
+   * being taken out of. Gold behind a goal is not liquid money already
+   * committed, because it was never in the liquid total.
+   *
+   * The two halves — money set aside, and this month's pace out of what is left
+   * — cannot overlap; see `resolveGoalCommittedAmount`.
+   */
+  async resolveGoalCommitments(
+    householdId: string,
+    assetValues: ReadonlyMap<string, number>,
+    /** What percent claims are a percentage OF. See `allocationValue`. */
+    percentBasis?: ReadonlyMap<string, number>,
+  ): Promise<number> {
+    const [goals, allocations] = await Promise.all([
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+    ]);
+    return resolveGoalCommittedAmount(
+      goals.map((goal) => ({
+        goalId: goal.id,
+        priority: goal.priority,
+        allocations: allocations
+          .filter((allocation) => allocation.financialGoalId === goal.id)
+          .map(toAllocationInput),
+      })),
+      assetValues,
+      percentBasis,
+    );
+  }
+
+  /**
+   * Which goals one ASSET is backing, and how much of it is still free.
+   *
+   * The mirror image of a goal's allocation panel, for the asset detail page.
+   * Until now the relationship was only visible from the goal's side: opening an
+   * account showed a balance with no hint that most of it was already promised,
+   * and the household had to open every goal in turn to find out.
+   *
+   * Every role is included, not just `contribution`: gold behind a goal is
+   * spoken for just as much as a wallet is, and the asset page is where someone
+   * asks "can I use this?".
+   *
+   * `freeAmount` is the same subtraction the write path enforces
+   * (`sumAllocatedAgainstAsset`), so what this page reports as free is exactly
+   * what a new claim would be allowed to take.
+   */
+  async assetGoalUsage(householdId: string, assetId: string) {
+    await this.goalsRepository.assertHousehold(householdId);
+    const [goals, allocations, assetValues] = await Promise.all([
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+      this.assetValueMap(householdId),
+    ]);
+
+    const assetValue = assetValues.get(assetId) ?? 0;
+    const byGoal = new Map(goals.map((goal) => [goal.id, goal]));
+    const onAsset = allocations.filter(
+      (allocation) => allocation.assetId === assetId,
+    );
+
+    const items = onAsset.flatMap((allocation) => {
+      const goal = byGoal.get(allocation.financialGoalId);
+      // A goal that was deleted leaves no claim to report; its allocations went
+      // with it. Skipped rather than shown nameless.
+      if (!goal) {
+        return [];
+      }
+      return [
+        {
+          goalId: goal.id,
+          goalName: goal.name,
+          priority: goal.priority,
+          allocationId: allocation.id,
+          kind: allocation.kind,
+          role: allocation.role,
+          allocatedAmount: allocation.allocatedAmount,
+          percent: allocation.percent,
+          monthlyContribution: allocation.monthlyContribution,
+          sharePercent: allocation.sharePercent,
+          /** What this claim is worth right now, capped at the asset's value. */
+          currentValue: resolveGoalProgressAmount(
+            [toAllocationInput(allocation)],
+            assetValues,
+          ),
+        },
+      ];
+    });
+
+    const claimed = sumAllocatedAgainstAsset(
+      onAsset.map(toAllocationInput),
+      assetId,
+      assetValue,
+    );
+
+    /**
+     * What the goals claim of this wallet ALL IN — money set aside plus what
+     * this month's pace can still draw from the room left over.
+     *
+     * Distinct from `claimedAmount`, and the distinction matters because the
+     * two answer different questions:
+     *
+     *  - `claimedAmount` / `freeAmount` answer **"how much may a new allocation
+     *    still take?"** — the write path's question. A monthly pace does not
+     *    lock money away from a new claim, so it is rightly excluded there.
+     *  - `committedAmount` / `unassignedAmount` answer **"how much of this
+     *    wallet has no job yet?"** — what the asset page and the spend warning
+     *    ask, and what the dashboard's "đã có nhiệm vụ" already counts.
+     *
+     * Reporting the write-path figure under the second question read as a
+     * contradiction: a 52tr wallet with 20tr set aside and two goals each
+     * promising 20tr/month showed "32tr chưa dành cho mục tiêu nào" while the
+     * dashboard counted the whole 52tr as committed. Both goals' paces were
+     * drawing on that 32tr; none of it was unassigned.
+     *
+     * Same resolver as the dashboard (`resolveGoalCommittedAmount`), so the two
+     * screens cannot disagree about the same wallet.
+     */
+    const committedByGoal = resolveGoalCommittedAmountByGoal(
+      goals.map((goal) => ({
+        goalId: goal.id,
+        priority: goal.priority,
+        allocations: allocations
+          .filter((allocation) => allocation.financialGoalId === goal.id)
+          .map(toAllocationInput),
+      })),
+      new Map([[assetId, assetValue]]),
+    );
+    const committed = [...committedByGoal.values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+
+    return {
+      householdId,
+      assetId,
+      assetValue,
+      claimedAmount: claimed,
+      freeAmount: Math.max(0, assetValue - claimed),
+      committedAmount: Math.min(committed, assetValue),
+      unassignedAmount: Math.max(0, assetValue - committed),
+      items: items.map((item) => ({
+        ...item,
+        /**
+         * What this goal is counted as holding from the asset ALL IN — set
+         * aside plus its share of this month's pace.
+         *
+         * `currentValue` is the set-aside part alone, which read as a plain
+         * contradiction in the table: a goal promising 20tr/month against a
+         * wallet with room for it showed "0đ đang tính" while the dashboard
+         * counted 16tr of that wallet behind it.
+         */
+        countedValue: committedByGoal.get(item.goalId) ?? item.currentValue,
+      })),
+      total: items.length,
+    };
+  }
+
+  /**
+   * How much of EACH wallet the goals already claim.
+   *
+   * What-if needs it to decide which wallet a nameless spend would come out of:
+   * least-promised money first, which is both what most people would reach for
+   * and the order that does not overstate what a purchase costs.
+   */
+  async goalClaimsByWallet(
+    householdId: string,
+    assetValues: ReadonlyMap<string, number>,
+  ): Promise<Map<string, WalletGoalClaim>> {
+    const [goals, allocations] = await Promise.all([
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+    ]);
+    const claims = goals.map((goal) => ({
+      goalId: goal.id,
+      priority: goal.priority,
+      allocations: allocations
+        .filter((allocation) => allocation.financialGoalId === goal.id)
+        .map(toAllocationInput),
+    }));
+
+    // One wallet at a time: a goal's claim on wallet A tells us nothing about
+    // how much of wallet B is spoken for, and the ordering question is per
+    // wallet.
+    const byWallet = new Map<string, WalletGoalClaim>();
+    for (const [assetId, value] of assetValues) {
+      /**
+       * The most important goal this wallet backs.
+       *
+       * `high` beats `medium` beats `low`, and a wallet backing several goals
+       * takes the highest — spending from it puts THAT goal at risk, and the
+       * household's own ranking is the only stake worth ordering by. Amount
+       * cannot substitute: 1tr promised to the emergency fund outranks 50tr
+       * towards a someday holiday, and the household said so.
+       */
+      let topPriority: GoalPriority | null = null;
+      for (const claim of claims) {
+        const backsThisWallet = claim.allocations.some(
+          (allocation) => allocation.assetId === assetId,
+        );
+        if (!backsThisWallet) continue;
+        if (
+          topPriority === null ||
+          PRIORITY_RANK[claim.priority] < PRIORITY_RANK[topPriority]
+        ) {
+          topPriority = claim.priority;
+        }
+      }
+
+      byWallet.set(assetId, {
+        amount: Math.min(
+          value,
+          resolveGoalCommittedAmount(claims, new Map([[assetId, value]])),
+        ),
+        topPriority,
+      });
+    }
+    return byWallet;
+  }
+
+  /**
+   * What a spend costs EVERY goal, across every wallet at once.
+   *
+   * The what-if form of `spendImpact`. What-if asks a household-level question —
+   * "what if we spent this" — not a per-wallet one, so it must not force the
+   * household to nominate a wallet before it will answer. It passes the
+   * before/after wallet values the forecast already produced (the after side has
+   * the spend taken out, per `walletValuesAfterOutflows`), and this reports what
+   * moved.
+   *
+   * Same resolver as everywhere else, so a what-if and the event it becomes can
+   * never report different costs for the same spend.
+   */
+  async spendImpactAcrossWallets(
+    householdId: string,
+    before: ReadonlyMap<string, number>,
+    after: ReadonlyMap<string, number>,
+  ) {
+    const [goals, allocations] = await Promise.all([
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+    ]);
+    const claims = goals.map((goal) => ({
+      goalId: goal.id,
+      priority: goal.priority,
+      allocations: allocations
+        .filter((allocation) => allocation.financialGoalId === goal.id)
+        .map(toAllocationInput),
+    }));
+
+    const partsBefore = resolveGoalCommittedPartsByGoal(claims, before);
+    const partsAfter = resolveGoalCommittedPartsByGoal(claims, after);
+    const today = todayInTimeZone();
+
+    const items = goals.flatMap((goal) => {
+      const b = partsBefore.get(goal.id) ?? { setAside: 0, pace: 0 };
+      const a = partsAfter.get(goal.id) ?? { setAside: 0, pace: 0 };
+      const beforeValue = b.setAside + b.pace;
+      const afterValue = a.setAside + a.pace;
+      const reduction = Math.max(0, beforeValue - afterValue);
+      if (reduction <= 0) {
+        return [];
+      }
+
+      const cost = {
+        paceReduction: Math.max(0, b.pace - a.pace),
+        setAsideReduction: Math.max(0, b.setAside - a.setAside),
+      };
+      const delay = projectGoalDelayFromSpend(
+        {
+          goalId: goal.id,
+          targetAmount: Number(goal.targetAmount ?? 0),
+          currentAmount: beforeValue,
+          plannedMonthlyContribution: goal.plannedMonthlyContribution ?? null,
+          targetDate:
+            goal.targetDate && goal.targetDate !== 'No deadline'
+              ? goal.targetDate
+              : null,
+          status: 'active' as const,
+          asOfDate: today,
+        },
+        cost,
+      );
+
+      return [
+        {
+          goalId: goal.id,
+          goalName: goal.name,
+          before: beforeValue,
+          after: afterValue,
+          reduction,
+          ...cost,
+          delayMonths: delay.delayMonths,
+          delayDays: delay.delayDays,
+          completionDateBefore: delay.before.projectedCompletionDate,
+          completionDateAfter: delay.after.projectedCompletionDate,
+        },
+      ];
+    });
+
+    // Biggest loser first: the goal paying most is the one to read first.
+    items.sort((left, right) => right.reduction - left.reduction);
+
+    return {
+      totalReduction: items.reduce((sum, item) => sum + item.reduction, 0),
+      totalPaceReduction: items.reduce(
+        (sum, item) => sum + item.paceReduction,
+        0,
+      ),
+      totalSetAsideReduction: items.reduce(
+        (sum, item) => sum + item.setAsideReduction,
+        0,
+      ),
+      goals: items,
+    };
+  }
+
+  /**
+   * What spending `amount` from `assetId` would cost the goals saving into it.
+   *
+   * Read-only, and meant to be called while the household is still typing: the
+   * cashflow form shows this before the outflow is saved. An outflow outranks
+   * the goals sharing its wallet, so scheduling one silently shrinks the money
+   * those goals hold — and a goal losing 3tr without anyone being told is the
+   * silent erosion this endpoint exists to prevent.
+   *
+   * Goal names are resolved here so the caller can render a sentence without a
+   * second round trip.
+   */
+  async spendImpact(householdId: string, assetId: string, amount: number) {
+    await this.goalsRepository.assertHousehold(householdId);
+    const [goals, allocations, assetValues] = await Promise.all([
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+      this.assetValueMap(householdId),
+    ]);
+
+    const impact = resolveSpendImpact(
+      goals.map((goal) => ({
+        goalId: goal.id,
+        priority: goal.priority,
+        allocations: allocations
+          .filter((allocation) => allocation.financialGoalId === goal.id)
+          .map(toAllocationInput),
+      })),
+      assetId,
+      assetValues.get(assetId) ?? 0,
+      amount,
+    );
+
+    const byId = new Map(goals.map((goal) => [goal.id, goal]));
+    const today = todayInTimeZone();
+
+    return {
+      householdId,
+      ...impact,
+      goals: impact.goals.map((goal) => {
+        const record = byId.get(goal.goalId);
+
+        /**
+         * The TIME cost, alongside the money.
+         *
+         * "Mục tiêu giảm 3tr" says what leaves; "về đích chậm 2 tháng" says what
+         * it costs, and the second is what decides whether a purchase is worth
+         * it. Resolved per goal from the same split the money figures come from,
+         * so the two can never describe different spends.
+         *
+         * `null` when the goal declared no monthly pace — without a rate there
+         * is no honest way to turn money into time.
+         */
+        const delay = record
+          ? projectGoalDelayFromSpend(
+              {
+                goalId: record.id,
+                targetAmount: Number(record.targetAmount ?? 0),
+                currentAmount: goal.before,
+                plannedMonthlyContribution:
+                  record.plannedMonthlyContribution ?? null,
+                targetDate:
+                  record.targetDate && record.targetDate !== 'No deadline'
+                    ? record.targetDate
+                    : null,
+                status: 'active' as const,
+                asOfDate: today,
+              },
+              goal,
+            )
+          : null;
+
+        return {
+          ...goal,
+          goalName: record?.name ?? null,
+          delayMonths: delay?.delayMonths ?? null,
+          delayDays: delay?.delayDays ?? null,
+          /** When the goal was on track to land, and when it lands now. */
+          completionDateBefore: delay?.before.projectedCompletionDate ?? null,
+          completionDateAfter: delay?.after.projectedCompletionDate ?? null,
+        };
+      }),
     };
   }
 
@@ -141,10 +565,9 @@ export class GoalsService {
       this.assetValueMap(householdId),
     ]);
 
-    const wantsProjection = (include ?? '')
-      .split(',')
-      .map((part) => part.trim())
-      .includes('projection');
+    const parts = (include ?? '').split(',').map((part) => part.trim());
+    const wantsProjection = parts.includes('projection');
+    const wantsWalletUsage = parts.includes('walletUsage');
     const asOfDate = todayInTimeZone();
 
     const items = goals.map((goal) => {
@@ -161,7 +584,75 @@ export class GoalsService {
       householdId,
       items,
       total: items.length,
+      ...(wantsWalletUsage
+        ? { walletUsage: this.walletUsage(goals, allocations, assetValues) }
+        : {}),
     };
+  }
+
+  /**
+   * Which goals already draw on each wallet, so the create form can ask for a
+   * share BEFORE the household runs short rather than after.
+   *
+   * A wallet feeding one goal has nothing to divide; the question only arises
+   * once a second goal at the same priority joins it. The form cannot know that
+   * on its own — it holds one goal and no view of the others — so the answer
+   * ships with the goals list, from data already loaded to compute progress.
+   */
+  private walletUsage(
+    goals: FinancialGoal[],
+    allocations: GoalAssetAllocation[],
+    assetValues: ReadonlyMap<string, number>,
+  ) {
+    const byGoal = new Map(goals.map((goal) => [goal.id, goal]));
+    const wallets = new Map<
+      string,
+      Array<{
+        goalId: string;
+        name: string;
+        priority: GoalPriority;
+        monthlyContribution: number | null;
+        sharePercent: number | null;
+      }>
+    >();
+
+    for (const allocation of allocations) {
+      if (allocation.role !== 'contribution') {
+        continue;
+      }
+      const goal = byGoal.get(allocation.financialGoalId);
+      if (!goal) {
+        continue;
+      }
+      const rows = wallets.get(allocation.assetId) ?? [];
+      rows.push({
+        goalId: goal.id,
+        name: goal.name,
+        priority: goal.priority,
+        monthlyContribution: allocation.monthlyContribution,
+        sharePercent: allocation.sharePercent,
+      });
+      wallets.set(allocation.assetId, rows);
+    }
+
+    return [...wallets.entries()].map(([assetId, rows]) => {
+      const assetValue = assetValues.get(assetId) ?? 0;
+      return {
+        assetId,
+        // What is left after every claim on this wallet — the room the goals
+        // are actually competing for.
+        freeAmount: Math.max(
+          0,
+          assetValue -
+            sumAllocatedAgainstAsset(
+              allocations.map(toAllocationInput),
+              assetId,
+              assetValue,
+            ),
+        ),
+        goals: rows,
+      };
+    });
   }
 
   async getFinancialGoal(householdId: string, goalId: string) {
@@ -238,9 +729,13 @@ export class GoalsService {
 
     // Validate the whole set BEFORE writing anything: a goal that lands with
     // half its assets is worse than one that does not land at all.
-    const [existing, assets] = await Promise.all([
+    // The household's goals come along for the share check: a wallet's monthly
+    // room is only divided between goals at the SAME priority, which lives on
+    // the goal rather than the allocation.
+    const [existing, assets, existingGoals] = await Promise.all([
       this.goalsRepository.findAllocationsByHousehold(householdId),
       this.assetIndex(householdId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
     ]);
     const assetValues = assets.values;
     const seenAssets = new Set<string>();
@@ -277,6 +772,13 @@ export class GoalsService {
       pending.push({ assetId: entry.assetId, ...shape });
 
       const role = entry.role ?? defaultRoleForType(assetType);
+      this.assertShareWithinWallet(
+        existing,
+        existingGoals,
+        entry.assetId,
+        payload.priority,
+        normalizeSharePercent(entry.sharePercent ?? null, assetType, role),
+      );
       rows.push({
         id: this.goalsRepository.createId('goal-allocation'),
         householdId,
@@ -286,6 +788,11 @@ export class GoalsService {
         role,
         monthlyContribution: normalizeMonthlyContribution(
           entry.monthlyContribution ?? null,
+          assetType,
+          role,
+        ),
+        sharePercent: normalizeSharePercent(
+          entry.sharePercent ?? null,
           assetType,
           role,
         ),
@@ -315,6 +822,15 @@ export class GoalsService {
       // is, and this column is their sum.
       plannedMonthlyContribution: resolvePlannedMonthlyContribution(
         rows.map(toAllocationInput),
+      ),
+      // What the household said was ALREADY set aside, frozen now because it
+      // stops being recoverable the moment the first contribution lands: after
+      // that, the allocation's amount is opening balance and new money mixed
+      // together. Without it the first month has nothing to subtract from and
+      // reports "—" for a figure the household did state on this very form.
+      baselineContributionAmount: resolveContributionProgressAmount(
+        rows.map(toAllocationInput),
+        assetValues,
       ),
       priority: payload.priority,
       note: payload.note?.trim() ?? '',
@@ -400,12 +916,35 @@ export class GoalsService {
     // closes. Mid-month a household would otherwise see its 10tr target and no
     // indication of where it stands — the feedback the removed "contribute"
     // button used to provide.
-    const [points, allocations, assetValues] = await Promise.all([
+    // The household's OTHER goals are needed too — with their priorities. Goals
+    // sharing a wallet compete for one balance, and the order they are served in
+    // is `priority`, so the running month's estimate can only be computed for
+    // all of them at once.
+    const [
+      points,
+      allocations,
+      assetValues,
+      householdAllocations,
+      householdGoals,
+    ] = await Promise.all([
       this.snapshotsRepository.findGoalProgressPoints(householdId, goalId),
       this.goalsRepository.findAllocationsByGoal(householdId, goalId),
       this.assetValueMap(householdId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
     ]);
     const inputs = allocations.map(toAllocationInput);
+    const walletShares = resolveWalletShareByGoal(
+      householdGoals.map((item) => ({
+        goalId: item.id,
+        priority: item.priority,
+        allocations: householdAllocations
+          .filter((allocation) => allocation.financialGoalId === item.id)
+          .map(toAllocationInput),
+      })),
+      assetValues,
+    );
+    const share = walletShares.get(goalId);
     const conversions = await this.goalsRepository.findGoalConversionPurchases(
       householdId,
       allocations.map((allocation) => allocation.assetId),
@@ -431,8 +970,24 @@ export class GoalsService {
             (input) => input.role === 'contribution',
           ),
           conversionCreditByMonth: buildConversionCredit(conversions),
+          baselineContribution: goal.baselineContributionAmount,
+          // Null when this goal has no contribution wallet at all: nothing to
+          // estimate, which the panel reads as "no target" rather than as a
+          // month missed.
+          monthlyHeadroom: inputs.some(
+            (input) =>
+              input.role === 'contribution' &&
+              input.monthlyContribution != null &&
+              input.monthlyContribution > 0,
+          )
+            ? (share?.amount ?? 0)
+            : null,
         },
       ),
+      // True when a wallet had to be split without the household having said
+      // how. The figure stands, but it was the product's fallback, not their
+      // decision — the UI asks rather than presenting it as settled.
+      needsShareDecision: share?.needsShareDecision ?? false,
     };
   }
 
@@ -520,15 +1075,16 @@ export class GoalsService {
     goalId: string,
     payload: CreateGoalAllocationDto,
   ) {
-    await this.ensureFinancialGoal(householdId, goalId);
+    const goal = await this.ensureFinancialGoal(householdId, goalId);
     if (!payload.assetId) {
       throw new BadRequestException('assetId is required');
     }
     const shape = normalizeAllocationShape(payload.kind, payload);
 
-    const [existing, assets] = await Promise.all([
+    const [existing, assets, existingGoals] = await Promise.all([
       this.goalsRepository.findAllocationsByHousehold(householdId),
       this.assetIndex(householdId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
     ]);
     const assetValues = assets.values;
     const assetValue = assetValues.get(payload.assetId);
@@ -557,6 +1113,14 @@ export class GoalsService {
     );
 
     const role = payload.role ?? defaultRoleForType(assetType);
+    this.assertShareWithinWallet(
+      existing,
+      existingGoals,
+      payload.assetId,
+      goal.priority,
+      normalizeSharePercent(payload.sharePercent ?? null, assetType, role),
+      goalId,
+    );
     const allocation: GoalAssetAllocation = {
       id: this.goalsRepository.createId('goal-allocation'),
       householdId,
@@ -566,6 +1130,11 @@ export class GoalsService {
       role,
       monthlyContribution: normalizeMonthlyContribution(
         payload.monthlyContribution ?? null,
+        assetType,
+        role,
+      ),
+      sharePercent: normalizeSharePercent(
+        payload.sharePercent ?? null,
         assetType,
         role,
       ),
@@ -579,9 +1148,7 @@ export class GoalsService {
     await this.prisma.runInTransaction(async () => {
       await this.goalsRepository.insertAllocation(allocation);
       await this.syncGoalPace(householdId, goalId, [
-        ...existing.filter(
-          (other) => other.financialGoalId === goalId,
-        ),
+        ...existing.filter((other) => other.financialGoalId === goalId),
         allocation,
       ]);
     });
@@ -594,7 +1161,7 @@ export class GoalsService {
     allocationId: string,
     payload: UpdateGoalAllocationDto,
   ) {
-    await this.ensureFinancialGoal(householdId, goalId);
+    const goal = await this.ensureFinancialGoal(householdId, goalId);
     const current = await this.goalsRepository.findAllocationById(
       householdId,
       allocationId,
@@ -617,9 +1184,10 @@ export class GoalsService {
         (kind === current.kind ? (current.percent ?? undefined) : undefined),
     });
 
-    const [existing, assets] = await Promise.all([
+    const [existing, assets, existingGoals] = await Promise.all([
       this.goalsRepository.findAllocationsByHousehold(householdId),
       this.assetIndex(householdId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
     ]);
     const assetValues = assets.values;
     const assetValue = assetValues.get(current.assetId);
@@ -636,6 +1204,21 @@ export class GoalsService {
     );
 
     const role = payload.role ?? current.role;
+    this.assertShareWithinWallet(
+      existing,
+      existingGoals,
+      current.assetId,
+      goal.priority,
+      normalizeSharePercent(
+        payload.sharePercent === undefined
+          ? current.sharePercent
+          : payload.sharePercent,
+        assetType,
+        role,
+      ),
+      goalId,
+      allocationId,
+    );
     const next: GoalAssetAllocation = {
       ...current,
       kind: shape.kind,
@@ -647,6 +1230,14 @@ export class GoalsService {
         payload.monthlyContribution === undefined
           ? current.monthlyContribution
           : payload.monthlyContribution,
+        assetType,
+        role,
+      ),
+      // Same rule: `undefined` keeps the declared share, `null` drops it.
+      sharePercent: normalizeSharePercent(
+        payload.sharePercent === undefined
+          ? current.sharePercent
+          : payload.sharePercent,
         assetType,
         role,
       ),
@@ -742,6 +1333,63 @@ export class GoalsService {
    * fixed claim at the asset's value, so the goal reports the truth without
    * anyone having to fix anything.
    */
+  /**
+   * The shares of one wallet, among goals tied at one priority, cannot exceed
+   * 100%.
+   *
+   * Sibling to `assertWithinAssetValue`: that rule stops a household promising
+   * more MONEY than a wallet holds, this one stops them promising more of its
+   * monthly ROOM than exists. Both span rows the DB cannot see together, so both
+   * are checked here at write time.
+   *
+   * Only goals at the SAME priority are counted. A `high` goal and a `low` one
+   * never divide anything — the high one is served first and takes what it needs
+   * — so their shares are unrelated numbers and adding them would refuse a pair
+   * that never competed.
+   *
+   * The total is NOT required to reach 100. The first goal on a wallet declares
+   * its share before the second one exists, and demanding a full 100 would
+   * either block that first write or force a number the household would have to
+   * come back and undo.
+   */
+  private assertShareWithinWallet(
+    allocations: GoalAssetAllocation[],
+    goals: FinancialGoal[],
+    assetId: string,
+    priority: GoalPriority,
+    incomingShare: number | null,
+    excludeGoalId?: string,
+    excludeAllocationId?: string,
+  ): void {
+    if (incomingShare === null) {
+      return;
+    }
+    const samePriority = new Set(
+      goals
+        .filter(
+          (goal) => goal.priority === priority && goal.id !== excludeGoalId,
+        )
+        .map((goal) => goal.id),
+    );
+    const claimed = allocations
+      .filter(
+        (allocation) =>
+          allocation.assetId === assetId &&
+          allocation.id !== excludeAllocationId &&
+          allocation.role === 'contribution' &&
+          allocation.sharePercent != null &&
+          samePriority.has(allocation.financialGoalId),
+      )
+      .reduce((sum, allocation) => sum + (allocation.sharePercent ?? 0), 0);
+
+    if (claimed + incomingShare > 100) {
+      const free = Math.max(0, 100 - claimed);
+      throw new BadRequestException(
+        `Other goals at this priority already take ${claimed}% of this wallet, so only ${free}% is left to give this one.`,
+      );
+    }
+  }
+
   private assertWithinAssetValue(
     allocations: GoalAssetAllocation[],
     assetId: string,
@@ -759,7 +1407,11 @@ export class GoalsService {
       .filter((allocation) => allocation.id !== excludeAllocationId)
       .map(toAllocationInput)
       .concat(pending);
-    const alreadyClaimed = sumAllocatedAgainstAsset(others, assetId, assetValue);
+    const alreadyClaimed = sumAllocatedAgainstAsset(
+      others,
+      assetId,
+      assetValue,
+    );
     // The DECLARED figure, not the capped one. `sumAllocatedAgainstAsset` caps
     // each claim at the asset's value — right for reporting progress, wrong for
     // this check: a 500tr claim against a 100tr asset would arrive here as 100tr
@@ -897,13 +1549,48 @@ function normalizeMonthlyContribution(
   return monthlyContribution;
 }
 
+/**
+ * The share of a wallet this goal takes when its priority group falls short.
+ *
+ * Same two rules as the monthly amount: only a wallet, and only a share the goal
+ * actually contributes through. A holding is never fed monthly, so it never
+ * competes for a wallet's room and a split figure on it would describe nothing.
+ */
+function normalizeSharePercent(
+  sharePercent: number | null,
+  assetType: string,
+  role: GoalAllocationRole,
+): number | null {
+  if (sharePercent == null) {
+    return null;
+  }
+  if (
+    !Number.isFinite(sharePercent) ||
+    sharePercent <= 0 ||
+    sharePercent > 100
+  ) {
+    throw new BadRequestException(
+      'A goal’s share of a wallet has to be between 1 and 100 percent.',
+    );
+  }
+  if (!isWalletType(assetType) || role !== 'contribution') {
+    throw new BadRequestException(
+      'Only a cash or bank account this goal contributes through can carry a share. Gold, stocks and other holdings are not fed monthly, so there is nothing to divide.',
+    );
+  }
+  return sharePercent;
+}
+
 /** Entity → the pure domain's input shape. */
-function toAllocationInput(allocation: GoalAssetAllocation): GoalAllocationInput {
+function toAllocationInput(
+  allocation: GoalAssetAllocation,
+): GoalAllocationInput {
   return {
     assetId: allocation.assetId,
     kind: allocation.kind,
     role: allocation.role,
     monthlyContribution: allocation.monthlyContribution,
+    sharePercent: allocation.sharePercent,
     allocatedAmount: allocation.allocatedAmount,
     percent: allocation.percent,
   };

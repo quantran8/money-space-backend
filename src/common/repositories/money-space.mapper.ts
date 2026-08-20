@@ -338,6 +338,15 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
         : numberFromDb(
             row.plannedMonthlyContribution ?? row.planned_monthly_contribution,
           ),
+    // Frozen at creation, never recomputed — see
+    // `FinancialGoal.baselineContributionAmount`.
+    baselineContributionAmount:
+      (row.baselineContributionAmount ?? row.baseline_contribution_amount) ==
+      null
+        ? null
+        : numberFromDb(
+            row.baselineContributionAmount ?? row.baseline_contribution_amount,
+          ),
     priority: row.priority,
     note: row.note ?? '',
     targetDate:
@@ -352,6 +361,7 @@ export function mapGoalAssetAllocation(row: DbRow): GoalAssetAllocation {
   const percent = row.percent;
   const monthlyContribution =
     row.monthlyContribution ?? row.monthly_contribution;
+  const sharePercent = row.sharePercent ?? row.share_percent;
   return {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
@@ -364,9 +374,13 @@ export function mapGoalAssetAllocation(row: DbRow): GoalAssetAllocation {
     // save nothing.
     monthlyContribution:
       monthlyContribution == null ? null : numberFromDb(monthlyContribution),
+    // Null means "the household was never asked how to split this wallet", not
+    // 100 — see `GoalAssetAllocation.sharePercent`.
+    sharePercent: sharePercent == null ? null : numberFromDb(sharePercent),
     // Exactly one of these is set per `kind` (DB CHECK). Kept as null rather
     // than 0 for the unused one, so "no fixed amount" never reads as "0đ".
-    allocatedAmount: allocatedAmount == null ? null : numberFromDb(allocatedAmount),
+    allocatedAmount:
+      allocatedAmount == null ? null : numberFromDb(allocatedAmount),
     percent: percent == null ? null : numberFromDb(percent),
     note: row.note ?? '',
   };
@@ -495,8 +509,7 @@ export function mapCashflowEvent(row: DbRow): CashflowEvent {
     debtId: row.debtId ?? row.debt_id ?? null,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? null,
     plannedAssetId: row.plannedAssetId ?? row.planned_asset_id ?? null,
-    settlementAssetId:
-      row.settlementAssetId ?? row.settlement_asset_id ?? null,
+    settlementAssetId: row.settlementAssetId ?? row.settlement_asset_id ?? null,
     note: row.note ?? '',
     lastCompletedAt: row.lastCompletedAt ?? row.last_completed_at ?? null,
     lastCompletedById: row.lastCompletedById ?? row.last_completed_by ?? null,

@@ -1,6 +1,8 @@
 import {
+  resolveGoalCommittedAmount,
   resolveGoalProgressAmount,
   resolvePlannedMonthlyContribution,
+  resolveWalletShareByGoal,
   sumAllocatedAgainstAsset,
 } from './goal-progress';
 import type { GoalAllocationInput } from './goal-progress';
@@ -98,7 +100,6 @@ describe('sumAllocatedAgainstAsset', () => {
   });
 });
 
-
 describe('resolvePlannedMonthlyContribution', () => {
   // "10tr a month" is really "6tr out of the salary account and 4tr in cash".
   it('sums what the wallets say they put in', () => {
@@ -160,5 +161,299 @@ describe('resolvePlannedMonthlyContribution', () => {
         },
       ]),
     ).toBeNull();
+  });
+});
+
+/**
+ * Dividing one wallet between the goals that draw on it.
+ *
+ * A wallet with 2tr free cannot give 2tr to each of two goals. Priority orders
+ * who is served first; a tie is split by the shares the household declared.
+ */
+describe('resolveWalletShareByGoal', () => {
+  const wallet = (over: Partial<GoalAllocationInput> = {}) => ({
+    assetId: 'tcb',
+    kind: 'fixed' as const,
+    role: 'contribution' as const,
+    allocatedAmount: 0,
+    monthlyContribution: 20 * M,
+    ...over,
+  });
+  const claim = (
+    goalId: string,
+    priority: 'high' | 'medium' | 'low',
+    allocations: GoalAllocationInput[],
+  ) => ({ goalId, priority, allocations });
+
+  // The household's case: 22tr in the account, 20tr already set aside for goal
+  // A, so 2tr is free. Both goals are `high`, split 70/30.
+  it('splits a tie by the declared shares', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [
+          wallet({ allocatedAmount: 20 * M, sharePercent: 70 }),
+        ]),
+        claim('b', 'high', [wallet({ sharePercent: 30 })]),
+      ],
+      values({ tcb: 22 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(1.4 * M);
+    expect(shares.get('b')?.amount).toBe(0.6 * M);
+    // The property the per-goal version could not offer.
+    expect(
+      (shares.get('a')?.amount ?? 0) + (shares.get('b')?.amount ?? 0),
+    ).toBe(2 * M);
+  });
+
+  // Priority settles it before any share is consulted: the high goal takes what
+  // it needs and the low one gets what is left, which here is nothing.
+  it('serves a higher priority in full before a lower one', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [wallet({ sharePercent: 10 })]),
+        claim('b', 'low', [wallet({ sharePercent: 90 })]),
+      ],
+      values({ tcb: 2 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(2 * M);
+    expect(shares.get('b')?.amount).toBe(0);
+  });
+
+  // Enough for everyone: no tie to break, so the shares stay unused and each
+  // goal simply takes the pace it declared.
+  it('gives every goal its full pace when the wallet covers them all', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [wallet({ sharePercent: 70 })]),
+        claim('b', 'high', [wallet({ sharePercent: 30 })]),
+      ],
+      values({ tcb: 40 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(20 * M);
+    expect(shares.get('b')?.amount).toBe(20 * M);
+  });
+
+  // A share bigger than the goal's own pace cannot pull more than the pace, and
+  // what the cap leaves behind goes to the other goal rather than evaporating.
+  it('caps each goal at its own pace and passes the remainder on', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [
+          wallet({ sharePercent: 90, monthlyContribution: 5 * M }),
+        ]),
+        claim('b', 'high', [
+          wallet({ sharePercent: 10, monthlyContribution: 20 * M }),
+        ]),
+      ],
+      values({ tcb: 15 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(5 * M);
+    expect(shares.get('b')?.amount).toBe(10 * M);
+  });
+
+  // Nobody was asked: split in proportion to the declared paces, and say so, so
+  // the UI can ask rather than present the fallback as the household's choice.
+  it('falls back to splitting by pace, and flags that it did', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [wallet({ monthlyContribution: 30 * M })]),
+        claim('b', 'high', [wallet({ monthlyContribution: 10 * M })]),
+      ],
+      values({ tcb: 4 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(3 * M);
+    expect(shares.get('b')?.amount).toBe(1 * M);
+    expect(shares.get('a')?.needsShareDecision).toBe(true);
+    expect(shares.get('b')?.needsShareDecision).toBe(true);
+  });
+
+  // A wallet that covers its goals is settled, not a fallback — the flag must
+  // not fire just because no share was ever declared.
+  it('does not ask for a decision when nothing had to be divided', () => {
+    const shares = resolveWalletShareByGoal(
+      [claim('a', 'high', [wallet()]), claim('b', 'high', [wallet()])],
+      values({ tcb: 40 * M }),
+    );
+    expect(shares.get('a')?.needsShareDecision).toBe(false);
+  });
+
+  // Each wallet is divided on its own. A goal's full account must never be
+  // treated as covering the pace it declared against an empty one.
+  it('divides each wallet independently', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [
+          wallet({ assetId: 'tcb', sharePercent: 50 }),
+          wallet({ assetId: 'vcb', sharePercent: 50 }),
+        ]),
+        claim('b', 'high', [wallet({ assetId: 'tcb', sharePercent: 50 })]),
+      ],
+      values({ tcb: 10 * M, vcb: 0 }),
+    );
+    // 10tr free on tcb, split 50/50 → 5tr each. vcb is empty and adds nothing.
+    expect(shares.get('a')?.amount).toBe(5 * M);
+    expect(shares.get('b')?.amount).toBe(5 * M);
+  });
+
+  // A wallet already spoken for entirely has nothing to divide.
+  it('gives nothing when the wallet is fully claimed', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [
+          wallet({ allocatedAmount: 12 * M, sharePercent: 50 }),
+        ]),
+        claim('b', 'high', [
+          wallet({ allocatedAmount: 10 * M, sharePercent: 50 }),
+        ]),
+      ],
+      values({ tcb: 22 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(0);
+    expect(shares.get('b')?.amount).toBe(0);
+  });
+
+  // Holdings are not fed monthly, so gold never competes for a wallet's room.
+  it('ignores holding shares entirely', () => {
+    const shares = resolveWalletShareByGoal(
+      [
+        claim('a', 'high', [
+          wallet({
+            assetId: 'gold',
+            role: 'holding',
+            monthlyContribution: null,
+          }),
+        ]),
+      ],
+      values({ gold: 100 * M }),
+    );
+    expect(shares.get('a')?.amount).toBe(0);
+  });
+
+  // The invariant that made this rewrite necessary: across every goal, the
+  // amounts handed out can never exceed what the wallet actually holds free.
+  it('never hands out more than the wallet holds free', () => {
+    for (const free of [0, 1 * M, 2 * M, 7 * M, 40 * M, 100 * M]) {
+      const shares = resolveWalletShareByGoal(
+        [
+          claim('a', 'high', [wallet({ sharePercent: 70 })]),
+          claim('b', 'high', [wallet({ sharePercent: 30 })]),
+          claim('c', 'medium', [wallet({ sharePercent: 100 })]),
+          claim('d', 'low', [wallet()]),
+        ],
+        values({ tcb: free }),
+      );
+      const total = ['a', 'b', 'c', 'd'].reduce(
+        (sum, id) => sum + (shares.get(id)?.amount ?? 0),
+        0,
+      );
+      expect(total).toBeLessThanOrEqual(free);
+    }
+  });
+});
+
+/**
+ * Liquid money the goals have already spoken for — the dashboard's
+ * "đã có nhiệm vụ".
+ *
+ * The trap this exists to avoid is double-counting: money already set aside is
+ * also money a monthly pace would otherwise claim again.
+ */
+describe('resolveGoalCommittedAmount', () => {
+  const wallet = (over: Partial<GoalAllocationInput> = {}) => ({
+    assetId: 'tcb',
+    kind: 'fixed' as const,
+    role: 'contribution' as const,
+    allocatedAmount: 0,
+    monthlyContribution: 20 * M,
+    ...over,
+  });
+  const claim = (
+    goalId: string,
+    priority: 'high' | 'medium' | 'low',
+    allocations: GoalAllocationInput[],
+  ) => ({ goalId, priority, allocations });
+
+  // The reported case. 28.8tr in the account: 20tr already behind the goal, and
+  // a 20tr pace that can only draw the 8.8tr still free — the rest of that pace
+  // would have to come out of the 20tr already counted.
+  it('adds this month’s pace only from what is still free', () => {
+    expect(
+      resolveGoalCommittedAmount(
+        [claim('a', 'high', [wallet({ allocatedAmount: 20 * M })])],
+        values({ tcb: 28.8 * M }),
+      ),
+    ).toBeCloseTo(28.8 * M);
+  });
+
+  // Nothing set aside yet: the whole pace comes out of free money.
+  it('counts the full pace when nothing is set aside', () => {
+    expect(
+      resolveGoalCommittedAmount(
+        [claim('a', 'high', [wallet()])],
+        values({ tcb: 50 * M }),
+      ),
+    ).toBe(20 * M);
+  });
+
+  // A goal with money behind it but no pace is committed for exactly that money.
+  it('counts money set aside with no pace declared', () => {
+    expect(
+      resolveGoalCommittedAmount(
+        [
+          claim('a', 'high', [
+            wallet({ allocatedAmount: 15 * M, monthlyContribution: null }),
+          ]),
+        ],
+        values({ tcb: 50 * M }),
+      ),
+    ).toBe(15 * M);
+  });
+
+  // Assets the caller left out are not liquid money, so a goal backed by gold
+  // adds nothing to a figure about liquid money.
+  it('ignores assets outside the value map', () => {
+    expect(
+      resolveGoalCommittedAmount(
+        [
+          claim('a', 'high', [
+            wallet({
+              assetId: 'gold',
+              role: 'holding',
+              allocatedAmount: 100 * M,
+            }),
+          ]),
+        ],
+        values({ tcb: 50 * M }),
+      ),
+    ).toBe(0);
+  });
+
+  // Two goals on one wallet are still bounded by the one wallet.
+  it('never counts more than the wallet holds', () => {
+    const committed = resolveGoalCommittedAmount(
+      [
+        claim('a', 'high', [wallet({ allocatedAmount: 10 * M })]),
+        claim('b', 'high', [wallet({ allocatedAmount: 5 * M })]),
+      ],
+      values({ tcb: 22 * M }),
+    );
+    expect(committed).toBeLessThanOrEqual(22 * M);
+  });
+
+  // The invariant the whole design turns on: committed money can never exceed
+  // the money it is committed OUT OF, whatever the paces say.
+  it('never exceeds the liquid total, at any balance', () => {
+    for (const balance of [0, 5 * M, 20 * M, 28.8 * M, 60 * M, 200 * M]) {
+      const committed = resolveGoalCommittedAmount(
+        [
+          claim('a', 'high', [
+            wallet({ allocatedAmount: 20 * M, monthlyContribution: 20 * M }),
+          ]),
+          claim('b', 'medium', [wallet({ monthlyContribution: 40 * M })]),
+        ],
+        values({ tcb: balance }),
+      );
+      expect(committed).toBeLessThanOrEqual(balance);
+    }
   });
 });

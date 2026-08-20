@@ -39,7 +39,9 @@ export interface GoalsRepository {
    * for N goals at once, and the over-allocation check needs every claim
    * against an asset regardless of which goal made it.
    */
-  findAllocationsByHousehold(householdId: string): Promise<GoalAssetAllocation[]>;
+  findAllocationsByHousehold(
+    householdId: string,
+  ): Promise<GoalAssetAllocation[]>;
   findAllocationsByGoal(
     householdId: string,
     goalId: string,

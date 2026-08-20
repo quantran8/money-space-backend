@@ -66,6 +66,34 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
 - **Status / lifecycle**: `status` (`active` | `sold` | `closed`, default `active`) + `soldAt`. Distinct from `deletedAt`: a **sold** asset is kept (quantity/value 0) for history, excluded from the liquidity buckets and net worth, but still listed. Selling an asset (reducing the position + closing it on a full sale) is driven by an `asset_sale` money event — see [[asset-sale]]. `AssetsService.sellPosition` / `reverseSalePosition` apply/undo the position change.
 - **Wallet balance moves**: `cash` and `bank_account` are "wallet" assets that hold a free spendable balance (`WALLET_ASSET_TYPES` in `assets.service.ts`). `AssetsService.creditManualAsset` / `debitManualAsset` add/subtract from the wallet's `manualValue` and re-upsert its valuation; a debit floors at 0 (never negative). These are **no-ops for any other asset type** (stock, gold, saving deposit, …), which are valued from price/formula, not a stored cash balance. Callers: every money event with a `fromAsset`/`toAsset` (see [[money-events]]), and debt borrow/delete (indirectly, via the events layer — see [[debts]]).
 
+- **What a goal has claimed of it** (`GET /households/:id/assets/:assetId/goal-usage`).
+  An asset's balance is not the same as money the household can use: most of an
+  account can already be promised to a goal. The relationship used to be visible
+  only from the goal's side, so answering "can I use this?" meant opening every
+  goal in turn.
+  - Served by `GoalsService.assetGoalUsage` from a controller in the GOALS module
+    mounted under the assets path: `GoalsService` already imports `AssetsService`,
+    so the reverse module edge would be a cycle.
+  - **Every role is listed**, `holding` as well as `contribution` — gold behind a
+    goal is spoken for just as much as cash is.
+  - `freeAmount` uses `sumAllocatedAgainstAsset`, the same subtraction the write
+    path enforces, so what the page reports as free is exactly what a new claim
+    would be allowed to take. See [[goals]].
+
+- **What a goal has claimed of it** (`GET /households/:id/assets/:assetId/goal-usage`).
+  An asset's balance is not the same as money the household can use: most of an
+  account can already be promised to a goal. The relationship used to be visible
+  only from the goal's side, so answering "can I use this?" meant opening every
+  goal in turn.
+  - Served by `GoalsService.assetGoalUsage` from a controller in the GOALS module
+    mounted under the assets path: `GoalsService` already imports `AssetsService`,
+    so the reverse module edge would be a cycle.
+  - **Every role is listed**, `holding` as well as `contribution` — gold behind a
+    goal is spoken for just as much as cash is.
+  - `freeAmount` uses `sumAllocatedAgainstAsset`, the same subtraction the write
+    path enforces, so what the page reports as free is exactly what a new claim
+    would be allowed to take. See [[goals]].
+
 ## Sub-entities (backend)
 
 - `AssetMarketPosition` — symbol / quantity / quoteCurrency / `purchasePrice` (original purchase/cost price) / `lastPrice` + `lastPriceAt` (latest manual or API market price) for market-priced assets.

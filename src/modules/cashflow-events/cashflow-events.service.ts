@@ -424,6 +424,24 @@ export class CashflowEventsService {
         'recurrenceEndDate cannot be before expectedDate',
       );
     }
+    // An outflow must name the wallet it leaves from.
+    //
+    // This used to be optional on both directions, on the reasoning that at
+    // planning time the household often does not know yet. That reasoning does
+    // not survive the wallet ranking above goals: an outflow reduces the goal
+    // money backed by the wallet it settles from, so an outflow naming no
+    // wallet either silently drains no goal (understating the cost) or would
+    // have to guess at one (inventing a decision the household never made).
+    // Asking is the only honest option, and it is also what lets the form show
+    // the goal impact BEFORE the event is saved.
+    //
+    // Incoming stays optional: money arriving backs no goal until it lands, so
+    // nothing downstream depends on knowing where it will land.
+    if (event.direction === 'outgoing' && !event.settlementAssetId) {
+      throw new BadRequestException(
+        'settlementAssetId is required for an outgoing event',
+      );
+    }
   }
 
   private async ensureCashflowEvent(householdId: string, eventId: string) {

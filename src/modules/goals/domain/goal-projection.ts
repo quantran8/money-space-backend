@@ -232,3 +232,73 @@ export function projectGoalAfterSpend(
     goalDelayDays: Math.round(goalDelayMonths * 30),
   };
 }
+
+/**
+ * How much later each goal lands because of one spend.
+ *
+ * The money cost is only half the answer the household is asking for. "Mục tiêu
+ * giảm 3tr" says what leaves; "về đích chậm 2 tháng" says what it costs them,
+ * and the second is the one that decides whether a purchase is worth it. What-if
+ * already reported a delay, but only for one goal the household had to pick by
+ * hand, and only under a manual "take from the goal?" flag.
+ *
+ * Now that a spend's cost is resolved per goal AND split into its two halves,
+ * the delay follows for every affected goal without anyone choosing anything:
+ *
+ *  - **Money already set aside** going out means the goal has further to climb.
+ *    It is re-projected from a lower balance.
+ *  - **This month's contribution** being skipped does not lower the balance —
+ *    it removes a month's worth of progress that had been counted on, so the
+ *    finish line moves out by the fraction of a month that was given up.
+ *
+ * Both are expressed against the goal's own declared pace, so a goal with no
+ * pace reports `null` rather than a fabricated month count: without a declared
+ * pace there is no honest way to turn money into time.
+ *
+ * Pure: no clock, no database.
+ */
+export function projectGoalDelayFromSpend(
+  input: GoalProjectionInput,
+  cost: { paceReduction: number; setAsideReduction: number },
+): {
+  before: GoalProjection;
+  after: GoalProjection;
+  delayMonths: number | null;
+  delayDays: number | null;
+} {
+  const before = projectGoal(input);
+  const pace = input.plannedMonthlyContribution;
+
+  // Set-aside money leaving lowers the balance, so the goal is simply further
+  // from the target than it was.
+  const after = projectGoal({
+    ...input,
+    currentAmount: Math.max(0, input.currentAmount - cost.setAsideReduction),
+  });
+
+  if (pace === null || pace <= 0) {
+    // No declared pace: the balance change is still real and reported, but
+    // there is no rate to convert it into time.
+    return { before, after, delayMonths: null, delayDays: null };
+  }
+
+  // The set-aside half, in months: how long the pace takes to put it back.
+  const fromSetAside =
+    before.estimatedMonthsToGoal !== null && after.estimatedMonthsToGoal !== null
+      ? after.estimatedMonthsToGoal - before.estimatedMonthsToGoal
+      : cost.setAsideReduction / pace;
+
+  // The skipped contribution, in months: the share of a month's saving given up.
+  const fromPace = cost.paceReduction / pace;
+
+  const delayMonths = fromSetAside + fromPace;
+
+  return {
+    before,
+    after,
+    delayMonths,
+    // Rounded to whole days: a delay expressed to the hour would claim a
+    // precision a monthly pace does not have.
+    delayDays: Math.round(delayMonths * 30),
+  };
+}

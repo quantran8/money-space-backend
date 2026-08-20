@@ -50,8 +50,11 @@ export interface GoalMonthProgress {
    * clamped.
    *
    * `null` in three cases, each meaning "we cannot say", never "nothing":
-   *  - the FIRST month with data, which has no previous month to subtract (a
-   *    household arriving with 200M already saved did not save 200M that month);
+   *  - the FIRST month with data when the goal carries no creation baseline —
+   *    there is no previous month to subtract, and a household arriving with
+   *    200M already saved did not save 200M that month. A goal created through
+   *    the current form DOES carry one (`baselineContribution`), so its first
+   *    month reports a real figure measured from the declared opening balance;
    *  - a month frozen before contributions were tracked separately;
    *  - the running month when the month before it has no close (see below).
    */
@@ -109,6 +112,20 @@ function monthOf(date: string): string {
  *   Per month (`YYYY-MM`), money that left a contribution wallet only to become
  *   a holding INSIDE THE SAME GOAL. Added back, because swapping cash for gold
  *   is a change of form, not a withdrawal — see `buildConversionCredit`.
+ * @param options.monthlyHeadroom
+ *   What the wallets could still put in this month given what they hold —
+ *   `min(walletValue - setAside, pace)` summed per wallet. Used for the RUNNING
+ *   month only, and only when it has no real previous close to be measured
+ *   against: the month is not over, so what the panel can honestly offer is what
+ *   the household is on track to manage, not a verdict. Closed months always use
+ *   the observed difference and ignore this entirely.
+ * @param options.baselineContribution
+ *   What the goal OPENED with, frozen at creation. Stands in as the previous
+ *   point for the FIRST month on record, which otherwise has nothing to be
+ *   measured against and reports null. The household declared this figure as an
+ *   opening balance on the create form, so treating it as the starting line is
+ *   reading back what they said — not a guess. Null for goals created before it
+ *   was recorded, which keeps their first month blank as before.
  */
 export function buildGoalMonthlyProgress(
   points: GoalProgressPoint[],
@@ -117,6 +134,8 @@ export function buildGoalMonthlyProgress(
     current?: GoalProgressPoint;
     hasContributionSource?: boolean;
     conversionCreditByMonth?: ReadonlyMap<string, number>;
+    baselineContribution?: number | null;
+    monthlyHeadroom?: number | null;
   },
 ): GoalMonthProgress[] {
   const current = options?.current;
@@ -126,7 +145,9 @@ export function buildGoalMonthlyProgress(
   // which is precisely the "so far this month" figure.
   const merged = current ? [...points, current] : points;
   const lastOfMonth = new Map<string, GoalProgressPoint>();
-  for (const point of [...merged].sort((a, b) => a.date.localeCompare(b.date))) {
+  for (const point of [...merged].sort((a, b) =>
+    a.date.localeCompare(b.date),
+  )) {
     lastOfMonth.set(monthOf(point.date), point);
   }
 
@@ -161,15 +182,39 @@ export function buildGoalMonthlyProgress(
     // Both ends must know their contribution figure. A point frozen before the
     // column existed reports `null`, and treating it as 0 would show the next
     // month as a huge jump the household never made.
-    const previousContribution = previousPoint?.contributionAmount ?? null;
-    const delta =
+    //
+    // The FIRST month has no previous point at all. Its left-hand side is the
+    // baseline the household declared when creating the goal — "this much is
+    // already set aside" — which is exactly the opening balance a previous
+    // point would have carried. With it, a goal created this month reports 0
+    // until money actually moves in, instead of a blank that reads as "we
+    // cannot say" about a figure the household did in fact state.
+    const previousContribution =
+      index === 0
+        ? (options?.baselineContribution ?? null)
+        : (previousPoint?.contributionAmount ?? null);
+    // The adjacency guard protects against bundling several skipped months into
+    // one figure. It cannot apply to the first month: its left-hand side is the
+    // creation baseline, not an older close, so there are no skipped months
+    // hiding in the difference.
+    const observedDelta =
       contribution === null ||
       previousContribution === null ||
-      (inProgress && !previousIsAdjacent)
+      (inProgress && !previousIsAdjacent && index > 0)
         ? null
         : contribution -
           previousContribution +
           (options?.conversionCreditByMonth?.get(month) ?? 0);
+
+    // The running month is not a verdict — it is not over. When there is no real
+    // close behind it, the observed difference is 0 for a goal just created and
+    // says nothing useful, so the estimate takes over: what the wallets can
+    // still put in, capped by the pace they declared. A CLOSED month never uses
+    // it; by then the difference between two closes is the truth.
+    const delta =
+      inProgress && index === 0 && options?.monthlyHeadroom !== undefined
+        ? options.monthlyHeadroom
+        : observedDelta;
 
     return {
       month,

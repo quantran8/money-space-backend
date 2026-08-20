@@ -34,6 +34,16 @@ export interface CreateGoalAllocationDto {
    * goal but feeds it no fixed amount".
    */
   monthlyContribution?: number;
+  /**
+   * This goal's share (1–100) of the wallet's remaining monthly room, used only
+   * when goals tied at the same priority cannot all be paid in full.
+   *
+   * Ask for it when the chosen wallet already backs another goal at the SAME
+   * priority — that is the tie `priority` cannot break. Omit otherwise: a wallet
+   * with one goal on it has nothing to split, and a share nobody was asked for
+   * is worse than none.
+   */
+  sharePercent?: number;
   /** Required when `kind = 'fixed'`. VND, >= 0. */
   allocatedAmount?: number;
   /** Required when `kind = 'percent'`. 0 < percent <= 100. */
@@ -51,6 +61,8 @@ export interface UpdateGoalAllocationDto {
   role?: GoalAllocationRole;
   /** Send `null` to stop this wallet declaring a monthly amount. */
   monthlyContribution?: number | null;
+  /** Send `null` to drop this goal's declared share of the wallet. */
+  sharePercent?: number | null;
   allocatedAmount?: number;
   percent?: number;
   note?: string;

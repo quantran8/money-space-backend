@@ -74,9 +74,14 @@ Two behaviours worth knowing:
    `applyWalletEffects` debits and credits nothing, so the money event was
    written, the event left the overdue list looking settled, and **not one
    balance moved**. A completion that moves no money is worse than a rejection.
-   `settlement_asset_id` on the event itself is nullable on purpose — at
-   planning time the household often does not know which account a bill comes
-   out of, so it is optional at create and only forced at completion.
+   `settlement_asset_id` is **required at create for outgoing** events
+   (`assertValid`), and stays optional for incoming. It used to be optional on
+   both — "at planning time the household often does not know which account a
+   bill comes out of" — but an outflow now outranks the goals sharing its wallet
+   and shrinks their money, so an outflow naming no wallet would either drain no
+   goal (understating what it costs) or force a guess at which one. Asking at
+   create is also what lets the form show the goal impact before saving. See
+   [[forecast-and-flexible-money]].
 2. **Create the money event via `MoneyEventsService.createMoneyEvent`** (never a
    raw insert), so wallet debit/credit, valuation points and the goal mirror all
    fire. `outgoing` → `payment_paid` debiting `fromAssetId`; `incoming` →

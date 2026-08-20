@@ -4,6 +4,7 @@ import { AssetsModule } from '../assets/assets.module';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { SNAPSHOTS_REPOSITORY } from '../snapshots/repositories/snapshots.repository.interface';
 import { PrismaSnapshotsRepository } from '../snapshots/repositories/prisma-snapshots.repository';
+import { AssetGoalUsageController } from './asset-goal-usage.controller';
 import { GoalsController } from './goals.controller';
 import { GoalsService } from './goals.service';
 import { GOALS_REPOSITORY } from './repositories/goals.repository.interface';
@@ -14,7 +15,10 @@ import { PrismaGoalsRepository } from './repositories/prisma-goals.repository';
 // knows nothing about goals — so there is no cycle.
 @Module({
   imports: [CommonModule, AssetsModule, MarketDataModule],
-  controllers: [GoalsController],
+  // `AssetGoalUsageController` serves an /assets/:id/* route from here: the
+  // answer needs goals, and AssetsModule cannot import this one without making
+  // the existing Goals → Assets edge a cycle.
+  controllers: [GoalsController, AssetGoalUsageController],
   providers: [
     GoalsService,
     {

@@ -21,6 +21,7 @@ function goal(over: Partial<FinancialGoal> = {}): FinancialGoal {
     name: 'Mua xe',
     targetAmount: 500 * M,
     plannedMonthlyContribution: null,
+    baselineContributionAmount: null,
     priority: 'medium',
     note: '',
     targetDate: 'No deadline',
@@ -39,6 +40,7 @@ function allocation(
     kind: 'fixed',
     role: 'holding',
     monthlyContribution: null,
+    sharePercent: null,
     allocatedAmount: 50 * M,
     percent: null,
     note: '',
@@ -49,11 +51,15 @@ function allocation(
 const WALLET = { id: 'vcb', type: 'bank_account', currentValue: 200 * M };
 const STOCKS = { id: 'stocks', type: 'stock', currentValue: 100 * M };
 
-function setup(options: {
-  goal?: FinancialGoal;
-  allocations?: GoalAssetAllocation[];
-  assets?: Array<{ id: string; type: string; currentValue: number }>;
-} = {}) {
+function setup(
+  options: {
+    goal?: FinancialGoal;
+    /** Every goal in the household, when a case needs more than one. */
+    goals?: FinancialGoal[];
+    allocations?: GoalAssetAllocation[];
+    assets?: Array<{ id: string; type: string; currentValue: number }>;
+  } = {},
+) {
   const allocations = options.allocations ?? [];
   const insertAllocation = jest.fn(async () => undefined);
   const updateAllocation = jest.fn(async () => undefined);
@@ -65,6 +71,10 @@ function setup(options: {
     createId: () => 'alloc-new',
     findFinancialGoalById: jest.fn(async () => options.goal ?? goal()),
     findAllocationsByHousehold: jest.fn(async () => allocations),
+    // The share check needs each goal's priority, which lives on the goal.
+    findFinancialGoalsByHousehold: jest.fn(
+      async () => options.goals ?? (options.goal ? [options.goal] : [goal()]),
+    ),
     findAllocationsByGoal: jest.fn(async () => allocations),
     findAllocationById: jest.fn(
       async (_hh: string, id: string) =>
@@ -159,10 +169,7 @@ describe('GoalsService — creating a goal', () => {
   // "10tr a month" is really "6tr out of the salary account and 4tr in cash".
   it('stores the goal pace as the sum of its wallets', async () => {
     const { service, insertFinancialGoal } = setup({
-      assets: [
-        WALLET,
-        { id: 'cash-box', type: 'cash', currentValue: 50 * M },
-      ],
+      assets: [WALLET, { id: 'cash-box', type: 'cash', currentValue: 50 * M }],
     });
     const card = await service.createFinancialGoal('hh-1', {
       ...withAssets,
@@ -193,7 +200,9 @@ describe('GoalsService — creating a goal', () => {
     const { service } = setup();
     const card = await service.createFinancialGoal('hh-1', {
       ...withAssets,
-      allocations: [{ assetId: 'vcb', kind: 'fixed', allocatedAmount: 100 * M }],
+      allocations: [
+        { assetId: 'vcb', kind: 'fixed', allocatedAmount: 100 * M },
+      ],
     });
     expect(card.plannedMonthlyContribution).toBeNull();
   });
@@ -227,7 +236,9 @@ describe('GoalsService — creating a goal', () => {
     const { service } = setup({ assets: [WALLET] });
     const card = await service.createFinancialGoal('hh-1', {
       ...withAssets,
-      allocations: [{ assetId: 'vcb', kind: 'fixed', allocatedAmount: 100 * M }],
+      allocations: [
+        { assetId: 'vcb', kind: 'fixed', allocatedAmount: 100 * M },
+      ],
     });
     expect(card.currentAmount).toBe(100 * M);
   });
@@ -271,6 +282,161 @@ describe('GoalsService — creating a goal', () => {
         ],
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+/**
+ * A wallet's monthly room, divided between goals tied at one priority.
+ *
+ * Sibling to the over-allocation rule: that one stops a household promising more
+ * MONEY than a wallet holds, this one stops them promising more of its monthly
+ * ROOM than exists.
+ */
+describe('GoalsService — wallet shares', () => {
+  const base = {
+    name: 'Mua xe',
+    targetAmount: 500 * M,
+    priority: 'medium' as const,
+  };
+
+  it('refuses shares of one wallet that together pass 100%', async () => {
+    // An existing `medium` goal already takes 70% of vcb.
+    const { service } = setup({
+      goal: goal({ id: 'goal-other', priority: 'medium' }),
+      allocations: [
+        allocation({
+          id: 'alloc-other',
+          financialGoalId: 'goal-other',
+          assetId: 'vcb',
+          role: 'contribution',
+          allocatedAmount: 10 * M,
+          monthlyContribution: 5 * M,
+          sharePercent: 70,
+        }),
+      ],
+    });
+    await expect(
+      service.createFinancialGoal('hh-1', {
+        ...base,
+        allocations: [
+          {
+            assetId: 'vcb',
+            kind: 'fixed',
+            role: 'contribution',
+            allocatedAmount: 10 * M,
+            monthlyContribution: 5 * M,
+            sharePercent: 40,
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('accepts a share that fits in what the priority group has left', async () => {
+    const { service, insertAllocation } = setup({
+      goal: goal({ id: 'goal-other', priority: 'medium' }),
+      allocations: [
+        allocation({
+          id: 'alloc-other',
+          financialGoalId: 'goal-other',
+          assetId: 'vcb',
+          role: 'contribution',
+          allocatedAmount: 10 * M,
+          monthlyContribution: 5 * M,
+          sharePercent: 70,
+        }),
+      ],
+    });
+    await service.createFinancialGoal('hh-1', {
+      ...base,
+      allocations: [
+        {
+          assetId: 'vcb',
+          kind: 'fixed',
+          role: 'contribution',
+          allocatedAmount: 10 * M,
+          monthlyContribution: 5 * M,
+          sharePercent: 30,
+        },
+      ],
+    });
+    expect(insertAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ sharePercent: 30 }),
+    );
+  });
+
+  // A goal at a DIFFERENT priority never divides anything with this one — it is
+  // served first, or last. Adding their shares would refuse a pair that never
+  // competed for the same money.
+  it('ignores shares held by goals at another priority', async () => {
+    const { service, insertAllocation } = setup({
+      goal: goal({ id: 'goal-other', priority: 'high' }),
+      allocations: [
+        allocation({
+          id: 'alloc-other',
+          financialGoalId: 'goal-other',
+          assetId: 'vcb',
+          role: 'contribution',
+          allocatedAmount: 10 * M,
+          monthlyContribution: 5 * M,
+          sharePercent: 90,
+        }),
+      ],
+    });
+    await service.createFinancialGoal('hh-1', {
+      ...base,
+      allocations: [
+        {
+          assetId: 'vcb',
+          kind: 'fixed',
+          role: 'contribution',
+          allocatedAmount: 10 * M,
+          monthlyContribution: 5 * M,
+          sharePercent: 90,
+        },
+      ],
+    });
+    expect(insertAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ sharePercent: 90 }),
+    );
+  });
+
+  // Gold is not fed monthly, so there is no room on it to divide.
+  it('rejects a share declared against a holding', async () => {
+    const { service } = setup();
+    await expect(
+      service.createFinancialGoal('hh-1', {
+        ...base,
+        allocations: [
+          { assetId: 'vcb', kind: 'fixed', allocatedAmount: 10 * M },
+          {
+            assetId: 'stocks',
+            kind: 'fixed',
+            allocatedAmount: 10 * M,
+            sharePercent: 50,
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects a share outside 1–100', async () => {
+    const { service } = setup();
+    await expect(
+      service.createFinancialGoal('hh-1', {
+        ...base,
+        allocations: [
+          {
+            assetId: 'vcb',
+            kind: 'fixed',
+            role: 'contribution',
+            allocatedAmount: 10 * M,
+            monthlyContribution: 5 * M,
+            sharePercent: 140,
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -481,7 +647,7 @@ describe('GoalsService — the goal pace mirror', () => {
 
   // Removing the last wallet would leave exactly the goal that create refuses
   // to make: one with nothing to be saved into.
-  it('refuses to remove the goal\'s only wallet', async () => {
+  it("refuses to remove the goal's only wallet", async () => {
     const { service } = setup({
       allocations: [
         allocation({
@@ -515,10 +681,7 @@ describe('GoalsService — the goal pace mirror', () => {
           allocatedAmount: 10 * M,
         }),
       ],
-      assets: [
-        WALLET,
-        { id: 'cash-box', type: 'cash', currentValue: 50 * M },
-      ],
+      assets: [WALLET, { id: 'cash-box', type: 'cash', currentValue: 50 * M }],
     });
     const result = await service.deleteAllocation(
       'hh-1',
@@ -550,5 +713,145 @@ describe('GoalsService — reading a goal', () => {
     });
     const card = await service.getFinancialGoal('hh-1', 'goal-car');
     expect(card.currentAmount).toBe(30 * M);
+  });
+});
+
+/**
+ * The asset's own view of the goals it backs.
+ *
+ * The mirror of a goal's allocation panel: opening an account used to show a
+ * balance with no hint that most of it was already promised.
+ */
+describe('GoalsService — what an asset is backing', () => {
+  it('lists every goal on the asset and what is still free', async () => {
+    const { service } = setup({
+      goal: goal({ id: 'goal-car', priority: 'high' }),
+      allocations: [
+        allocation({
+          id: 'alloc-1',
+          financialGoalId: 'goal-car',
+          assetId: 'vcb',
+          role: 'contribution',
+          allocatedAmount: 60 * M,
+          monthlyContribution: 5 * M,
+        }),
+      ],
+      assets: [WALLET],
+    });
+
+    const usage = await service.assetGoalUsage('hh-1', 'vcb');
+
+    expect(usage.assetValue).toBe(200 * M);
+    expect(usage.claimedAmount).toBe(60 * M);
+    expect(usage.freeAmount).toBe(140 * M);
+    expect(usage.items).toHaveLength(1);
+    expect(usage.items[0]).toMatchObject({
+      goalName: 'Mua xe',
+      priority: 'high',
+      currentValue: 60 * M,
+    });
+  });
+
+  /**
+   * The reported contradiction: a wallet whose whole balance is spoken for still
+   * read "32tr chưa dành cho mục tiêu nào", because `freeAmount` only subtracts
+   * money SET ASIDE and ignores what the monthly paces will draw from the rest.
+   *
+   * `freeAmount` is right for the question it answers (how much may a NEW claim
+   * take — a pace locks nothing away from that). It is the wrong figure for
+   * "how much has no job yet", which is what the asset page and the spend
+   * warning ask, so `unassignedAmount` answers that one instead.
+   */
+  it('counts the monthly paces as committed, not as unassigned', async () => {
+    const car = goal({ id: 'goal-car', name: 'car', priority: 'high' });
+    const house = goal({ id: 'goal-house', name: 'nha', priority: 'high' });
+    const { service } = setup({
+      goals: [car, house],
+      goal: car,
+      allocations: [
+        allocation({
+          id: 'alloc-car',
+          financialGoalId: 'goal-car',
+          assetId: 'vcb',
+          role: 'contribution',
+          allocatedAmount: 20 * M,
+          monthlyContribution: 20 * M,
+        }),
+        allocation({
+          id: 'alloc-house',
+          financialGoalId: 'goal-house',
+          assetId: 'vcb',
+          role: 'contribution',
+          allocatedAmount: 0,
+          monthlyContribution: 20 * M,
+        }),
+      ],
+      assets: [{ id: 'vcb', type: 'bank_account', currentValue: 52 * M }],
+    });
+
+    const usage = await service.assetGoalUsage('hh-1', 'vcb');
+
+    // Set aside is 20tr, so a new claim could still take 32tr…
+    expect(usage.freeAmount).toBe(32 * M);
+    // …but both paces are already drawing on that 32tr, so nothing is
+    // unassigned, and the whole wallet has a job.
+    expect(usage.committedAmount).toBe(52 * M);
+    expect(usage.unassignedAmount).toBe(0);
+  });
+
+  // Gold behind a goal is spoken for just as much as a wallet is — the asset
+  // page is where someone asks "can I use this?", and a holding must answer.
+  it('includes holdings, not just contribution shares', async () => {
+    const { service } = setup({
+      goal: goal({ id: 'goal-car' }),
+      allocations: [
+        allocation({
+          id: 'alloc-1',
+          financialGoalId: 'goal-car',
+          assetId: 'stocks',
+          role: 'holding',
+          allocatedAmount: 40 * M,
+        }),
+      ],
+    });
+
+    const usage = await service.assetGoalUsage('hh-1', 'stocks');
+
+    expect(usage.items).toHaveLength(1);
+    expect(usage.freeAmount).toBe(60 * M);
+  });
+
+  // An asset nothing claims is entirely free — not an error, and not empty of
+  // information: "all of it is yours to use" is the answer.
+  it('reports the whole value free when no goal claims it', async () => {
+    const { service } = setup({ allocations: [] });
+
+    const usage = await service.assetGoalUsage('hh-1', 'vcb');
+
+    expect(usage.items).toHaveLength(0);
+    expect(usage.freeAmount).toBe(200 * M);
+  });
+
+  // A percent claim tracks the asset, so what is free tracks it too.
+  it('resolves a percent claim against the live value', async () => {
+    const { service } = setup({
+      goal: goal({ id: 'goal-car' }),
+      allocations: [
+        allocation({
+          id: 'alloc-1',
+          financialGoalId: 'goal-car',
+          assetId: 'stocks',
+          kind: 'percent',
+          role: 'holding',
+          allocatedAmount: null,
+          percent: 25,
+        }),
+      ],
+    });
+
+    const usage = await service.assetGoalUsage('hh-1', 'stocks');
+
+    expect(usage.items[0]).toMatchObject({ currentValue: 25 * M });
+    expect(usage.freeAmount).toBe(75 * M);
   });
 });

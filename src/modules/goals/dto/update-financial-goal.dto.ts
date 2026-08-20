@@ -7,5 +7,6 @@ import type { CreateFinancialGoalDto } from './create-financial-goal.dto';
  * replace the whole set would either skip that check or silently drop claims
  * the caller did not mean to touch.
  */
-export interface UpdateFinancialGoalDto
-  extends Partial<Omit<CreateFinancialGoalDto, 'allocations'>> {}
+export interface UpdateFinancialGoalDto extends Partial<
+  Omit<CreateFinancialGoalDto, 'allocations'>
+> {}

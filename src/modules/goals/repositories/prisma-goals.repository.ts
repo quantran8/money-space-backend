@@ -82,7 +82,7 @@ export class PrismaGoalsRepository
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO financial_goals
         (id, household_id, name, target_amount,
-         planned_monthly_contribution,
+         planned_monthly_contribution, baseline_contribution_amount,
          target_date, priority, note, created_by, updated_at)
       SELECT
         ${goal.id}::uuid,
@@ -90,6 +90,7 @@ export class PrismaGoalsRepository
         ${goal.name},
         ${goal.targetAmount}::numeric,
         ${goal.plannedMonthlyContribution}::numeric,
+        ${goal.baselineContributionAmount}::numeric,
         ${targetDate}::date,
         ${goal.priority}::"GoalPriority",
         ${goal.note},
@@ -231,8 +232,8 @@ export class PrismaGoalsRepository
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO goal_asset_allocations
         (id, household_id, financial_goal_id, asset_id, kind, role,
-         monthly_contribution, allocated_amount, percent, note, created_by,
-         updated_at)
+         monthly_contribution, share_percent, allocated_amount, percent, note,
+         created_by, updated_at)
       SELECT
         ${allocation.id}::uuid,
         h.id,
@@ -241,6 +242,7 @@ export class PrismaGoalsRepository
         ${allocation.kind}::"GoalAllocationKind",
         ${allocation.role}::"GoalAllocationRole",
         ${allocation.monthlyContribution}::numeric,
+        ${allocation.sharePercent}::numeric,
         ${allocation.allocatedAmount}::numeric,
         ${allocation.percent}::numeric,
         ${allocation.note},
@@ -272,6 +274,7 @@ export class PrismaGoalsRepository
         kind: allocation.kind,
         role: allocation.role,
         monthlyContribution: allocation.monthlyContribution,
+        sharePercent: allocation.sharePercent,
         // Both are written every time, so switching kind clears the column the
         // new kind does not use — the CHECK constraint requires exactly one.
         allocatedAmount: allocation.allocatedAmount,
@@ -300,5 +303,4 @@ export class PrismaGoalsRepository
       data: { deletedAt: new Date() },
     });
   }
-
 }

@@ -13,6 +13,12 @@ import { runForecast } from './domain/forecast';
 import { CacheService } from '../../common/cache/cache.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { computeFlexibleMoney } from './domain/flexible-money';
+import { walletValuesAfterOutflows } from './domain/wallet-values-after-outflows';
+import {
+  findNewlyAtRisk,
+  type AtRiskOccurrence,
+} from './domain/at-risk-occurrences';
+import { spreadAcrossWallets } from './domain/spread-across-wallets';
 import { deriveFinancialState } from './domain/financial-state';
 import {
   amountBucket,
@@ -58,6 +64,29 @@ export interface WhatIfResult {
   obligationsCovered: boolean;
   before: WhatIfSideResult;
   after: WhatIfSideResult;
+  /**
+   * What every goal gives up, in money AND in time. Measured across all
+   * flexible wallets — what-if names no single wallet.
+   */
+  goalImpact: Awaited<
+    ReturnType<GoalsService['spendImpactAcrossWallets']>
+  > & {
+    /**
+     * The part of the spend no wallet could cover. 0 when it fits.
+     *
+     * Distinct from `obligationsCovered`: this is "the money is not there at
+     * all", not "a later bill goes unpaid because of it".
+     */
+    uncovered: number;
+  };
+  /**
+   * Upcoming obligations this spend would leave uncovered, named.
+   *
+   * Only the ones it actually breaks: an item already going unpaid before the
+   * spend is not this purchase's doing, and blaming it would misattribute a
+   * problem the household already had.
+   */
+  newlyAtRisk: AtRiskOccurrence[];
   delta: {
     flexibleMoneyToday: number;
     lowestProjectedBalance: number;
@@ -164,8 +193,43 @@ export class ForecastService {
     horizonDays: number,
     asOfDate?: IsoDate,
   ): Promise<FlexibleMoneyResult> {
+    const forecast = await this.forecast(householdId, horizonDays, asOfDate);
     return computeFlexibleMoney(
-      await this.forecast(householdId, horizonDays, asOfDate),
+      forecast,
+      await this.goalCommitments(householdId, forecast),
+    );
+  }
+
+  /**
+   * What the household's goals claim of the SAME liquid money the forecast
+   * starts from.
+   *
+   * The value map is built from the forecast's own `usable_now` sources, so the
+   * two figures cannot disagree about what is liquid: an asset the forecast did
+   * not count cannot be reported as liquid money already committed. Gold behind
+   * a goal is therefore absent here, which is right — it was never part of the
+   * liquid total this is a share of.
+   *
+   * Measured AFTER the horizon's outflows, not against today's balances. An
+   * outflow outranks the goals sharing its wallet, so goal money shrinks to make
+   * room for it. Using today's balances here while `lowestProjectedBalance` had
+   * already subtracted the same outflows charged each one twice, and the hero
+   * reported a negative figure for a household that had merely spent from a
+   * wallet its goals were saving into (see `walletValuesAfterOutflows`).
+   */
+  private async goalCommitments(
+    householdId: string,
+    forecast: ForecastResult,
+  ): Promise<number> {
+    return this.goalsService.resolveGoalCommitments(
+      householdId,
+      walletValuesAfterOutflows(forecast),
+      // Percent claims stay a percentage of the UNSPENT wallet: an outflow must
+      // take unassigned money first, not shave every goal proportionally while
+      // free money is still sitting there. See `allocationValue`.
+      new Map(
+        forecast.liquidSources.map((source) => [source.assetId, source.value]),
+      ),
     );
   }
 
@@ -175,7 +239,13 @@ export class ForecastService {
     asOfDate?: IsoDate,
   ) {
     const forecast = await this.forecast(householdId, horizonDays, asOfDate);
-    return deriveFinancialState(forecast, computeFlexibleMoney(forecast));
+    return deriveFinancialState(
+      forecast,
+      computeFlexibleMoney(
+        forecast,
+        await this.goalCommitments(householdId, forecast),
+      ),
+    );
   }
 
   /**
@@ -198,7 +268,10 @@ export class ForecastService {
     financialState: ReturnType<typeof deriveFinancialState>;
   }> {
     const forecast = await this.forecast(householdId, horizonDays, asOfDate);
-    const flexibleMoney = computeFlexibleMoney(forecast);
+    const flexibleMoney = computeFlexibleMoney(
+      forecast,
+      await this.goalCommitments(householdId, forecast),
+    );
     return {
       forecast,
       flexibleMoney,
@@ -270,7 +343,6 @@ export class ForecastService {
       : null;
 
     const beforeForecast = runForecast(input);
-    const beforeFlexible = computeFlexibleMoney(beforeForecast);
     const beforeGoal = goalInput ? projectGoal(goalInput) : null;
 
     const synthetic = buildSyntheticEvent({
@@ -282,7 +354,31 @@ export class ForecastService {
       ...input,
       options: { ...input.options, syntheticEvents: [synthetic] },
     });
-    const afterFlexible = computeFlexibleMoney(afterForecast);
+
+    /**
+     * Both sides carry goal money, and each side measures it against ITS OWN
+     * wallet values.
+     *
+     * These two calls used to pass no `goalCommitments` at all, so what-if
+     * reported flexible money that ignored every goal — a bigger figure than
+     * Home showed for the same household, from the screen whose whole job is to
+     * be trusted about consequences.
+     *
+     * Resolving the after-side against the after-forecast is what makes the
+     * spend's cost to the goals appear: the wallet it settles from is already
+     * lowered there, so the goals on it claim less (see
+     * `walletValuesAfterOutflows`).
+     */
+    const [beforeFlexible, afterFlexible] = [
+      computeFlexibleMoney(
+        beforeForecast,
+        await this.goalCommitments(householdId, beforeForecast),
+      ),
+      computeFlexibleMoney(
+        afterForecast,
+        await this.goalCommitments(householdId, afterForecast),
+      ),
+    ];
 
     const afterGoalResult = goalInput
       ? projectGoalAfterSpend(goalInput, amount, {
@@ -322,6 +418,41 @@ export class ForecastService {
       afterGoalResult?.projection ?? null,
     );
 
+    /**
+     * What the spend costs EVERY goal, split into this month's contribution and
+     * money already set aside, plus how much later each goal lands.
+     *
+     * Measured across every wallet the forecast counts as flexible, because
+     * what-if asks a household-level question — "what if we spent this" — and
+     * has no wallet to name. The two maps are the same before/after values the
+     * balances came from, so the goal cost and the cash-flow picture describe
+     * one spend rather than two.
+     *
+     * The same resolver the cashflow form uses, so a what-if and the event it
+     * becomes cannot report different costs for the same spend.
+     */
+    const walletsBefore = walletValuesAfterOutflows(beforeForecast);
+    /**
+     * Where a nameless spend comes from: one wallet at a time, least-promised
+     * money first.
+     *
+     * The what-if event carries no `settlementAssetId` — the household is asking
+     * about a purchase, not filing a payment — so the simulation has to choose,
+     * and draining a wallet fully before moving to the next is what actually
+     * happens when people pay for things. Least-promised first keeps the answer
+     * from overstating the cost to the goals (see `spreadAcrossWallets`).
+     */
+    const drain = spreadAcrossWallets(
+      walletsBefore,
+      await this.goalsService.goalClaimsByWallet(householdId, walletsBefore),
+      amount,
+    );
+    const goalImpact = await this.goalsService.spendImpactAcrossWallets(
+      householdId,
+      walletsBefore,
+      drain.values,
+    );
+
     return {
       householdId,
       asOfDate,
@@ -330,6 +461,16 @@ export class ForecastService {
       obligationsCovered: after.obligationsCovered,
       before,
       after,
+      goalImpact: { ...goalImpact, uncovered: drain.uncovered },
+      /**
+       * WHICH bills stop being payable — not just that something does.
+       *
+       * `obligationsCovered: false` is enough to colour a badge and useless for
+       * deciding anything: what-if exists to answer "what happens if I spend
+       * this", and "one of your bills stops being payable" is only an answer
+       * once it names the bill and the date.
+       */
+      newlyAtRisk: findNewlyAtRisk(beforeForecast, afterForecast),
       delta: {
         flexibleMoneyToday:
           after.flexibleMoneyToday - before.flexibleMoneyToday,

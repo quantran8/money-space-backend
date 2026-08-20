@@ -67,7 +67,9 @@ describe('CashflowEventsService — completion (§18)', () => {
   it('closes a one-off and leaves its date alone', async () => {
     const { service, updateCashflowEvent } = setup({ recurrence: 'once' });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', {
+      assetId: 'asset-vcb',
+    });
 
     expect(result.event.status).toBe('completed');
     expect(result.event.expectedDate).toBe('2026-08-15');
@@ -79,7 +81,9 @@ describe('CashflowEventsService — completion (§18)', () => {
   it('ADVANCES a recurring event and keeps it expected', async () => {
     const { service } = setup({ recurrence: 'monthly' });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', {
+      assetId: 'asset-vcb',
+    });
 
     expect(result.event.expectedDate).toBe('2026-09-15');
     expect(result.event.status).toBe('expected');
@@ -92,7 +96,9 @@ describe('CashflowEventsService — completion (§18)', () => {
       expectedDate: '2026-01-31',
     });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', {
+      assetId: 'asset-vcb',
+    });
 
     expect(result.event.expectedDate).toBe('2026-02-28');
   });
@@ -104,7 +110,9 @@ describe('CashflowEventsService — completion (§18)', () => {
       recurrenceEndDate: '2026-09-01',
     });
 
-    const result = await service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' });
+    const result = await service.completeCashflowEvent('hh-1', 'cf-1', {
+      assetId: 'asset-vcb',
+    });
 
     expect(result.event.status).toBe('completed');
     // The date stays on the last real occurrence rather than jumping past the end.
@@ -168,9 +176,9 @@ describe('CashflowEventsService — completion (§18)', () => {
   it('refuses to complete when no wallet is given or stored', async () => {
     const { service, createMoneyEvent } = setup({ settlementAssetId: null });
 
-    await expect(
-      service.completeCashflowEvent('hh-1', 'cf-1'),
-    ).rejects.toThrow(BadRequestException);
+    await expect(service.completeCashflowEvent('hh-1', 'cf-1')).rejects.toThrow(
+      BadRequestException,
+    );
     expect(createMoneyEvent).not.toHaveBeenCalled();
   });
 
@@ -237,9 +245,9 @@ describe('CashflowEventsService — completion (§18)', () => {
   it('refuses to complete an already-completed event', async () => {
     const { service, createMoneyEvent } = setup({ status: 'completed' });
 
-    await expect(service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' })).rejects.toThrow(
-      ConflictException,
-    );
+    await expect(
+      service.completeCashflowEvent('hh-1', 'cf-1', { assetId: 'asset-vcb' }),
+    ).rejects.toThrow(ConflictException);
     expect(createMoneyEvent).not.toHaveBeenCalled();
   });
 
@@ -317,9 +325,35 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
     await service.createCashflowEvent('hh-1', {
       ...valid,
       direction: 'outgoing',
+      settlementAssetId: 'wallet-1',
     });
 
     expect(inserted[0].requirement).toBe('required');
+  });
+
+  /**
+   * An outflow reduces the goal money backed by the wallet it leaves from, so
+   * one that names no wallet would either drain no goal (understating what it
+   * costs) or force a guess at which one. Asking is what makes the goal impact
+   * shown at planning time truthful.
+   */
+  it('rejects an outgoing event that names no settlement wallet', async () => {
+    const { service } = setup();
+
+    await expect(
+      service.createCashflowEvent('hh-1', {
+        ...valid,
+        direction: 'outgoing',
+      }),
+    ).rejects.toThrow(/settlementAssetId is required/);
+  });
+
+  it('still accepts an incoming event with no settlement wallet', async () => {
+    const { service, inserted } = setup();
+
+    await service.createCashflowEvent('hh-1', { ...valid });
+
+    expect(inserted[0].settlementAssetId ?? null).toBeNull();
   });
 
   it('defaults responsibility to the member creating the record', async () => {

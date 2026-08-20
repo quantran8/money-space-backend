@@ -945,6 +945,21 @@ model FinancialGoal {
   // monthly verdict. NULL or <= 0 also means "no projected completion date" —
   // never divide by it without checking.
   plannedMonthlyContribution Decimal?              @map("planned_monthly_contribution") @db.Decimal(14, 2)
+  /// What the goal OPENED with — the contribution shares' fixed amounts at the
+  /// moment it was created, frozen once and never rewritten.
+  ///
+  /// The create form asks for the opening balance and the monthly pace as two
+  /// separate questions. Without the answer to the first kept anywhere, a goal's
+  /// first month had no earlier point to be measured against and reported "—",
+  /// which reads as "we cannot say" when the household had in fact said.
+  ///
+  /// `buildGoalMonthlyProgress` uses it as the left-hand side of that first
+  /// subtraction, so the month shows 0 until money actually moves in, rather
+  /// than crediting the goal with a balance declared as already there.
+  ///
+  /// NULL for goals created before this existed whose first month has already
+  /// closed — those have a real previous point and need no substitute.
+  baselineContributionAmount Decimal?              @map("baseline_contribution_amount") @db.Decimal(14, 2)
   priority                   GoalPriority          @default(medium)
   status                     GoalStatus            @default(active)
   // No source wallet on the goal. An `earmark` contribution names no wallet at
@@ -1005,6 +1020,22 @@ model GoalAssetAllocation {
   /// out of the salary account and 4tr in cash", and saying it per wallet is what
   /// lets the plan be read against the wallets it is supposed to come from.
   monthlyContribution Decimal?           @map("monthly_contribution") @db.Decimal(14, 2)
+  /// This goal's share of the wallet's remaining monthly room, used ONLY when
+  /// the goals tied at the same priority cannot all be paid in full.
+  ///
+  /// `financial_goals.priority` orders most competition for a wallet — `high` is
+  /// fed before `medium`. It cannot break a TIE, and settling one by creation
+  /// date would have the product ranking the household's plans for them. So the
+  /// household is asked, and answers here.
+  ///
+  /// Never the contribution itself: `monthlyContribution` stays the declared
+  /// amount and remains the cap. This only splits a SHORTFALL, and is not
+  /// consulted at all while the wallet can cover every goal that draws on it.
+  ///
+  /// NULL means "never asked", NOT 100 — a tie among rows without a share falls
+  /// back to splitting in proportion to the declared paces, which the UI flags
+  /// as still the household's to decide.
+  sharePercent        Decimal?           @map("share_percent") @db.Decimal(5, 2)
   /// Set when `kind = fixed`. A declared VND amount, unmoved by repricing.
   allocatedAmount     Decimal?           @map("allocated_amount") @db.Decimal(14, 2)
   /// Set when `kind = percent`. 0 < percent <= 100, tracks the asset's value.

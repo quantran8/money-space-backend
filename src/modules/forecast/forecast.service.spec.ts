@@ -43,6 +43,37 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
       async (_householdId: string, target: { currentAmount: number }) =>
         target.currentAmount,
     ),
+    // What the goals claim of the liquid total. Its own arithmetic lives in
+    // `goal-progress.spec.ts`; these fixtures have no goals, so 0 is the honest
+    // figure and keeps the flexible-money assertions about cash flow.
+    resolveGoalCommitments: jest.fn(async () => 0),
+    // The per-goal cost of a hypothetical spend. Its arithmetic is exercised by
+    // `spend-impact.spec.ts`; here it only has to exist and be shaped right.
+    spendImpact: jest.fn(async (_hh: string, assetId: string, amount: number) => ({
+      householdId: 'hh-1',
+      assetId,
+      assetValue: 0,
+      amount,
+      assetValueAfter: 0,
+      totalReduction: 0,
+      totalPaceReduction: 0,
+      totalSetAsideReduction: 0,
+      goals: [],
+      exceedsWallet: false,
+    })),
+    // What-if's household-wide form. Its arithmetic lives in
+    // `goal-progress.spec.ts` / `spend-impact.spec.ts`; these fixtures have no
+    // goals, so zeroes are the honest answer.
+    spendImpactAcrossWallets: jest.fn(async () => ({
+      totalReduction: 0,
+      totalPaceReduction: 0,
+      totalSetAsideReduction: 0,
+      goals: [],
+    })),
+    goalClaimsByWallet: jest.fn(
+      async () =>
+        new Map<string, { amount: number; topPriority: null }>(),
+    ),
   } as never;
   // A real CacheService with no Redis configured: `wrap` falls straight through
   // to the loader, so these tests exercise the actual cached code path rather
@@ -62,6 +93,101 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
     cache,
   };
 }
+
+describe('ForecastService — goal commitments measured after outflows', () => {
+  /**
+   * The regression this guards: goal money was measured against today's
+   * balances while `lowestProjectedBalance` had already subtracted the same
+   * outflows, so every outflow was charged twice and the hero read negative.
+   */
+  it('passes wallet values with the outflow already taken out', async () => {
+    const { service } = setup({
+      assets: [
+        {
+          assetId: 'tcb',
+          name: 'TCB',
+          value: 22 * M,
+          liquidity: 'usable_now',
+          financialNature: 'household',
+          valueUpdatedAt: TODAY,
+        },
+      ],
+      cashflowEvents: [
+        {
+          id: 'bill',
+          name: 'Bill',
+          direction: 'outgoing',
+          amount: 5 * M,
+          expectedDate: TODAY,
+          recurrence: 'once',
+          recurrenceEndDate: null,
+          requirement: 'required',
+          certainty: 'confirmed',
+          status: 'expected',
+          settlementAssetId: 'tcb',
+        },
+      ],
+    });
+    const resolve = (
+      service as unknown as {
+        goalsService: { resolveGoalCommitments: jest.Mock };
+      }
+    ).goalsService.resolveGoalCommitments;
+
+    await service.flexibleMoney('hh-1', 30);
+
+    // Lowered values, plus the ORIGINAL as the percent basis: a percent claim
+    // must not shrink while unassigned money is still in the wallet.
+    expect(resolve).toHaveBeenCalledWith(
+      'hh-1',
+      new Map([['tcb', 17 * M]]),
+      new Map([['tcb', 22 * M]]),
+    );
+  });
+
+  it('leaves wallets whole when the outflow settles elsewhere', async () => {
+    const { service } = setup({
+      assets: [
+        {
+          assetId: 'tcb',
+          name: 'TCB',
+          value: 22 * M,
+          liquidity: 'usable_now',
+          financialNature: 'household',
+          valueUpdatedAt: TODAY,
+        },
+      ],
+      cashflowEvents: [
+        {
+          id: 'bill',
+          name: 'Bill',
+          direction: 'outgoing',
+          amount: 5 * M,
+          expectedDate: TODAY,
+          recurrence: 'once',
+          recurrenceEndDate: null,
+          requirement: 'required',
+          certainty: 'confirmed',
+          status: 'expected',
+          settlementAssetId: 'other-wallet',
+        },
+      ],
+    });
+    const resolve = (
+      service as unknown as {
+        goalsService: { resolveGoalCommitments: jest.Mock };
+      }
+    ).goalsService.resolveGoalCommitments;
+
+    await service.flexibleMoney('hh-1', 30);
+
+    expect(resolve).toHaveBeenCalledWith(
+      'hh-1',
+      new Map([['tcb', 22 * M]]),
+      new Map([['tcb', 22 * M]]),
+    );
+  });
+});
 
 describe('ForecastService.parseHorizon', () => {
   it('defaults to 30', () => {
@@ -102,6 +228,27 @@ describe('ForecastService.whatIf', () => {
     expect(result.after.lowestProjectedBalance).toBe(70 * M);
     expect(result.delta.lowestProjectedBalance).toBe(-30 * M);
   });
+
+  /**
+   * The regression: both sides called `computeFlexibleMoney` with NO goal
+   * commitments, so what-if reported flexible money that ignored every goal —
+   * a larger figure than Home showed for the same household, from the screen
+   * whose entire job is being trusted about consequences.
+   */
+  it('measures goal money on BOTH sides, like every other reading', async () => {
+    const { service } = setup();
+    const resolve = (
+      service as unknown as {
+        goalsService: { resolveGoalCommitments: jest.Mock };
+      }
+    ).goalsService.resolveGoalCommitments;
+    resolve.mockClear();
+
+    await service.whatIf('hh-1', spend);
+
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+
 
   it('classifies a comfortable spend', async () => {
     const { service } = setup();

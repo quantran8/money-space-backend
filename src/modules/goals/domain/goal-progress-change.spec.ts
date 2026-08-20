@@ -119,9 +119,13 @@ describe('buildGoalProgressChange', () => {
 
   it("says nothing on a goal's first day", () => {
     expect(
-      buildGoalProgressChange(null, null, 240 * M, [], [
-        line('gold', 'Vàng', 240 * M),
-      ]),
+      buildGoalProgressChange(
+        null,
+        null,
+        240 * M,
+        [],
+        [line('gold', 'Vàng', 240 * M)],
+      ),
     ).toBeNull();
   });
 

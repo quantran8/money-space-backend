@@ -35,6 +35,15 @@ export interface GoalAssetAllocation {
    * The goal's declared pace is the sum of these across its shares.
    */
   monthlyContribution: number | null;
+  /**
+   * This goal's share of the wallet's remaining monthly room, used only to split
+   * a SHORTFALL between goals tied at the same priority. Never the contribution
+   * itself — `monthlyContribution` stays the declared amount and the cap.
+   *
+   * `null` means the household was never asked, NOT 100: a tie among shares with
+   * no figure falls back to splitting in proportion to the declared paces.
+   */
+  sharePercent: number | null;
   /** Set when `kind = 'fixed'`. A declared VND amount. */
   allocatedAmount: number | null;
   /** Set when `kind = 'percent'`. 0 < percent <= 100. */
@@ -68,6 +77,19 @@ export interface FinancialGoal {
    * divide by it unguarded.
    */
   plannedMonthlyContribution: number | null;
+  /**
+   * What the goal OPENED with — the contribution shares' fixed amounts at
+   * creation, frozen once and never rewritten afterwards.
+   *
+   * The create form asks the opening balance and the monthly pace as two
+   * separate questions; this is the answer to the first. It is the left-hand
+   * side of the first month's subtraction in `buildGoalMonthlyProgress`, so a
+   * goal created this month reports what has actually moved in since rather
+   * than a blank.
+   *
+   * `null` for goals that predate it — their first month stays blank, as it was.
+   */
+  baselineContributionAmount: number | null;
   priority: GoalPriority;
   note: string;
   /** Renamed from `deadline` (spec §20). */

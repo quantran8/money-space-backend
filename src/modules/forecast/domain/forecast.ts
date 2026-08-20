@@ -122,6 +122,7 @@ export function runForecast(input: ForecastInput): ForecastResult {
         wasClampedFromPast: occurrence.wasClampedFromPast,
         financialGoalId: event.financialGoalId ?? null,
         debtId: event.debtId ?? null,
+        settlementAssetId: event.settlementAssetId ?? null,
       });
     }
   }
@@ -280,6 +281,9 @@ export function runForecast(input: ForecastInput): ForecastResult {
     horizonDays,
     horizonEndDate,
     startingLiquidBalance: round(startingLiquidBalance),
+    // The very rows the balance was summed from, so an attribution of it cannot
+    // disagree with it about what counted as liquid.
+    liquidSources: usableNow,
     days,
     timeline: occurrences,
     totals: {
