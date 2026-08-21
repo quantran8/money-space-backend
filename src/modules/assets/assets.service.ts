@@ -21,6 +21,15 @@ const WALLET_ASSET_TYPES: ReadonlySet<AssetType> = new Set<AssetType>([
   'cash',
   'bank_account',
 ]);
+
+/**
+ * A whole đồng amount, grouped the Vietnamese way, for user-facing messages
+ * ("12.000.000 đ"). Server-side errors are read by a person, so the figure they
+ * name has to look like the one on their screen.
+ */
+function formatVndPlain(amount: number): string {
+  return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(amount))} đ`;
+}
 import { AssetValueHistory } from './entities/asset-value-history.entity';
 import type { MoneyEvent } from '../money-events/entities/money-event.entity';
 import {
@@ -510,14 +519,29 @@ export class AssetsService {
       holderMemberId: payload.holderMemberId || creatorMemberId || null,
     });
 
+    // "We just bought this" names the wallet that paid; "we already own this"
+    // leaves it out. Only the former moves money, and only it has to be
+    // affordable — checked here, before the write transaction opens, so a
+    // rejected purchase leaves nothing behind.
+    const fundingAssetId = payload.fundingAssetId || null;
+    if (fundingAssetId) {
+      await this.assertFundingWalletCovers(
+        householdId,
+        fundingAssetId,
+        await this.resolvePurchaseCost(asset),
+      );
+    }
+
     // The asset row and its initial valuation must be written atomically. When
     // the household already has an active position for the same class+symbol,
     // add to that position and recompute weighted-average purchase price rather
     // than creating a duplicate asset row.
-    // A brand-new asset does not log a money event — it establishes the opening
-    // position. Adding quantity to an existing class+symbol is different: it is
-    // a real additional purchase, so that merge logs a neutral asset_purchase
-    // event (no funding wallet was selected) and links the new valuation to it.
+    //
+    // Whether a money event is logged depends on the ACT, not on which branch
+    // runs: a purchase (funding wallet named) always logs an `asset_purchase`
+    // and debits that wallet, so net worth stays put; declaring something
+    // already owned logs nothing — an opening position moves no money, and its
+    // value is new information rather than new wealth.
     const result = await this.prisma.runInTransaction(async () => {
       if (asset.marketPosition) {
         const incoming = asset.marketPosition;
@@ -546,16 +570,60 @@ export class AssetsService {
             },
           };
           await this.assetsRepository.updateAsset(existing.id, merged);
-          const context = await this.logAdditionalPurchase(merged, incoming);
+          const context = await this.logAdditionalPurchase(
+            merged,
+            incoming,
+            fundingAssetId,
+          );
           const value = await this.upsertCurrentValuation(merged, context);
           return { asset: merged, currentValue: value };
         }
       }
       await this.assetsRepository.insertAsset(asset);
       const currentValue = await this.writeInitialValuation(asset);
+      if (fundingAssetId) {
+        await this.logInitialPurchase(
+          asset,
+          await this.resolvePurchaseCost(asset, currentValue),
+          fundingAssetId,
+        );
+      }
       return { asset, currentValue };
     });
     return this.toAssetRecord(result.asset, result.currentValue);
+  }
+
+  /**
+   * What the household actually paid, for a create that is a purchase.
+   *
+   * For a market position that is `quantity × purchase price` — the cost basis,
+   * NOT today's market value. Buying 1 lượng at 80tr when the live price says
+   * 82tr must take 80tr out of the wallet; charging the market price would
+   * invent a 2tr loss the household never incurred.
+   *
+   * Everything else has no separate cost basis, so the asset's own value is the
+   * price paid. `knownValue` lets a caller that already computed it (inside the
+   * write transaction) skip a second round-trip to the market/FX data.
+   */
+  private async resolvePurchaseCost(
+    asset: Asset,
+    knownValue?: number,
+  ): Promise<number> {
+    const position = asset.marketPosition;
+    if (position?.purchasePrice) {
+      return Math.max(0, position.quantity * position.purchasePrice);
+    }
+    if (knownValue !== undefined) {
+      return Math.max(0, knownValue);
+    }
+    const [marketPrices, fxRates] = await Promise.all([
+      this.marketData.getMarketPrices(),
+      this.assetsRepository.getFxRates(),
+    ]);
+    return Math.max(
+      0,
+      computeCurrentValue(asset, marketPrices, fxRates, todayInTimeZone()),
+    );
   }
 
   async updateAsset(
@@ -748,13 +816,15 @@ export class AssetsService {
 
   /**
    * Log quantity merged into an existing market position as an
-   * `asset_purchase`. It is deliberately neutral because this form does not
-   * select a source wallet; the amount is the added position's cost basis and
-   * `toAssetId` links the event to the resulting asset.
+   * `asset_purchase`, and — when the household named the wallet it paid from —
+   * debit that wallet, so buying more of a position moves money instead of
+   * conjuring it. The amount is the added position's cost basis and `toAssetId`
+   * links the event to the resulting asset.
    */
   private async logAdditionalPurchase(
     asset: Asset,
     incoming: NonNullable<Asset['marketPosition']>,
+    fundingAssetId?: string | null,
   ): Promise<ValuationContext> {
     const today = this.todayIso();
     const eventId = this.assetsRepository.createId('event');
@@ -773,8 +843,80 @@ export class AssetsService {
       amount: purchaseAmount,
       isoDate: today,
       note,
+      fundingAssetId,
     });
-    return { moneyEventId: eventId, valuationDate: today };
+    const context = { moneyEventId: eventId, valuationDate: today };
+    if (fundingAssetId) {
+      await this.debitManualAsset(
+        asset.householdId,
+        fundingAssetId,
+        purchaseAmount,
+        context,
+      );
+    }
+    return context;
+  }
+
+  /**
+   * Log the purchase of a brand-new asset and debit the wallet that paid for
+   * it. Only called when the household said "we just bought this" — declaring
+   * something already owned writes no event and touches no wallet (see
+   * `CreateAssetDto.fundingAssetId`).
+   *
+   * The amount is the asset's freshly computed value, so the wallet loses
+   * exactly what the asset is worth and **net worth does not move** — which is
+   * the whole point of asking where the money came from.
+   */
+  private async logInitialPurchase(
+    asset: Asset,
+    value: number,
+    fundingAssetId: string,
+  ): Promise<void> {
+    const today = this.todayIso();
+    const eventId = this.assetsRepository.createId('event');
+    await this.assetsRepository.insertAssetPurchaseEvent({
+      id: eventId,
+      householdId: asset.householdId,
+      assetId: asset.id,
+      amount: value,
+      isoDate: today,
+      note: `Mua ${asset.name}`,
+      fundingAssetId,
+    });
+    await this.debitManualAsset(asset.householdId, fundingAssetId, value, {
+      moneyEventId: eventId,
+      valuationDate: today,
+    });
+  }
+
+  /**
+   * Guard the "we just bought this" path: the named source must be a real
+   * wallet and must actually hold the money.
+   *
+   * Unlike an expense — which records something that already happened, possibly
+   * against a stale balance — a purchase is being declared as it happens. If the
+   * wallet cannot cover it, either its balance is out of date or the money came
+   * from somewhere else; both need fixing BEFORE the write, not silently
+   * absorbed by the `Math.max(0, …)` floor in `debitManualAsset`. Letting it
+   * through would leave the wallet at 0 while the asset kept its full value —
+   * inflating net worth, exactly the bug this flow exists to remove.
+   *
+   * Spending a wallet down to exactly 0 is fine; only overspending is rejected.
+   * Runs BEFORE the write transaction opens.
+   */
+  private async assertFundingWalletCovers(
+    householdId: string,
+    fundingAssetId: string,
+    amount: number,
+  ): Promise<void> {
+    await this.assertWalletAsset(householdId, fundingAssetId);
+    const wallet = await this.ensureAsset(householdId, fundingAssetId);
+    const balance = wallet.manualValue ?? 0;
+    if (amount > balance) {
+      throw new BadRequestException(
+        `Ví "${wallet.name}" đang có ${formatVndPlain(balance)}, không đủ để mua ${formatVndPlain(amount)}. Kiểm tra lại số dư ví hoặc chọn ví khác.`,
+      );
+    }
   }
 
   /**

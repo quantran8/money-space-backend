@@ -1,7 +1,10 @@
 import type { Asset } from '../../assets/entities/asset.entity';
 import type { AttentionItem } from '../entities/attention-item.entity';
 import type { SnapshotPoint } from '../entities/snapshot-point.entity';
-import type { FinancialGoal } from '../../goals/entities/financial-goal.entity';
+import type {
+  FinancialGoal,
+  GoalAssetAllocation,
+} from '../../goals/entities/financial-goal.entity';
 import type { Household } from '../../households/entities/household.entity';
 import type { FxRate } from '../../market-data/entities/fx-rate.entity';
 import type { MoneyEvent } from '../../money-events/entities/money-event.entity';
@@ -16,6 +19,14 @@ export interface DashboardRepository {
   getAttentionItems(householdId?: string): Promise<AttentionItem[]>;
   findCashflowEventsByHousehold(householdId: string): Promise<CashflowEvent[]>;
   findFinancialGoalsByHousehold(householdId: string): Promise<FinancialGoal[]>;
+  /**
+   * Every live goal→asset allocation in the household. Needed to resolve an
+   * `asset_backed` goal's progress, and to split the household's money into
+   * "already set aside for a goal" vs "unassigned".
+   */
+  findGoalAllocationsByHousehold(
+    householdId: string,
+  ): Promise<GoalAssetAllocation[]>;
   findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]>;
   getSnapshotsByHousehold(householdId: string): Promise<SnapshotPoint[]>;
   /** SUM(debts.outstanding_amount) for active, non-deleted debts. */

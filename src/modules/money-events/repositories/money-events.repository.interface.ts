@@ -70,19 +70,6 @@ export interface MoneyEventsRepository {
     delta: number,
   ): Promise<void>;
   /**
-   * Adjust a goal's stored `currentAmount` by `delta`, floored at 0.
-   *
-   * `financial_goals.current_amount` is a real column and the source of truth
-   * for progress (spec §20) — NOT derived from contribution events. It stays
-   * correct only because every `goal_contribution` maintains it inside the same
-   * transaction: create adds, edit applies the difference, delete reverses.
-   */
-  adjustGoalCurrentAmount(
-    householdId: string,
-    goalId: string,
-    delta: number,
-  ): Promise<void>;
-  /**
    * The repayment terms a debt-linked event needs to decide its side effects:
    * the lender bucket (fixed-schedule lenders lock their events and never
    * rebalance) and the fixed installment amount (the baseline an over/under

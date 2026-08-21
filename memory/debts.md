@@ -28,6 +28,25 @@ Recording, editing, or deleting a debt **repayment** (a debt-linked **outflow** 
 
 A debt links to the asset that received the money (`receivedToAssetId`). Borrowing raises an asset **and** a debt equally → **net worth unchanged**. See [[domain-overview]].
 
+### The repayment wallet is a default, not a binding
+
+**A debt is not tied to one wallet.** The household repays it from whichever
+`cash` / `bank_account` wallet suits them that month, so nothing may force one
+at create time.
+
+`debts.repayment_asset_id` (nullable) records the wallet they *usually* repay
+from. `createRepaymentSchedule` stamps it onto each generated repayment as the
+event's `settlementAssetId`, so confirming a payment is one tap instead of
+re-picking the wallet every month. It is only a pre-fill:
+`completeCashflowEvent` takes `payload.assetId ?? event.settlementAssetId`, so
+any payment can name a different wallet, and a debt that leaves it empty simply
+asks at completion time. Changing it counts as a schedule change
+(`repaymentScheduleChanged`) so the still-open repayments get restamped.
+
+This is why outgoing cashflow events are **not** required to carry a settlement
+wallet at create time — see [[forecast-and-flexible-money]]. Requiring one made
+every debt with a repayment schedule unsaveable.
+
 **Enforced on create.** `createDebt`, inside its transaction, credits the receiving wallet when `receivedToAssetId` is set — but it does **not** credit the wallet directly anymore. It logs an inflow money event linked to that wallet, and `MoneyEventsService.createMoneyEvent` performs the wallet credit itself (see [[money-events]]: an event moves its linked wallets). Only `cash` / `bank_account` wallets hold a free balance, so an event linking any other asset type is a no-op credit. Everything shares the debt-create transaction, so the debt row and the wallet bump land (or roll back) together. `DebtsModule` imports `MoneyEventsModule` (not `AssetsModule` — the wallet move now lives in the events layer). Deleting the debt reverses the credit through the same events path — see [[#Delete]].
 
 ## Side effects of creating a debt (all in the create transaction)

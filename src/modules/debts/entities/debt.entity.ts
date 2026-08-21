@@ -50,6 +50,13 @@ export interface Debt {
   status: DebtStatus;
   ownerMemberId?: string;
   receivedToAssetId?: string;
+  /**
+   * Default wallet the household expects to repay from. Optional and NOT a
+   * binding: a debt can be repaid from any cash/bank wallet. It pre-fills the
+   * generated repayment events so the household does not re-pick it every
+   * month; confirming a payment can still name a different wallet.
+   */
+  repaymentAssetId?: string;
   paymentFrequency?: string;
   fixedPaymentAmount?: number;
   minimumPaymentAmount?: number;

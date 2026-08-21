@@ -92,6 +92,7 @@ export class PrismaDebtsRepository
         (id, household_id, name, lender_type, lender_name,
          original_amount, outstanding_amount, currency, borrowed_at,
          first_payment_date, expected_final_due_date, status, owner_member_id, received_to_asset_id,
+         repayment_asset_id,
          note, payment_frequency, fixed_payment_amount, minimum_payment_amount,
          interest_type, interest_calculation, created_by, updated_at)
       SELECT
@@ -109,6 +110,7 @@ export class PrismaDebtsRepository
         ${debt.status}::"DebtStatus",
         ${debt.ownerMemberId ?? null}::uuid,
         ${debt.receivedToAssetId ?? null}::uuid,
+        ${debt.repaymentAssetId ?? null}::uuid,
         ${debt.note ?? null},
         ${debt.paymentFrequency ?? null},
         ${debt.fixedPaymentAmount ?? null}::numeric,
@@ -149,6 +151,7 @@ export class PrismaDebtsRepository
         status: debt.status,
         ownerMemberId: debt.ownerMemberId,
         receivedToAssetId: debt.receivedToAssetId,
+        repaymentAssetId: debt.repaymentAssetId,
         note: debt.note,
         paymentFrequency: debt.paymentFrequency ?? null,
         fixedPaymentAmount: debt.fixedPaymentAmount ?? null,

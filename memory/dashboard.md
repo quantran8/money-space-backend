@@ -1,6 +1,6 @@
 # Dashboard (overview / snapshot)
 
-Single-glance household financial status — answers *"Nhà mình đang ổn không?"*. Read-only aggregation. Related: [[snapshots-and-networth]], [[assets]], [[debts]], [[goals]], [[money-events]].
+Single-glance household financial status — answers *"Tài chính gia đình có ổn không?"*. Read-only aggregation. Related: [[snapshots-and-networth]], [[assets]], [[debts]], [[goals]], [[money-events]].
 
 ## Overview
 
@@ -8,7 +8,17 @@ Fans out to every other feature's data (snapshot + assets summary + market price
 
 ## Composed cards
 
-- **Snapshot card**: liquid total + split (cash vs bank_account), savings (`not_immediately_usable`), debt, **netWorth = totalAssets − totalDebt**, attention count.
+- **Snapshot card**: liquid total + split (cash vs bank_account), savings (`not_immediately_usable`), debt, **netWorth = totalAssets − totalDebt**, attention count, plus the goal split below.
+- **Goal split**: `earmarkedForGoals` (Σ each goal's resolved progress) and
+  `unassigned` (`totalAssets − earmarkedForGoals`, floored
+  at 0). This is **display only** — `netWorth` is NOT reduced by it, and
+  flexible money keeps its own formula. Setting money aside does not make a
+  household poorer, and subtracting earmarks from the headline figure is the
+  shape that got `protected_reserves` removed (a goal with a monthly
+  contribution is already pulled down by the forecast — subtracting it here too
+  counts it twice). No cap is needed: every goal is a set of shares of assets, each bounded by its
+  asset's live value and checked against over-allocation at write time, so the
+  sum is structurally at most `totalAssets`. See [[goals]].
 - **Asset trend**: sparkline from historical snapshots (`assetTrend` reads `SnapshotAssetValue`, see [[snapshots-and-networth]]).
 - Debts, long-term goal, members, recent events, and attention ("cần chú ý") sections.
 

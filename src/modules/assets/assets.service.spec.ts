@@ -307,4 +307,221 @@ describe('AssetsService', () => {
       );
     });
   });
+
+  /**
+   * Declaring something already owned vs. buying it are two different acts, and
+   * the difference is visible in one number: net worth. Recording a purchase
+   * must leave it PUT — the money moved from a wallet into an asset. Recording
+   * something already held raises it, because the household is no richer, just
+   * newly honest about what it has.
+   */
+  describe('acquisition: already owned vs. just bought', () => {
+    const wallet: Asset = {
+      id: 'asset-vcb',
+      householdId: 'household-1',
+      name: 'VCB',
+      type: 'bank_account',
+      valuationMode: 'manual',
+      liquidity: 'usable_now',
+      currency: 'VND',
+      note: '',
+      status: 'active',
+      manualValue: 200_000_000,
+    };
+
+    function harness(options?: { existingPosition?: Asset }) {
+      const assets = new Map<string, Asset>([[wallet.id, { ...wallet }]]);
+      const insertAsset = jest.fn((asset: Asset): Promise<void> => {
+        assets.set(asset.id, asset);
+        return Promise.resolve();
+      });
+      const updateAsset = jest.fn(
+        (assetId: string, asset: Asset): Promise<void> => {
+          assets.set(assetId, asset);
+          return Promise.resolve();
+        },
+      );
+      const insertAssetPurchaseEvent = jest.fn().mockResolvedValue(undefined);
+      let nextId = 0;
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetById: jest.fn((_householdId: string, assetId: string) =>
+          Promise.resolve(assets.get(assetId)),
+        ),
+        findActiveMarketAssetBySymbol: jest
+          .fn()
+          .mockResolvedValue(options?.existingPosition),
+        createId: jest.fn(() => `generated-${(nextId += 1)}`),
+        insertAsset,
+        updateAsset,
+        insertAssetPurchaseEvent,
+        insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
+        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+        getFxRates: jest.fn().mockResolvedValue([]),
+      } as unknown as AssetsRepository;
+      const prisma = {
+        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+          work(),
+        ),
+      } as unknown as PrismaService;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([]),
+      } as unknown as MarketDataService;
+      const audit = { record: jest.fn() } as never;
+      const service = new AssetsService(repository, prisma, marketData, audit);
+      return {
+        service,
+        insertAssetPurchaseEvent,
+        walletBalance: () => assets.get(wallet.id)?.manualValue ?? 0,
+      };
+    }
+
+    it('leaves the wallet alone and logs nothing when the asset is already owned', async () => {
+      const { service, insertAssetPurchaseEvent, walletBalance } = harness();
+
+      await service.createAsset('household-1', {
+        name: 'Vàng để dành',
+        type: 'gold',
+        valuationMode: 'manual',
+        manualValue: 50_000_000,
+      });
+
+      expect(insertAssetPurchaseEvent).not.toHaveBeenCalled();
+      expect(walletBalance()).toBe(200_000_000);
+    });
+
+    it('debits the funding wallet and logs an outflow when the asset was just bought', async () => {
+      const { service, insertAssetPurchaseEvent, walletBalance } = harness();
+
+      await service.createAsset('household-1', {
+        name: 'Vàng mới mua',
+        type: 'gold',
+        valuationMode: 'manual',
+        manualValue: 50_000_000,
+        fundingAssetId: wallet.id,
+      });
+
+      expect(insertAssetPurchaseEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 50_000_000,
+          fundingAssetId: wallet.id,
+        }),
+      );
+      // 200tr wallet - 50tr gold, and the gold is worth 50tr: net worth unmoved.
+      expect(walletBalance()).toBe(150_000_000);
+    });
+
+    it('charges the cost basis, not the live market value, for a market position', async () => {
+      const existingPosition: Asset = {
+        id: 'asset-vnm',
+        householdId: 'household-1',
+        name: 'VNM',
+        type: 'stock',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'stock',
+          symbol: 'VNM',
+          quantity: 100,
+          unit: 'cp',
+          quoteCurrency: 'VND',
+          purchasePrice: 60_000,
+        },
+      };
+      const { service, insertAssetPurchaseEvent, walletBalance } = harness({
+        existingPosition,
+      });
+
+      await service.createAsset('household-1', {
+        name: 'VNM mua thêm',
+        type: 'stock',
+        valuationMode: 'market_priced',
+        marketPosition: {
+          assetClass: 'stock',
+          symbol: 'VNM',
+          quantity: 100,
+          unit: 'cp',
+          quoteCurrency: 'VND',
+          purchasePrice: 70_000,
+        },
+        fundingAssetId: wallet.id,
+      });
+
+      // 100 × 70.000 = 7tr paid, regardless of what VNM trades at today.
+      expect(insertAssetPurchaseEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 7_000_000,
+          fundingAssetId: wallet.id,
+        }),
+      );
+      expect(walletBalance()).toBe(193_000_000);
+    });
+
+    it('rejects a purchase the wallet cannot cover', async () => {
+      const { service, insertAssetPurchaseEvent, walletBalance } = harness();
+
+      await expect(
+        service.createAsset('household-1', {
+          name: 'Vàng quá tay',
+          type: 'gold',
+          valuationMode: 'manual',
+          manualValue: 500_000_000,
+          fundingAssetId: wallet.id,
+        }),
+      ).rejects.toThrow(/không đủ/);
+
+      // Rejected before the write transaction opened — nothing left behind.
+      expect(insertAssetPurchaseEvent).not.toHaveBeenCalled();
+      expect(walletBalance()).toBe(200_000_000);
+    });
+
+    it('allows spending a wallet down to exactly zero', async () => {
+      const { service, walletBalance } = harness();
+
+      await service.createAsset('household-1', {
+        name: 'Vàng dốc ví',
+        type: 'gold',
+        valuationMode: 'manual',
+        manualValue: 200_000_000,
+        fundingAssetId: wallet.id,
+      });
+
+      expect(walletBalance()).toBe(0);
+    });
+
+    it('rejects a funding source that is not a wallet', async () => {
+      const gold: Asset = {
+        id: 'asset-gold',
+        householdId: 'household-1',
+        name: 'Vàng',
+        type: 'gold',
+        valuationMode: 'manual',
+        liquidity: 'usable_now',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        manualValue: 500_000_000,
+      };
+      const { service } = harness();
+      const repository = (
+        service as unknown as {
+          assetsRepository: { findAssetById: jest.Mock };
+        }
+      ).assetsRepository;
+      repository.findAssetById.mockResolvedValue(gold);
+
+      await expect(
+        service.createAsset('household-1', {
+          name: 'Vàng mua bằng vàng',
+          type: 'gold',
+          valuationMode: 'manual',
+          manualValue: 10_000_000,
+          fundingAssetId: gold.id,
+        }),
+      ).rejects.toThrow(/not a cash or bank account/);
+    });
+  });
 });

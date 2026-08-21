@@ -92,7 +92,7 @@ export class PrismaInvitesRepository
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO household_invites
         (id, household_id, invited_by, invitee_email, invitee_phone, token,
-         status, default_role, default_permission_level, expires_at, updated_at)
+         status, expires_at, updated_at)
       SELECT
         ${invite.id}::uuid,
         h.id,

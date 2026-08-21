@@ -1,19 +1,24 @@
 import type { GoalPriority } from '../entities/financial-goal.entity';
+import type { CreateGoalAllocationDto } from './goal-allocation.dto';
 
 export interface CreateFinancialGoalDto {
   name: string;
   /**
-   * What the household has already put aside for this goal.
+   * Which assets count towards this goal, and by how much. **At least one is
+   * required** — a goal with no assets behind it has no progress and no way to
+   * gain any, so creating one would leave the household with a permanent 0%.
    *
-   * Accepted ON CREATE only, because onboarding must be able to record an
-   * existing balance ("we already have 200M toward the house"). It is
-   * deliberately rejected on UPDATE — after creation the only thing that may
-   * move this number is a `goal_contribution` money event, so the stored column
-   * and the event history cannot diverge.
+   * "Set aside 100tr from shared money" is expressed here as a fixed 100tr
+   * share of the wallet holding it: shared money is not a separate kind of
+   * money, it is the household's `cash` / `bank_account` assets.
    */
-  currentAmount?: number;
+  allocations: CreateGoalAllocationDto[];
   targetAmount: number;
-  plannedMonthlyContribution?: number;
+  /**
+   * No `plannedMonthlyContribution`. The pace is declared per wallet, on the
+   * `allocations` above (`monthlyContribution`), and the goal's figure is their
+   * sum — so a plan always names the accounts the money comes out of.
+   */
   priority: GoalPriority;
   note?: string;
   targetDate?: string;

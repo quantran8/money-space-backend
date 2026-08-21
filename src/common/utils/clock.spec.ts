@@ -5,6 +5,7 @@ import {
   minIso,
   monthsBetweenIso,
   todayInTimeZone,
+  endOfMonthIso,
 } from './clock';
 
 describe('addDaysIso', () => {
@@ -52,6 +53,28 @@ describe('addMonthsIso', () => {
 
   it('subtracts months', () => {
     expect(addMonthsIso('2026-03-31', -1)).toBe('2026-02-28');
+  });
+});
+
+describe('endOfMonthIso', () => {
+  it('returns the last day of a 31-day month', () => {
+    expect(endOfMonthIso('2026-08-20')).toBe('2026-08-31');
+  });
+
+  it('returns the last day of a 30-day month', () => {
+    expect(endOfMonthIso('2026-09-01')).toBe('2026-09-30');
+  });
+
+  it('handles February in a common year', () => {
+    expect(endOfMonthIso('2026-02-10')).toBe('2026-02-28');
+  });
+
+  it('handles February in a leap year', () => {
+    expect(endOfMonthIso('2028-02-10')).toBe('2028-02-29');
+  });
+
+  it('is idempotent on a date already at month end', () => {
+    expect(endOfMonthIso('2026-12-31')).toBe('2026-12-31');
   });
 });
 

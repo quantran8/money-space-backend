@@ -519,19 +519,38 @@ export function toMoneyEventCard(event: MoneyEvent) {
     toAssetId: event.toAssetId,
     upcomingPaymentId: event.upcomingPaymentId,
     debtId: event.debtId,
-    financialGoalId: event.financialGoalId,
   };
 }
 
-export function toGoalCard(goal: FinancialGoal) {
-  // Raw numeric `currentAmount` / `targetAmount`; the client formats them.
+/**
+ * The wire shape of a goal.
+ *
+ * `progressAmount` is the money actually behind the goal, resolved by the
+ * caller via `resolveGoalProgressAmount` — a sum over its allocations at live
+ * asset values. A goal stores no figure of its own, so this is the only source
+ * of the number; it is required in practice and defaults to 0 only for a goal
+ * read before its allocations were loaded.
+ *
+ * It is emitted as `currentAmount` so every client surface keeps reading one
+ * field.
+ *
+ * `plannedMonthlyContribution` comes straight off the goal: unlike progress it
+ * IS stored, as a mirror of the goal's wallet shares that `GoalsService` keeps
+ * in step, so every surface can show the pace without reading allocations.
+ */
+export function toGoalCard(goal: FinancialGoal, progressAmount = 0) {
+  // Raw numeric amounts; the client formats them.
+  const currentAmount = progressAmount;
   return {
     id: goal.id,
     name: goal.name,
-    currentAmount: goal.currentAmount,
+    currentAmount,
     targetAmount: goal.targetAmount,
     plannedMonthlyContribution: goal.plannedMonthlyContribution,
-    progress: computeGoalProgress(goal),
+    progress: computeGoalProgress({
+      currentAmount,
+      targetAmount: goal.targetAmount,
+    }),
     priority: goal.priority,
     note: goal.note,
     targetDate: goal.targetDate,

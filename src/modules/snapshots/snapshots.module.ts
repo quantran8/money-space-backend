@@ -27,6 +27,9 @@ import { ForecastModule } from '../forecast/forecast.module';
       useClass: PrismaSnapshotsRepository,
     },
   ],
-  exports: [SnapshotsService],
+  // SNAPSHOTS_REPOSITORY is exported so GoalsModule can read a goal's frozen
+  // progress points without importing SnapshotsService — Snapshots → Forecast →
+  // Goals already exists, so the reverse module edge would be a cycle.
+  exports: [SnapshotsService, SNAPSHOTS_REPOSITORY],
 })
 export class SnapshotsModule {}

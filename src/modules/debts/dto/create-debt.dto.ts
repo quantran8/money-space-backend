@@ -17,6 +17,8 @@ export interface CreateDebtDto {
   status?: DebtStatus;
   ownerMemberId?: string;
   receivedToAssetId?: string;
+  /** Default wallet to repay from; see the entity field. */
+  repaymentAssetId?: string;
   paymentFrequency?: string;
   fixedPaymentAmount?: number;
   minimumPaymentAmount?: number;

@@ -12,7 +12,6 @@ export type MoneyEventType =
   // enum and written by `completeCashflowEvent`; it was missing from this union,
   // which an `as never` cast at the call site hid.
   | 'payment_paid'
-  | 'goal_contribution'
   | 'debt_update'
   | 'adjustment';
 
@@ -40,5 +39,4 @@ export interface MoneyEvent {
   toAssetId?: string;
   upcomingPaymentId?: string;
   debtId?: string;
-  financialGoalId?: string;
 }

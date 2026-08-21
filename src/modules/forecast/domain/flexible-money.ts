@@ -46,11 +46,29 @@ export interface FlexibleMoneyResult {
   /** End-of-horizon variant; must be labelled with its assumption when shown. */
   endingProjectedBalance: number;
   obligationsCovered: boolean;
+  /**
+   * Liquid money the household's GOALS already claim — money set aside behind a
+   * goal, plus what this month's pace can still draw from what is left.
+   *
+   * Separate from `requiredOutflowsBeforeNextInflow`, which is about bills. Both
+   * are "already has a job", but only one of them leaves the household on a
+   * date; goal money simply stops being free.
+   *
+   * Passed in by the caller rather than derived here, because it needs the goals
+   * and their allocations, and this module is pure forecast arithmetic.
+   */
+  goalCommitments: number;
   assumptions: CalculationAssumption[];
 }
 
 export function computeFlexibleMoney(
   forecast: ForecastResult,
+  /**
+   * What the goals already claim of the same liquid money this forecast starts
+   * from. Defaults to 0 so callers that only need cash-flow arithmetic — what-if,
+   * the projection — are unaffected.
+   */
+  goalCommitments = 0,
 ): FlexibleMoneyResult {
   const nextInflow = forecast.nextSufficientlyCertainInflow;
 
@@ -97,6 +115,7 @@ export function computeFlexibleMoney(
     lowestProjectedBalanceDate: forecast.lowestProjectedBalanceDate,
     endingProjectedBalance: forecast.endingProjectedBalance,
     obligationsCovered: forecast.obligationsCovered,
+    goalCommitments: Math.round(goalCommitments),
     // Inherited verbatim so "how was this calculated" shows the same reasons
     // the forecast used.
     assumptions: forecast.assumptions,

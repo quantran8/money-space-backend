@@ -143,6 +143,8 @@ describe('expandOccurrences', () => {
         date: '2026-08-13',
         isVirtual: false,
         wasClampedFromPast: true,
+        // The clamp keeps the real due date so the timeline can show it.
+        originalDate: '2026-08-08',
       },
     ]);
   });
@@ -188,6 +190,8 @@ describe('expandOccurrences', () => {
         date: '2026-08-13',
         isVirtual: false,
         wasClampedFromPast: true,
+        // The series' last scheduled date is what is still owed.
+        originalDate: '2026-07-01',
       },
     ]);
   });

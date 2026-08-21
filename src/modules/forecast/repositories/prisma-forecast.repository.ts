@@ -122,6 +122,7 @@ export class PrismaForecastRepository
         ownerMemberId: event.ownerMemberId ?? null,
         financialGoalId: event.financialGoalId ?? null,
         debtId: event.debtId ?? null,
+        settlementAssetId: event.settlementAssetId ?? null,
       };
     });
 

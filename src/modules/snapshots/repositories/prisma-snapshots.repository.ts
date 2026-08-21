@@ -16,8 +16,14 @@ import { Household } from '../../households/entities/household.entity';
 import { SnapshotDetail } from '../entities/snapshot-detail.entity';
 import { MarketDataService } from '../../market-data/market-data.service';
 import {
+  resolveContributionProgressAmount,
+  resolveGoalProgressAmount,
+} from '../../goals/domain/goal-progress';
+import { todayInTimeZone } from '../../../common/utils/clock';
+import {
   CreateSnapshotInput,
   SnapshotAssetLine,
+  SnapshotGoalLine,
   SnapshotsRepository,
 } from './snapshots.repository.interface';
 
@@ -161,6 +167,145 @@ export class PrismaSnapshotsRepository
     return lines;
   }
 
+  async getGoalLines(householdId: string): Promise<SnapshotGoalLine[]> {
+    const [goals, allocations, assets, { marketPrices, fxRates }] =
+      await Promise.all([
+        this.prisma.financialGoal.findMany({
+          where: { householdId, deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+        }),
+        this.prisma.goalAssetAllocation.findMany({
+          where: { householdId, deletedAt: null },
+        }),
+        this.prisma.asset.findMany({
+          where: { householdId, deletedAt: null, status: 'active' },
+          include: {
+            marketPositions: { where: { deletedAt: null }, take: 1 },
+            calculationTerms: { where: { deletedAt: null }, take: 1 },
+          },
+        }),
+        this.loadPricing(),
+      ]);
+
+    const asOfDate = todayInTimeZone();
+    const assetValues = new Map<string, number>(
+      assets.map((row) => {
+        const asset = mapAsset(
+          row,
+          row.marketPositions[0],
+          row.calculationTerms[0],
+        );
+        return [
+          asset.id,
+          computeCurrentValue(asset, marketPrices, fxRates, asOfDate),
+        ];
+      }),
+    );
+
+    return goals.map((goal) => {
+      const goalAllocations = allocations
+        .filter((row) => row.financialGoalId === goal.id)
+        .map((row) => ({
+          assetId: row.assetId,
+          kind: row.kind,
+          role: row.role,
+          allocatedAmount:
+            row.allocatedAmount === null ? null : Number(row.allocatedAmount),
+          percent: row.percent === null ? null : Number(row.percent),
+        }));
+      return {
+        financialGoalId: goal.id,
+        goalName: goal.name,
+        targetAmount: Number(goal.targetAmount),
+        progressAmount: resolveGoalProgressAmount(goalAllocations, assetValues),
+        // Frozen next to the total, from the SAME allocations and the SAME asset
+        // values, so the pace and the progress can never tell different stories
+        // about one day.
+        contributionProgressAmount: resolveContributionProgressAmount(
+          goalAllocations,
+          assetValues,
+        ),
+      };
+    });
+  }
+
+  async findGoalProgressPoints(
+    householdId: string,
+    goalId: string,
+  ): Promise<
+    Array<{
+      date: string;
+      progressAmount: number;
+      contributionAmount: number | null;
+    }>
+  > {
+    // Joined to the parent snapshot for its date — the child row carries only
+    // `created_at`, and a snapshot's date is the day it describes.
+    const rows = await this.prisma.snapshotGoalValue.findMany({
+      where: { householdId, financialGoalId: goalId },
+      include: { snapshot: { select: { snapshotDate: true } } },
+      orderBy: { snapshot: { snapshotDate: 'asc' } },
+    });
+    return rows.map((row) => ({
+      date: row.snapshot.snapshotDate.toISOString().slice(0, 10),
+      progressAmount: Number(row.progressAmount),
+      // Rows frozen before the column existed default to 0, which would read as
+      // "nothing was contributed" and show a month the household may well have
+      // kept as a miss. A total with nothing behind it means "not recorded", so
+      // report null and let the caller withhold the figure.
+      contributionAmount:
+        Number(row.progressAmount) > 0 &&
+        Number(row.contributionProgressAmount) === 0
+          ? null
+          : Number(row.contributionProgressAmount),
+    }));
+  }
+
+  /**
+   * The most recent frozen point BEFORE today, with the per-asset values from
+   * that same snapshot — everything needed to say what moved and why.
+   */
+  async findGoalProgressChangeBasis(
+    householdId: string,
+    goalId: string,
+    beforeDate: string,
+  ): Promise<{
+    date: string;
+    progressAmount: number;
+    assets: Array<{ assetId: string; assetName: string; value: number }>;
+  } | null> {
+    const row = await this.prisma.snapshotGoalValue.findFirst({
+      where: {
+        householdId,
+        financialGoalId: goalId,
+        snapshot: { snapshotDate: { lt: new Date(beforeDate) } },
+      },
+      include: {
+        snapshot: {
+          select: {
+            snapshotDate: true,
+            snapshotAssetValues: {
+              select: { assetId: true, assetName: true, value: true },
+            },
+          },
+        },
+      },
+      orderBy: { snapshot: { snapshotDate: 'desc' } },
+    });
+    if (!row) {
+      return null;
+    }
+    return {
+      date: row.snapshot.snapshotDate.toISOString().slice(0, 10),
+      progressAmount: Number(row.progressAmount),
+      assets: row.snapshot.snapshotAssetValues.map((line) => ({
+        assetId: line.assetId,
+        assetName: line.assetName,
+        value: Number(line.value),
+      })),
+    };
+  }
+
   async getLastSnapshotCreatedAt(householdId: string): Promise<Date | null> {
     const row = await this.prisma.snapshot.findFirst({
       where: { householdId, deletedAt: null },
@@ -222,6 +367,22 @@ export class PrismaSnapshotsRepository
             valuationId: this.asUuid(line.valuationId ?? null),
             valuationMethod: line.valuationMethod ?? null,
             valuationDate: this.toDate(line.valuationDate ?? null),
+          })) as never,
+        });
+      }
+
+      // Same bulk-insert shape as the asset lines above: one statement, not N.
+      if (input.goalLines.length > 0) {
+        await tx.snapshotGoalValue.createMany({
+          data: input.goalLines.map((line) => ({
+            id: uuidv7(),
+            householdId: input.householdId,
+            snapshotId: input.id,
+            financialGoalId: line.financialGoalId,
+            goalName: line.goalName,
+            targetAmount: line.targetAmount,
+            progressAmount: line.progressAmount,
+            contributionProgressAmount: line.contributionProgressAmount,
           })) as never,
         });
       }

@@ -55,6 +55,16 @@ export interface ForecastCashflowEvent {
   ownerMemberId?: string | null;
   financialGoalId?: string | null;
   debtId?: string | null;
+  /**
+   * The wallet this event moves through — debited when outgoing.
+   *
+   * Required for outgoing events: an outflow ranks ABOVE the goals sharing its
+   * wallet, and goal money shrinks to make room for it. Without knowing which
+   * wallet, the forecast could only subtract at the total level while goals
+   * claim per wallet, and the two disagreeing is what let flexible money read
+   * negative.
+   */
+  settlementAssetId?: string | null;
   /** Set by the what-if simulator. Never persisted. */
   isSynthetic?: boolean;
 }
@@ -105,8 +115,16 @@ export interface ForecastOccurrence {
   exclusionReason?: 'estimated_incoming' | 'planned_outgoing' | 'postponed';
   /** An overdue occurrence pulled onto day 0. */
   wasClampedFromPast: boolean;
+  /**
+   * The date the user actually entered, present only when `wasClampedFromPast`
+   * moved `date` off it. The timeline shows this so a clamped row does not
+   * appear to have silently rewritten the due date.
+   */
+  originalDate?: IsoDate;
   financialGoalId?: string | null;
   debtId?: string | null;
+  /** The wallet this occurrence draws from, when the event named one. */
+  settlementAssetId?: string | null;
 }
 
 export interface ForecastDay {
@@ -134,6 +152,14 @@ export interface ForecastResult {
   horizonDays: number;
   horizonEndDate: IsoDate;
   startingLiquidBalance: number;
+  /**
+   * The `usable_now` assets `startingLiquidBalance` is the sum of.
+   *
+   * Carried on the result so callers can attribute that balance — which part of
+   * it a goal already claims, for instance — without reloading the bundle and
+   * bypassing the forecast cache.
+   */
+  liquidSources: ForecastLiquidSource[];
   /** One entry per calendar day, inclusive of both ends. */
   days: ForecastDay[];
   /** Event-only, date-sorted — the Upcoming screen's list. */

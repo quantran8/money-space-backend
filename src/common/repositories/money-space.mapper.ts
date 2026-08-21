@@ -9,6 +9,7 @@ import type {
 import {
   NO_TARGET_DATE,
   type FinancialGoal,
+  type GoalAssetAllocation,
 } from '../../modules/goals/entities/financial-goal.entity';
 import type {
   Household,
@@ -327,8 +328,9 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
     name: row.name,
-    currentAmount: numberFromDb(row.currentAmount ?? row.current_amount),
     targetAmount: numberFromDb(row.targetAmount ?? row.target_amount),
+    // A maintained mirror of the goal's wallet shares, not an input — see
+    // `FinancialGoal.plannedMonthlyContribution`.
     plannedMonthlyContribution:
       (row.plannedMonthlyContribution ?? row.planned_monthly_contribution) ==
       null
@@ -336,12 +338,51 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
         : numberFromDb(
             row.plannedMonthlyContribution ?? row.planned_monthly_contribution,
           ),
+    // Frozen at creation, never recomputed — see
+    // `FinancialGoal.baselineContributionAmount`.
+    baselineContributionAmount:
+      (row.baselineContributionAmount ?? row.baseline_contribution_amount) ==
+      null
+        ? null
+        : numberFromDb(
+            row.baselineContributionAmount ?? row.baseline_contribution_amount,
+          ),
     priority: row.priority,
     note: row.note ?? '',
     targetDate:
       (row.targetDate ?? row.target_date)
         ? dateOnly(row.targetDate ?? row.target_date)
         : NO_TARGET_DATE,
+  };
+}
+
+export function mapGoalAssetAllocation(row: DbRow): GoalAssetAllocation {
+  const allocatedAmount = row.allocatedAmount ?? row.allocated_amount;
+  const percent = row.percent;
+  const monthlyContribution =
+    row.monthlyContribution ?? row.monthly_contribution;
+  const sharePercent = row.sharePercent ?? row.share_percent;
+  return {
+    id: row.id,
+    householdId: row.householdId ?? row.household_id,
+    financialGoalId: row.financialGoalId ?? row.financial_goal_id,
+    assetId: row.assetId ?? row.asset_id,
+    kind: row.kind,
+    role: row.role ?? 'holding',
+    // Null means "this wallet declares no monthly amount" — the goal then has no
+    // pace at all unless another share declares one. 0 would be a promise to
+    // save nothing.
+    monthlyContribution:
+      monthlyContribution == null ? null : numberFromDb(monthlyContribution),
+    // Null means "the household was never asked how to split this wallet", not
+    // 100 — see `GoalAssetAllocation.sharePercent`.
+    sharePercent: sharePercent == null ? null : numberFromDb(sharePercent),
+    // Exactly one of these is set per `kind` (DB CHECK). Kept as null rather
+    // than 0 for the unused one, so "no fixed amount" never reads as "0đ".
+    allocatedAmount:
+      allocatedAmount == null ? null : numberFromDb(allocatedAmount),
+    percent: percent == null ? null : numberFromDb(percent),
+    note: row.note ?? '',
   };
 }
 
@@ -390,6 +431,8 @@ export function mapDebt(row: DbRow, period?: DbRow, periods?: DbRow[]): Debt {
     ownerMemberId: row.ownerMemberId ?? row.owner_member_id ?? undefined,
     receivedToAssetId:
       row.receivedToAssetId ?? row.received_to_asset_id ?? undefined,
+    repaymentAssetId:
+      row.repaymentAssetId ?? row.repayment_asset_id ?? undefined,
     // Repayment terms now live directly on the debts row (folded in from
     // debt_terms).
     paymentFrequency,
@@ -442,7 +485,6 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     upcomingPaymentId:
       row.cashflowEventId ?? row.cashflow_event_id ?? undefined,
     debtId: row.debtId ?? row.debt_id ?? undefined,
-    financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? undefined,
   };
 }
 
@@ -469,8 +511,7 @@ export function mapCashflowEvent(row: DbRow): CashflowEvent {
     debtId: row.debtId ?? row.debt_id ?? null,
     financialGoalId: row.financialGoalId ?? row.financial_goal_id ?? null,
     plannedAssetId: row.plannedAssetId ?? row.planned_asset_id ?? null,
-    settlementAssetId:
-      row.settlementAssetId ?? row.settlement_asset_id ?? null,
+    settlementAssetId: row.settlementAssetId ?? row.settlement_asset_id ?? null,
     note: row.note ?? '',
     lastCompletedAt: row.lastCompletedAt ?? row.last_completed_at ?? null,
     lastCompletedById: row.lastCompletedById ?? row.last_completed_by ?? null,

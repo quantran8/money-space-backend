@@ -257,7 +257,6 @@ export class CashflowEventsService {
             event.direction === 'incoming' ? settlementAssetId : undefined,
           cashflowEventId: event.id,
           debtId: event.debtId ?? undefined,
-          financialGoalId: event.financialGoalId ?? undefined,
           // `note` IS the `description` column. The call used to pass both a
           // `description: event.name` (silently dropped — no such DTO field)
           // and this, so a completed item recorded a blank description unless
@@ -425,6 +424,16 @@ export class CashflowEventsService {
         'recurrenceEndDate cannot be before expectedDate',
       );
     }
+    // A planned outflow may name the wallet it will leave from, but it is not
+    // required to. A debt is not tied to one wallet: the household repays it
+    // from whichever cash/bank wallet suits them that month, and a scheduled
+    // repayment created months ahead cannot know which that will be.
+    //
+    // The wallet is enforced where the money actually moves instead — see
+    // `completeCashflowEvent`, which requires `payload.assetId ??
+    // event.settlementAssetId` and rejects a completion that names neither. So
+    // nothing settles into a silent no-op; the question is asked at the moment
+    // the household can actually answer it.
   }
 
   private async ensureCashflowEvent(householdId: string, eventId: string) {

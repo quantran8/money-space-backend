@@ -203,15 +203,22 @@ export class PrismaAssetsRepository
     amount: number;
     isoDate: string;
     note: string;
+    fundingAssetId?: string | null;
   }): Promise<void> {
-    // Adding to an existing market position is a ledger-visible purchase, but
-    // the create-asset form does not choose a funding wallet. Keep it neutral
-    // and link the purchased position through `to_asset_id`; no wallet balance
-    // is manufactured or debited.
+    // Two different acts share this row, told apart by whether a funding wallet
+    // was named:
+    //
+    // - With a wallet — a real purchase. `outflow` from that wallet into the
+    //   asset (`to_asset_id`). The caller debits the wallet, so net worth is
+    //   unchanged: money left one place and arrived in another.
+    // - Without — the household is declaring something it already owns. Nothing
+    //   moved, so the row stays `neutral` with no source, and no balance is
+    //   manufactured or debited.
+    const fundingAssetId = event.fundingAssetId ?? null;
     await this.prisma.$executeRaw`
       INSERT INTO money_events
         (id, household_id, description, event_type, category, amount,
-         fee_amount, currency, event_date, direction, to_asset_id,
+         fee_amount, currency, event_date, direction, from_asset_id, to_asset_id,
          created_by, updated_at)
       SELECT
         ${event.id}::uuid,
@@ -223,7 +230,8 @@ export class PrismaAssetsRepository
         0::numeric,
         'VND',
         ${this.toDate(event.isoDate)}::date,
-        'neutral'::"MoneyDirection",
+        ${fundingAssetId ? 'outflow' : 'neutral'}::"MoneyDirection",
+        ${fundingAssetId}::uuid,
         ${event.assetId}::uuid,
         h.created_by,
         now()
