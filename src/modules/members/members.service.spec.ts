@@ -29,7 +29,7 @@ function setup(rows: { found?: HouseholdMember } = { found: member() }) {
   const repository = {
     assertHousehold: jest.fn().mockResolvedValue({
       id: HOUSEHOLD,
-      name: 'Nhà mình',
+      name: 'Gia đình',
       currency: 'VND',
       updateFrequency: 'monthly',
       config: {},

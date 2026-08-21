@@ -2,7 +2,7 @@
 
 ## What Money Space is
 
-A Vietnamese-first **family/couple finance dashboard** — explicitly **not** a transaction-tracking / expense-logging app. The core question it answers is *"Nhà mình đang ổn không?"* (Is our household OK?).
+A Vietnamese-first **family/couple finance dashboard** — explicitly **not** a transaction-tracking / expense-logging app. The core question it answers is *"Tài chính gia đình có ổn không?"* (Is our household OK?).
 
 - Central concept is a periodic **financial snapshot** (weekly/monthly), not per-transaction ledgering.
 - Calm, non-judgmental tone: use "khoản cần chú ý / cần trao đổi", never "cảnh báo / vượt chi / đáng ngờ".

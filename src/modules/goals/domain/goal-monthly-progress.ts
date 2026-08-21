@@ -82,6 +82,17 @@ export interface GoalMonthProgress {
    * removing the button removed the feedback with it.
    */
   inProgress: boolean;
+  /**
+   * True when `delta` is the HEADROOM estimate rather than an observed figure —
+   * what the wallets could still put in this month, not what has gone in.
+   *
+   * Only ever set on the running month with no prior close behind it. It exists
+   * because the UI was calling that estimate "đã góp" (already contributed),
+   * which claims something the number does not say: nothing may have moved yet.
+   * With this flag the panel can label the two cases differently instead of
+   * presenting a projection as a record.
+   */
+  isEstimate: boolean;
 }
 
 /** `YYYY-MM-DD` → `YYYY-MM`. */
@@ -211,10 +222,9 @@ export function buildGoalMonthlyProgress(
     // says nothing useful, so the estimate takes over: what the wallets can
     // still put in, capped by the pace they declared. A CLOSED month never uses
     // it; by then the difference between two closes is the truth.
-    const delta =
-      inProgress && index === 0 && options?.monthlyHeadroom !== undefined
-        ? options.monthlyHeadroom
-        : observedDelta;
+    const usesHeadroom =
+      inProgress && index === 0 && options?.monthlyHeadroom !== undefined;
+    const delta = usesHeadroom ? options.monthlyHeadroom! : observedDelta;
 
     return {
       month,
@@ -227,6 +237,7 @@ export function buildGoalMonthlyProgress(
       planned,
       gap: delta === null || planned === null ? null : delta - planned,
       inProgress,
+      isEstimate: usesHeadroom,
     };
   });
 }

@@ -431,6 +431,8 @@ export function mapDebt(row: DbRow, period?: DbRow, periods?: DbRow[]): Debt {
     ownerMemberId: row.ownerMemberId ?? row.owner_member_id ?? undefined,
     receivedToAssetId:
       row.receivedToAssetId ?? row.received_to_asset_id ?? undefined,
+    repaymentAssetId:
+      row.repaymentAssetId ?? row.repayment_asset_id ?? undefined,
     // Repayment terms now live directly on the debts row (folded in from
     // debt_terms).
     paymentFrequency,

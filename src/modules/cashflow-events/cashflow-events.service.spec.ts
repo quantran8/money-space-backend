@@ -337,15 +337,19 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
    * costs) or force a guess at which one. Asking is what makes the goal impact
    * shown at planning time truthful.
    */
-  it('rejects an outgoing event that names no settlement wallet', async () => {
-    const { service } = setup();
+  // A debt is not tied to one wallet — the household repays from whichever
+  // cash/bank wallet suits them that month — so a repayment scheduled months
+  // ahead cannot name its wallet yet. `completeCashflowEvent` asks instead,
+  // at the moment the money actually moves.
+  it('accepts an outgoing event that names no settlement wallet', async () => {
+    const { service, inserted } = setup();
 
-    await expect(
-      service.createCashflowEvent('hh-1', {
-        ...valid,
-        direction: 'outgoing',
-      }),
-    ).rejects.toThrow(/settlementAssetId is required/);
+    await service.createCashflowEvent('hh-1', {
+      ...valid,
+      direction: 'outgoing',
+    });
+
+    expect(inserted[0].settlementAssetId ?? null).toBeNull();
   });
 
   it('still accepts an incoming event with no settlement wallet', async () => {

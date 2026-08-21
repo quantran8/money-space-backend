@@ -115,6 +115,12 @@ export interface ForecastOccurrence {
   exclusionReason?: 'estimated_incoming' | 'planned_outgoing' | 'postponed';
   /** An overdue occurrence pulled onto day 0. */
   wasClampedFromPast: boolean;
+  /**
+   * The date the user actually entered, present only when `wasClampedFromPast`
+   * moved `date` off it. The timeline shows this so a clamped row does not
+   * appear to have silently rewritten the due date.
+   */
+  originalDate?: IsoDate;
   financialGoalId?: string | null;
   debtId?: string | null;
   /** The wallet this occurrence draws from, when the event named one. */

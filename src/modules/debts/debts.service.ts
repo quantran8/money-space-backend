@@ -164,6 +164,7 @@ export class DebtsService {
       status: payload.status ?? 'active',
       ownerMemberId: payload.ownerMemberId || creatorMemberId,
       receivedToAssetId: payload.receivedToAssetId,
+      repaymentAssetId: payload.repaymentAssetId,
       paymentFrequency: payload.paymentFrequency,
       fixedPaymentAmount: payload.fixedPaymentAmount,
       minimumPaymentAmount: payload.minimumPaymentAmount,
@@ -274,6 +275,10 @@ export class DebtsService {
         expectedDate: dueDate,
         debtId: debt.id,
         ownerMemberId: debt.ownerMemberId,
+        // Pre-fill the wallet the household said they usually repay from, so
+        // confirming a payment is one tap. Not binding — `completeCashflowEvent`
+        // takes whichever wallet the payment actually came from.
+        settlementAssetId: debt.repaymentAssetId,
       });
       // No explicit end date: generate a single next-due reminder rather than a
       // full open-ended schedule.
@@ -680,7 +685,10 @@ export class DebtsService {
       before.paymentFrequency !== after.paymentFrequency ||
       before.fixedPaymentAmount !== after.fixedPaymentAmount ||
       before.firstPaymentDate !== after.firstPaymentDate ||
-      before.expectedFinalDueDate !== after.expectedFinalDueDate
+      before.expectedFinalDueDate !== after.expectedFinalDueDate ||
+      // The default wallet is stamped onto each generated repayment, so
+      // changing it has to restamp the still-open ones.
+      before.repaymentAssetId !== after.repaymentAssetId
     );
   }
 

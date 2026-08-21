@@ -202,6 +202,13 @@ nothing can disagree with it.
     …where `walletValue` is **net of this month's outflows that have not happened
     yet** — see "The running month is measured after scheduled outflows" below.
 
+    **The row carries `isEstimate: true` in exactly this case**, so the UI can
+    label it honestly. Without the flag the panel called the figure "Đã góp"
+    (already contributed), which claims money moved when none may have — the
+    number is capacity, not a record. It is the only place the flag is ever set:
+    an observed difference between two closes is `isEstimate: false`, running
+    month or not.
+
     Wallet 22tr with 20tr set aside and a 20tr pace → 2tr. Wallet 30tr → 10tr.
     **Capped by the wallet's own declared pace**: 100tr in the account does not
     mean 80tr goes to the car — the household said 20tr a month, so the estimate

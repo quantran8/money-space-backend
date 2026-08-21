@@ -488,7 +488,6 @@ model HouseholdInvite {
   inviteePhone String?      @map("invitee_phone")
   token        String       @unique
   status       InviteStatus @default(pending)
-  // Nullable override, same semantics as HouseholdMember.permissionLevel:
   expiresAt    DateTime     @map("expires_at") @db.Timestamptz(6)
   acceptedById String?      @map("accepted_by") @db.Uuid
   acceptedAt   DateTime?    @map("accepted_at") @db.Timestamptz(6)
@@ -587,6 +586,7 @@ model Asset {
   settlingCashflowEvents      CashflowEvent[]        @relation("CashflowEventSettlementAsset")
   completedFromCashflowEvents CashflowEvent[]        @relation("CashflowEventLastCompletedAsset")
   receivedDebts               Debt[]                 @relation("DebtReceivedToAsset")
+  repaymentDebts              Debt[]                 @relation("DebtRepaymentAsset")
   goalAllocations             GoalAssetAllocation[]
 
   @@index([holderMemberId])
@@ -786,6 +786,10 @@ model Debt {
   status               DebtStatus               @default(active)
   ownerMemberId        String?                  @map("owner_member_id") @db.Uuid
   receivedToAssetId    String?                  @map("received_to_asset_id") @db.Uuid
+  // Default wallet the household expects to repay from. A debt is NOT tied to
+  // one wallet — this only pre-fills the generated repayment events, and the
+  // wallet is still chosen (and can differ) when a payment is confirmed.
+  repaymentAssetId     String?                  @map("repayment_asset_id") @db.Uuid
   note                 String?
   // Repayment terms — folded in from the former `debt_terms` table, which was
   // used strictly 1:1 with derived-from-Debt values. repaymentType /
@@ -804,6 +808,7 @@ model Debt {
   household            Household                @relation(fields: [householdId], references: [id], onDelete: Cascade)
   ownerMember          HouseholdMember?         @relation("DebtOwnerMember", fields: [ownerMemberId], references: [id])
   receivedToAsset      Asset?                   @relation("DebtReceivedToAsset", fields: [receivedToAssetId], references: [id])
+  repaymentAsset       Asset?                   @relation("DebtRepaymentAsset", fields: [repaymentAssetId], references: [id])
   createdBy            Profile?                 @relation("DebtCreatedBy", fields: [createdById], references: [id])
   updatedBy            Profile?                 @relation("DebtUpdatedBy", fields: [updatedById], references: [id])
   interestPeriods      DebtInterestPeriod[]
@@ -812,6 +817,7 @@ model Debt {
 
   @@index([householdId, status])
   @@index([receivedToAssetId])
+  @@index([repaymentAssetId])
   @@index([ownerMemberId])
   // Mirrors the partial `debts_household_live_idx (household_id)
   // WHERE deleted_at IS NULL` so a squash cannot drop the live lookup.

@@ -1,6 +1,6 @@
 # Dashboard (overview / snapshot)
 
-Single-glance household financial status — answers *"Nhà mình đang ổn không?"*. Read-only aggregation. Related: [[snapshots-and-networth]], [[assets]], [[debts]], [[goals]], [[money-events]].
+Single-glance household financial status — answers *"Tài chính gia đình có ổn không?"*. Read-only aggregation. Related: [[snapshots-and-networth]], [[assets]], [[debts]], [[goals]], [[money-events]].
 
 ## Overview
 

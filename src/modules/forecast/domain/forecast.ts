@@ -120,6 +120,9 @@ export function runForecast(input: ForecastInput): ForecastResult {
         countedInBalance: exclusionReason === undefined,
         exclusionReason,
         wasClampedFromPast: occurrence.wasClampedFromPast,
+        ...(occurrence.originalDate
+          ? { originalDate: occurrence.originalDate }
+          : {}),
         financialGoalId: event.financialGoalId ?? null,
         debtId: event.debtId ?? null,
         settlementAssetId: event.settlementAssetId ?? null,

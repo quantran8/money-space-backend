@@ -79,6 +79,12 @@ export interface ExpandedOccurrence {
    * pulled onto `asOfDate`.
    */
   wasClampedFromPast: boolean;
+  /**
+   * The real date this occurrence was due, set only when the clamp moved
+   * `date` onto `asOfDate`. Callers surface it so an overdue row still shows
+   * the date the user entered.
+   */
+  originalDate?: IsoDate;
 }
 
 export interface ExpandOptions {
@@ -123,6 +129,9 @@ export function expandOccurrences(
           date: asOfDate,
           isVirtual: false,
           wasClampedFromPast: true,
+          // The series ended before the window, so its last scheduled date is
+          // the one still owed.
+          originalDate: recurrenceEndDate,
         },
       ];
     }
@@ -147,6 +156,7 @@ export function expandOccurrences(
           date: asOfDate,
           isVirtual: false,
           wasClampedFromPast: true,
+          originalDate: date,
         });
       }
       if (recurrence === 'once') {

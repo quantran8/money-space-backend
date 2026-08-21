@@ -327,6 +327,37 @@ describe('buildGoalMonthlyProgress', () => {
         expect(rows[0]).toMatchObject({ delta: 20 * M, gap: 0 });
       });
 
+      // The flag the UI reads to pick its label. Calling a capacity estimate
+      // "đã góp" claims money moved when none may have — the panel says
+      // "có thể góp" instead, but only when it can tell the two apart.
+      it('marks the headroom figure as an estimate', () => {
+        const rows = buildGoalMonthlyProgress([], 20 * M, {
+          current: point('2026-08-20', 20 * M),
+          baselineContribution: 20 * M,
+          monthlyHeadroom: 2 * M,
+        });
+        expect(rows[0]).toMatchObject({ delta: 2 * M, isEstimate: true });
+      });
+
+      // An observed difference between two closes is a record, not a forecast.
+      it('does not mark an observed running month as an estimate', () => {
+        const rows = buildGoalMonthlyProgress(
+          [point('2026-07-31', 30 * M)],
+          20 * M,
+          {
+            current: point('2026-08-20', 38 * M),
+            baselineContribution: 20 * M,
+            monthlyHeadroom: 20 * M,
+          },
+        );
+        expect(rows[1]).toMatchObject({
+          month: '2026-08',
+          delta: 8 * M,
+          inProgress: true,
+          isEstimate: false,
+        });
+      });
+
       // A CLOSED month is settled by what actually happened. The estimate is for
       // a month still in play and must never rewrite a month that has ended.
       it('ignores the estimate once a month has closed', () => {

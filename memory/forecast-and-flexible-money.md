@@ -178,17 +178,22 @@ Note this is **not** an exception to "never clamp to zero". The negative was
 arithmetic double-counting, not a household that had over-committed; rule 1 is
 about not hiding a real over-commitment, and a real one still shows.
 
-### Outgoing events must name a settlement wallet
+### The settlement wallet is asked at completion, not at planning
 
-`settlementAssetId` is **required for outgoing** events (`assertValid`), and
-carried through `ForecastCashflowEvent` → `ForecastOccurrence` so the forecast
-knows which wallet each outflow drains. It stays optional for incoming.
+`settlementAssetId` is **optional on both directions** at create/update time. It
+is carried through `ForecastCashflowEvent` → `ForecastOccurrence` so the forecast
+knows which wallet an outflow drains when one is named.
 
-It used to be optional on both, on the reasoning that at planning time the
-household often does not know yet. That does not survive this ranking: an outflow
-naming no wallet would either drain no goal (understating what it costs) or force
-a guess at which one. Asking is also what makes the impact showable *before* the
-event is saved.
+It was briefly required for outgoing events, to keep an outflow from draining no
+goal. That was reverted: **a debt is not tied to one wallet.** The household
+repays from whichever cash/bank wallet suits them that month, so a repayment
+generated months ahead by `createRepaymentSchedule` genuinely cannot name its
+wallet — requiring one made every scheduled debt fail to save.
+
+The guarantee is enforced at the moment money actually moves instead:
+`completeCashflowEvent` resolves `payload.assetId ?? event.settlementAssetId` and
+**rejects a completion naming neither**, so a confirmation can still never settle
+into a silent no-op.
 
 ### Showing the cost before it is paid
 

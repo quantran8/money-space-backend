@@ -45,7 +45,7 @@ function setup(stored: HouseholdInvite | null = invite()) {
     findInviteById: jest.fn(async () => stored ?? undefined),
     findInviteByToken: jest.fn(async () => stored ?? undefined),
     findInviteContext: jest.fn(async () => ({
-      householdName: 'Nhà mình',
+      householdName: 'Gia đình',
       invitedByName: 'Owner',
     })),
     insertInvite: jest.fn(async () => undefined),
