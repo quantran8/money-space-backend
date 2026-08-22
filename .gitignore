@@ -54,3 +54,9 @@ pids
 
 # Diagnostic reports (https://nodejs.org/api/report.html)
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# This project is pnpm-only. An npm/yarn lockfile here means a dependency was
+# added with the wrong tool, and pnpm-lock.yaml is now silently out of date —
+# which fails the Docker build at `pnpm install --frozen-lockfile`.
+package-lock.json
+yarn.lock

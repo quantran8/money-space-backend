@@ -121,6 +121,12 @@ Two of these matter more than they look:
 immediately with `exec format error`. Re-read it any time with
 `terraform output -raw image_platform`.
 
+It also picks the runner: `linux/arm64` builds on `ubuntu-24.04-arm`,
+`linux/amd64` on `ubuntu-latest`. Both are native, so nothing is emulated — the
+workflow fails early if the two ever disagree. Only those two values map to a
+runner; anything else needs the `runs-on` expression in the workflow updated
+too.
+
 **`DOMAIN_NAME`** is the on/off switch for HTTPS. Set, Caddy starts and requests
 a Let's Encrypt certificate; empty, Caddy stays down and the app is served over
 plain HTTP on port 3000.
@@ -140,9 +146,8 @@ Only `master` deploys. The workflow can also be started by hand from
 migrations or redeploying without an empty commit — but it refuses to run from
 any other branch.
 
-The first run takes longer than later ones: the arm64 build is emulated on an
-x86 runner, and there is no layer cache yet. Expect 10–15 minutes; subsequent
-deploys are a few minutes.
+The first run takes longer than later ones — there is no layer cache yet.
+Expect a few minutes; subsequent deploys are faster still.
 
 ### Verifying
 
