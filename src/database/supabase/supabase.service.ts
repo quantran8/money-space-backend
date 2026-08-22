@@ -11,11 +11,16 @@ type Database = {
   };
 };
 
-function makeClient(url: string, key: string): SupabaseClient<Database> {
+function makeClient(
+  url: string,
+  key: string,
+  auth?: Record<string, unknown>,
+): SupabaseClient<Database> {
   return createClient<Database>(url, key, {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+      ...auth,
     },
     global: {
       headers: {
@@ -24,6 +29,21 @@ function makeClient(url: string, key: string): SupabaseClient<Database> {
     },
   });
 }
+
+/**
+ * Minimal storage the OAuth client writes its PKCE `code_verifier` into.
+ * supabase-js JSON-encodes on write and decodes on read, so values are kept
+ * verbatim here — parsing them would corrupt the round-trip.
+ */
+export type SupabaseAuthStorage = {
+  getItem: (key: string) => string | null | Promise<string | null>;
+  setItem: (key: string, value: string) => void | Promise<void>;
+  removeItem: (key: string) => void | Promise<void>;
+};
+
+/** Namespace for the PKCE verifier entry; the suffix is supabase-js's own. */
+export const OAUTH_STORAGE_KEY = 'money-space-oauth';
+export const OAUTH_VERIFIER_ITEM = `${OAUTH_STORAGE_KEY}-code-verifier`;
 
 @Injectable()
 export class SupabaseService {
@@ -55,6 +75,34 @@ export class SupabaseService {
     }
 
     return this.publicClient;
+  }
+
+  /**
+   * A per-request client for the Google OAuth round-trip.
+   *
+   * PKCE needs the `code_verifier` minted when the authorization URL is built
+   * to still be readable when the code comes back — a different request, and on
+   * production a possibly different instance. A fresh client bound to caller-
+   * supplied storage is what lets that value be captured and replayed; the
+   * shared clients stay stateless.
+   */
+  getOAuthClient(storage: SupabaseAuthStorage) {
+    if (!this.url || !this.anonKey) {
+      throw new Error(
+        'SUPABASE_URL or SUPABASE_ANON_KEY is missing. Check backend/.env.',
+      );
+    }
+
+    // persistSession must be true: supabase-js ignores a supplied `storage` and
+    // falls back to an internal in-memory adapter when it is false, which loses
+    // the verifier the moment the request ends. Safe here because the storage is
+    // ours and each call gets its own client.
+    return makeClient(this.url, this.anonKey, {
+      flowType: 'pkce',
+      persistSession: true,
+      storage,
+      storageKey: OAUTH_STORAGE_KEY,
+    });
   }
 
   getAdminClient() {

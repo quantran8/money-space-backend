@@ -1110,15 +1110,21 @@ export class GoalsService {
    */
   async scheduledOutflowImpact(householdId: string, goalId: string) {
     const goal = await this.ensureFinancialGoal(householdId, goalId);
-    const [allocations, householdAllocations, householdGoals, assetValues, assetNames, cashflowEvents] =
-      await Promise.all([
-        this.goalsRepository.findAllocationsByGoal(householdId, goalId),
-        this.goalsRepository.findAllocationsByHousehold(householdId),
-        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
-        this.assetValueMap(householdId),
-        this.assetNameMap(householdId),
-        this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
-      ]);
+    const [
+      allocations,
+      householdAllocations,
+      householdGoals,
+      assetValues,
+      assetNames,
+      cashflowEvents,
+    ] = await Promise.all([
+      this.goalsRepository.findAllocationsByGoal(householdId, goalId),
+      this.goalsRepository.findAllocationsByHousehold(householdId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.assetValueMap(householdId),
+      this.assetNameMap(householdId),
+      this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+    ]);
 
     const through = endOfMonthIso(todayInTimeZone());
     const projectedValues = walletValuesAfterPendingOutflows(
@@ -1174,7 +1180,9 @@ export class GoalsService {
       projectedValues,
       assetValues,
     );
-    const currentPace = resolveWalletShareByGoal(claims, assetValues).get(goalId);
+    const currentPace = resolveWalletShareByGoal(claims, assetValues).get(
+      goalId,
+    );
     const projectedPace = resolveWalletShareByGoal(
       claims,
       projectedValues,
@@ -1726,7 +1734,6 @@ function normalizeSharePercent(
 }
 
 /** Entity → the pure domain's input shape. */
-
 
 /**
  * The wire shape of an allocation. `currentValue` is what this claim is worth

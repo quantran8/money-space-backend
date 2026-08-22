@@ -84,7 +84,10 @@ describe('walletValuesAfterOutflows', () => {
   it('only touches the wallet named, leaving the others whole', () => {
     const values = walletValuesAfterOutflows(
       forecastOf({
-        assets: [asset(), asset({ assetId: 'vcb', name: 'VCB', value: 30 * M })],
+        assets: [
+          asset(),
+          asset({ assetId: 'vcb', name: 'VCB', value: 30 * M }),
+        ],
         cashflowEvents: [event({ amount: 5 * M, settlementAssetId: 'vcb' })],
       }),
     );
@@ -145,9 +148,7 @@ describe('goal money yields to an outflow, pace first', () => {
       CAR_CLAIM,
       walletValuesAfterOutflows(
         forecastOf(
-          outflow === 0
-            ? {}
-            : { cashflowEvents: [event({ amount: outflow })] },
+          outflow === 0 ? {} : { cashflowEvents: [event({ amount: outflow })] },
         ),
       ),
     );

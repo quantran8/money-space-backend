@@ -234,7 +234,9 @@ describe('derived ids', () => {
     const items = derive({}, undefined, [
       { goalId: 'goal-car', name: 'Mua xe' },
     ]);
-    const signal = items.find((item) => item.ruleCode === 'goal_without_wallet');
+    const signal = items.find(
+      (item) => item.ruleCode === 'goal_without_wallet',
+    );
     expect(signal).toBeDefined();
     expect(signal).toEqual(
       expect.objectContaining({

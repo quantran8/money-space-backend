@@ -66,7 +66,7 @@ describe('PrismaGoalsRepository — deleted assets in allocation reads', () => {
   it('still finds a single claim whose asset is gone', async () => {
     const { repository, findFirst } = setup();
     await repository.findAllocationById('hh-1', 'alloc-1');
-    const where = findFirst.mock.calls[0]![0].where;
+    const where = findFirst.mock.calls[0][0].where;
     expect(where).not.toHaveProperty('asset');
   });
 
@@ -76,9 +76,13 @@ describe('PrismaGoalsRepository — deleted assets in allocation reads', () => {
   it('finds claims over the very asset being deleted', async () => {
     const { repository, findMany } = setup();
     await repository.findAllocationsByAsset('hh-1', 'asset-vcb');
-    const where = findMany.mock.calls[0]![0].where;
+    const where = findMany.mock.calls[0][0].where;
     expect(where).toEqual(
-      expect.objectContaining({ householdId: 'hh-1', assetId: 'asset-vcb', deletedAt: null }),
+      expect.objectContaining({
+        householdId: 'hh-1',
+        assetId: 'asset-vcb',
+        deletedAt: null,
+      }),
     );
     expect(where).not.toHaveProperty('asset');
   });

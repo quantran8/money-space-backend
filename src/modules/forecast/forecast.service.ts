@@ -68,9 +68,7 @@ export interface WhatIfResult {
    * What every goal gives up, in money AND in time. Measured across all
    * flexible wallets — what-if names no single wallet.
    */
-  goalImpact: Awaited<
-    ReturnType<GoalsService['spendImpactAcrossWallets']>
-  > & {
+  goalImpact: Awaited<ReturnType<GoalsService['spendImpactAcrossWallets']>> & {
     /**
      * The part of the spend no wallet could cover. 0 when it fits.
      *

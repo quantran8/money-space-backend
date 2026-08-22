@@ -60,6 +60,9 @@ export class AuthController {
     if (!payload?.code) {
       throw new BadRequestException('code is required');
     }
+    if (!payload?.state) {
+      throw new BadRequestException('state is required');
+    }
     return this.authService.googleCallback(payload);
   }
 

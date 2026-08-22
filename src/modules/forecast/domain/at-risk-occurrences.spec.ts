@@ -1,8 +1,5 @@
 import { runForecast } from './forecast';
-import {
-  findAtRiskOccurrences,
-  findNewlyAtRisk,
-} from './at-risk-occurrences';
+import { findAtRiskOccurrences, findNewlyAtRisk } from './at-risk-occurrences';
 import { buildSyntheticEvent } from './what-if';
 import type {
   ForecastCashflowEvent,
@@ -60,9 +57,7 @@ describe('findAtRiskOccurrences', () => {
 
   it('names the item the balance cannot cover, and by how much', () => {
     const forecast = forecastOf({
-      cashflowEvents: [
-        event({ id: 'rent', name: 'Tiền nhà', amount: 12 * M }),
-      ],
+      cashflowEvents: [event({ id: 'rent', name: 'Tiền nhà', amount: 12 * M })],
     });
 
     const atRisk = findAtRiskOccurrences(forecast);
@@ -151,8 +146,18 @@ describe('findAtRiskOccurrences', () => {
   it('reports later items as fully short once the balance is gone', () => {
     const forecast = forecastOf({
       cashflowEvents: [
-        event({ id: 'a', name: 'A', amount: 12 * M, expectedDate: '2026-08-15' }),
-        event({ id: 'b', name: 'B', amount: 3 * M, expectedDate: '2026-08-16' }),
+        event({
+          id: 'a',
+          name: 'A',
+          amount: 12 * M,
+          expectedDate: '2026-08-15',
+        }),
+        event({
+          id: 'b',
+          name: 'B',
+          amount: 3 * M,
+          expectedDate: '2026-08-16',
+        }),
       ],
     });
 
@@ -167,9 +172,7 @@ describe('findAtRiskOccurrences', () => {
 
 describe('findNewlyAtRisk', () => {
   const input: Partial<ForecastInput> = {
-    cashflowEvents: [
-      event({ id: 'rent', name: 'Tiền nhà', amount: 8 * M }),
-    ],
+    cashflowEvents: [event({ id: 'rent', name: 'Tiền nhà', amount: 8 * M })],
   };
 
   it('blames a spend only for what it actually breaks', () => {

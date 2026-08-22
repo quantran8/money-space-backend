@@ -101,10 +101,7 @@ function allocationValue(
     const basis = percentBasis?.get(allocation.assetId) ?? assetValue;
     // Capped at the wallet's live value for the same reason a fixed claim is:
     // reporting more than is there would be the product inventing money.
-    return Math.min(
-      (basis * Math.min(100, percent)) / 100,
-      assetValue,
-    );
+    return Math.min((basis * Math.min(100, percent)) / 100, assetValue);
   }
   const allocated = allocation.allocatedAmount ?? 0;
   if (allocated <= 0) {

@@ -284,7 +284,8 @@ export function projectGoalDelayFromSpend(
 
   // The set-aside half, in months: how long the pace takes to put it back.
   const fromSetAside =
-    before.estimatedMonthsToGoal !== null && after.estimatedMonthsToGoal !== null
+    before.estimatedMonthsToGoal !== null &&
+    after.estimatedMonthsToGoal !== null
       ? after.estimatedMonthsToGoal - before.estimatedMonthsToGoal
       : cost.setAsideReduction / pace;
 
