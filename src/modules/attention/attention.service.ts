@@ -19,6 +19,11 @@ import type {
   AttentionItemView,
   StoredAttentionItem,
 } from './entities/attention-item.entity';
+// A repository, not GoalsService: GoalsModule imports Assets and Forecast, and
+// Forecast imports Goals — pulling the service in here would drag that whole
+// knot into a module that only needs two plain reads.
+import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interface';
+import type { GoalsRepository } from '../goals/repositories/goals.repository.interface';
 import { ATTENTION_REPOSITORY } from './repositories/attention.repository.interface';
 import type {
   AttentionRepository,
@@ -58,6 +63,8 @@ export class AttentionService {
     @Inject(ATTENTION_REPOSITORY)
     private readonly attentionRepository: AttentionRepository,
     private readonly forecast: ForecastService,
+    @Inject(GOALS_REPOSITORY)
+    private readonly goalsRepository: GoalsRepository,
   ) {}
 
   async listAttentionItems(householdId: string): Promise<{
@@ -70,12 +77,15 @@ export class AttentionService {
     // The household row is real input here (`updateFrequency` drives staleness),
     // not an access check — the guard already did that — so it loads alongside
     // the rest instead of in front of it.
-    const [household, stored, dismissals, input] = await Promise.all([
-      this.attentionRepository.assertHousehold(householdId),
-      this.attentionRepository.findOpenStoredItems(householdId),
-      this.attentionRepository.findDismissals(householdId),
-      this.forecast.loadInput(householdId, ATTENTION_HORIZON_DAYS),
-    ]);
+    const [household, stored, dismissals, input, goals, allocations] =
+      await Promise.all([
+        this.attentionRepository.assertHousehold(householdId),
+        this.attentionRepository.findOpenStoredItems(householdId),
+        this.attentionRepository.findDismissals(householdId),
+        this.forecast.loadInput(householdId, ATTENTION_HORIZON_DAYS),
+        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+        this.goalsRepository.findAllocationsByHousehold(householdId),
+      ]);
 
     const forecast = runForecast(input);
     const flexible = computeFlexibleMoney(forecast);
@@ -99,11 +109,44 @@ export class AttentionService {
         daysSinceUpdate: entry.freshness.daysSinceUpdate ?? 0,
       }));
 
+    /**
+     * Goals with claims behind them but no CONTRIBUTION share among those
+     * claims — nothing they can be saved into month to month.
+     *
+     * Read from `role`, not from the asset's type, because `role` is the
+     * household's own answer to "is this wallet feeding the goal, or value it
+     * already holds?" and it is the same field the asset delete flow checks
+     * when it warns that a goal is about to lose its last wallet. Two places
+     * deciding "does this goal have a wallet?" differently is how the warning
+     * and the signal would end up disagreeing about the same goal.
+     *
+     * `findAllocationsByHousehold` already skips claims over deleted assets, so
+     * a goal whose only wallet was deleted lands here on the very next read —
+     * which is exactly the case this signal exists for.
+     */
+    const contributionGoalIds = new Set(
+      allocations
+        .filter((allocation) => allocation.role === 'contribution')
+        .map((allocation) => allocation.financialGoalId),
+    );
+    const claimedGoalIds = new Set(
+      allocations.map((allocation) => allocation.financialGoalId),
+    );
+    const goalsWithoutWallet = goals
+      // A goal with NO claims at all is a different situation (nothing behind it
+      // yet, rather than nothing to pay into it) and is not this signal's job.
+      .filter(
+        (goal) =>
+          claimedGoalIds.has(goal.id) && !contributionGoalIds.has(goal.id),
+      )
+      .map((goal) => ({ goalId: goal.id, name: goal.name }));
+
     const derived = deriveAttentionItems({
       asOfDate: input.asOfDate,
       forecast,
       flexible,
       staleAssets,
+      goalsWithoutWallet,
     });
 
     const visibleDerived = derived.filter(

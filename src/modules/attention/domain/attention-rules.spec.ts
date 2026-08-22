@@ -47,6 +47,7 @@ function event(
 function derive(
   over: Partial<ForecastInput> = {},
   staleAssets?: { assetId: string; name: string; daysSinceUpdate: number }[],
+  goalsWithoutWallet?: { goalId: string; name: string }[],
 ) {
   const input: ForecastInput = {
     householdId: 'hh-1',
@@ -62,6 +63,7 @@ function derive(
     forecast,
     flexible: computeFlexibleMoney(forecast),
     staleAssets,
+    goalsWithoutWallet,
   });
 }
 
@@ -221,6 +223,36 @@ describe('derived ids', () => {
     expect(first[0].id).toBe(second[0].id);
     expect(first[0].id).toBe(
       derivedAttentionId('cashflow_required_due_soon', 'e1'),
+    );
+  });
+
+  // A goal that lost its last wallet — usually because the asset backing it was
+  // deleted, which the delete flow now allows instead of refusing. The goal
+  // still exists and still has a target, but nothing can be paid into it, and
+  // this is the only thing that says so.
+  it('raises one signal per goal left without a wallet', () => {
+    const items = derive({}, undefined, [
+      { goalId: 'goal-car', name: 'Mua xe' },
+    ]);
+    const signal = items.find((item) => item.ruleCode === 'goal_without_wallet');
+    expect(signal).toBeDefined();
+    expect(signal).toEqual(
+      expect.objectContaining({
+        level: 'important',
+        relatedObjectType: 'financial_goal',
+        relatedObjectId: 'goal-car',
+        // Codes and params only — never prose. The client writes the sentence.
+        params: { goalName: 'Mua xe' },
+      }),
+    );
+  });
+
+  // Derived, not stored: the household fixes it by adding a wallet, and the
+  // signal has to disappear on the next read with nothing to clean up.
+  it('raises no wallet signal when no goal is missing one', () => {
+    expect(codes(derive())).not.toContain('goal_without_wallet');
+    expect(codes(derive({}, undefined, []))).not.toContain(
+      'goal_without_wallet',
     );
   });
 

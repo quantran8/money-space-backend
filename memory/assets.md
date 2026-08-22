@@ -62,7 +62,27 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
   - Entry points: the asset form, and the **"Mua tài sản"** quick action on the
     events page — which opens that form already set to "vừa mua", mirroring
     "Bán tài sản". See [[money-events]].
-- **Delete** = soft-delete (`deletedAt`) + also delete the asset's valuations + unlink the asset from any money events.
+- **Delete** = soft-delete (`deletedAt`), and — because a soft delete fires no
+  database cascade — the app must clear everything pointing at the asset itself.
+  - **Refused by default.** While a live goal claim, cashflow event or debt still
+    names the asset, `DELETE .../assets/:assetId` returns **409** with an
+    `impact` payload rather than deleting. `GET .../assets/:assetId/delete-impact`
+    returns the same shape as a plain read, so the confirmation dialog can state
+    the cost before the household decides.
+  - **`?cascade=true`** is that decision. In one transaction it soft-deletes the
+    asset, its valuations, its market position and calculation term, and its goal
+    allocations; unlinks it from money events, cashflow events
+    (`planned` / `settlement` / `last_completed`) and debts; then **recomputes
+    `financial_goals.planned_monthly_contribution`** for every affected goal from
+    the claims that survive. The events, debts and goals themselves all survive —
+    only the pointer goes.
+  - **Why it matters:** every one of those relations declares an `ON DELETE`
+    rule, and none of them can fire against a soft delete. Before this, deleting
+    an asset left goals listing a wallet the household had removed — no name, no
+    value, and its share of the progress silently zero. See [[goals]].
+  - A goal may be left with **no contribution wallet at all** — that is allowed
+    (the alternative was blocking the delete), and the `goal_without_wallet`
+    attention signal is what says so. See [[attention-items]].
 - **Status / lifecycle**: `status` (`active` | `sold` | `closed`, default `active`) + `soldAt`. Distinct from `deletedAt`: a **sold** asset is kept (quantity/value 0) for history, excluded from the liquidity buckets and net worth, but still listed. Selling an asset (reducing the position + closing it on a full sale) is driven by an `asset_sale` money event — see [[asset-sale]]. `AssetsService.sellPosition` / `reverseSalePosition` apply/undo the position change.
 - **Wallet balance moves**: `cash` and `bank_account` are "wallet" assets that hold a free spendable balance (`WALLET_ASSET_TYPES` in `assets.service.ts`). `AssetsService.creditManualAsset` / `debitManualAsset` add/subtract from the wallet's `manualValue` and re-upsert its valuation; a debit floors at 0 (never negative). These are **no-ops for any other asset type** (stock, gold, saving deposit, …), which are valued from price/formula, not a stored cash balance. Callers: every money event with a `fromAsset`/`toAsset` (see [[money-events]]), and debt borrow/delete (indirectly, via the events layer — see [[debts]]).
 

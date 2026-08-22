@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapAsset,
@@ -311,6 +312,19 @@ export class PrismaAssetsRepository
     });
   }
 
+  async deleteAssetDetails(assetId: string): Promise<void> {
+    const deletedAt = new Date();
+    // Sequential: runs inside the asset delete transaction's single connection.
+    await this.prisma.assetMarketPosition.updateMany({
+      where: { assetId, deletedAt: null },
+      data: { deletedAt },
+    });
+    await this.prisma.assetCalculationTerm.updateMany({
+      where: { assetId, deletedAt: null },
+      data: { deletedAt },
+    });
+  }
+
   async findAssetValueHistoryByAsset(
     householdId: string,
     assetId: string,
@@ -343,6 +357,88 @@ export class PrismaAssetsRepository
     });
 
     return valuation ? mapAssetValueHistory(valuation) : undefined;
+  }
+
+  /**
+   * Bulk upsert of the daily market valuation points.
+   *
+   * The per-asset path does a lookup then a create/update — three round-trips
+   * per asset, which for a household with many positions blows past the
+   * interactive-transaction timeout and, run across every household by the
+   * daily job, would exhaust the small connection pool. This writes the whole
+   * batch in ONE statement.
+   *
+   * Conflict target is the partial unique index
+   * `asset_valuations_asset_date_cache_unique (asset_id, valuation_date)
+   *  WHERE money_event_id IS NULL AND deleted_at IS NULL` — i.e. exactly the
+   * unlinked "value on this date" row. Event-linked points are untouched, so a
+   * money event's own point is never clobbered by a re-price.
+   */
+  async upsertMarketValuationPoints(
+    valuations: AssetValueHistory[],
+  ): Promise<void> {
+    if (valuations.length === 0) return;
+
+    const rows = valuations.map(
+      (v) => Prisma.sql`(
+        ${v.id}::uuid,
+        ${v.householdId}::uuid,
+        ${v.assetId}::uuid,
+        ${v.value}::numeric,
+        ${v.currency},
+        ${v.valuationDate}::date,
+        ${v.method}::"AssetValuationMethod",
+        ${v.source ?? null},
+        ${v.confidenceLevel ?? null}::"ConfidenceLevel",
+        ${v.note ?? null}
+      )`,
+    );
+
+    await this.prisma.$executeRaw`
+      INSERT INTO "asset_valuations" (
+        "id", "household_id", "asset_id", "value", "currency",
+        "valuation_date", "valuation_method", "source", "confidence_level",
+        "note", "created_at", "updated_at"
+      )
+      SELECT v.id, v.household_id, v.asset_id, v.value, v.currency,
+             v.valuation_date, v.valuation_method, v.source, v.confidence_level,
+             v.note, NOW(), NOW()
+      FROM (VALUES ${Prisma.join(rows)}) AS v (
+        id, household_id, asset_id, value, currency, valuation_date,
+        valuation_method, source, confidence_level, note
+      )
+      ON CONFLICT ("asset_id", "valuation_date")
+        WHERE "money_event_id" IS NULL AND "deleted_at" IS NULL
+      DO UPDATE SET
+        "value" = EXCLUDED."value",
+        "currency" = EXCLUDED."currency",
+        "valuation_method" = EXCLUDED."valuation_method",
+        "source" = EXCLUDED."source",
+        "confidence_level" = EXCLUDED."confidence_level",
+        "note" = EXCLUDED."note",
+        "updated_at" = NOW()
+    `;
+  }
+
+  /**
+   * Bulk `current_value` write. One UPDATE ... FROM (VALUES ...) instead of one
+   * statement per asset, for the same reason as above.
+   */
+  async updateAssetCurrentValues(
+    values: Array<{ assetId: string; value: number }>,
+  ): Promise<void> {
+    if (values.length === 0) return;
+
+    const rows = values.map(
+      (v) => Prisma.sql`(${v.assetId}::uuid, ${v.value}::numeric)`,
+    );
+
+    await this.prisma.$executeRaw`
+      UPDATE "assets" AS a
+      SET "current_value" = v.value, "updated_at" = NOW()
+      FROM (VALUES ${Prisma.join(rows)}) AS v (asset_id, value)
+      WHERE a."id" = v.asset_id
+    `;
   }
 
   async insertAssetValueHistory(valuation: AssetValueHistory): Promise<void> {
@@ -389,6 +485,28 @@ export class PrismaAssetsRepository
     await this.prisma.assetValuation.create({
       data: { id: valuation.id, ...data },
     });
+  }
+
+  async findHouseholdsNeedingMarketValuation(
+    valuationDate: string,
+    limit: number,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<Array<{ household_id: string }>>`
+      SELECT DISTINCT a."household_id"
+      FROM "assets" a
+      WHERE a."deleted_at" IS NULL
+        AND a."status" = 'active'
+        AND a."valuation_mode" = 'market_priced'
+        AND NOT EXISTS (
+          SELECT 1 FROM "asset_valuations" v
+          WHERE v."household_id" = a."household_id"
+            AND v."valuation_date" = ${valuationDate}::date
+            AND v."valuation_method" = 'market_price_api'
+            AND v."deleted_at" IS NULL
+        )
+      LIMIT ${limit}
+    `;
+    return rows.map((row) => row.household_id);
   }
 
   async hasMarketValuationOnDate(
@@ -493,6 +611,7 @@ export class PrismaAssetsRepository
         assetId: asset.id,
         assetClass: asset.marketPosition.assetClass,
         symbol: asset.marketPosition.symbol,
+        market: asset.marketPosition.market ?? null,
         quantity: asset.marketPosition.quantity,
         unit: asset.marketPosition.unit,
         quoteCurrency: asset.marketPosition.quoteCurrency,

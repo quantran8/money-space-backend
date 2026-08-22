@@ -5,10 +5,9 @@ import { DashboardService } from './dashboard.service';
 import { DASHBOARD_REPOSITORY } from './repositories/dashboard.repository.interface';
 import { PrismaDashboardRepository } from './repositories/prisma-dashboard.repository';
 import { MarketDataModule } from '../market-data/market-data.module';
-import { AssetsModule } from '../assets/assets.module';
 
 @Module({
-  imports: [CommonModule, MarketDataModule, AssetsModule],
+  imports: [CommonModule, MarketDataModule],
   controllers: [DashboardController],
   providers: [
     DashboardService,

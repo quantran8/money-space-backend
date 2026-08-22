@@ -281,6 +281,27 @@ export class PrismaCashflowEventsRepository
     });
   }
 
+  async unlinkAssetFromCashflowEvents(
+    householdId: string,
+    assetId: string,
+  ): Promise<void> {
+    // Runs inside the asset delete transaction (shared connection), so these
+    // run sequentially rather than concurrently on the same client — the same
+    // reason `unlinkAssetFromMoneyEvents` avoids `Promise.all`.
+    await this.prisma.cashflowEvent.updateMany({
+      where: { householdId, plannedAssetId: assetId },
+      data: { plannedAssetId: null },
+    });
+    await this.prisma.cashflowEvent.updateMany({
+      where: { householdId, settlementAssetId: assetId },
+      data: { settlementAssetId: null },
+    });
+    await this.prisma.cashflowEvent.updateMany({
+      where: { householdId, lastCompletedAssetId: assetId },
+      data: { lastCompletedAssetId: null },
+    });
+  }
+
   async updateOpenCashflowEventAmountsByDebt(
     householdId: string,
     debtId: string,

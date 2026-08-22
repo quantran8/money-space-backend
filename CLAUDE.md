@@ -24,7 +24,7 @@ read goes straight to Postgres, so local dev, CI, and tests need no Redis. When
 Redis is configured but unreachable, `CacheService` logs once and reports a miss
 — an outage costs latency, never correctness, and never a 500.
 
-- **Cached today**: the dashboard and the forecast.
+- **Cached today**: the dashboard, the forecast, and market data.
   - **Dashboard** (`GET .../dashboard`) fans out to ten parallel queries.
     `assertHousehold` runs **outside** the cached region — a cache hit must
     never let a caller skip the existence/authorization check.
@@ -40,6 +40,15 @@ Redis is configured but unreachable, `CacheService` logs once and reports a miss
     nothing — it is a POST only because it needs a body. It carries
     `@NoCacheInvalidation()`; without it, tuning an amount would flush a valid
     cache on every run. Use that decorator for any other write-shaped read.
+  - **Market data** (`market:*`) is the one cached region that is deliberately
+    **not** per-household. **Every** read endpoint on `MarketDataController` is
+    cache-backed — prices, symbols, gold, FX counter rates and the persisted
+    fx-rates list — and `market-data.controller.spec.ts` asserts it, so a new
+    endpoint that forgets to cache fails the build: quotes and symbol
+    listings are global and identical for everyone. Keeping them outside the
+    `hh:` prefix is what stops `CacheInvalidationInterceptor` from dropping them
+    after every household write — editing an asset has not changed what BTC is
+    worth. Provider calls are metered, so that would cost real credits.
 - **Build keys only in [src/common/cache/cache.keys.ts](src/common/cache/cache.keys.ts).**
   Every per-household entry must live under the `hh:<id>:` prefix so one
   `delByPrefix` drops all of them. A key built ad-hoc in a service silently
@@ -59,6 +68,27 @@ Redis is configured but unreachable, `CacheService` logs once and reports a miss
   transaction defers automatically.
 - **Anything cached must be JSON round-trippable** — `undefined`, `Date`, and
   `Decimal` do not survive. The dashboard already returns plain numbers/strings.
+
+## Scheduled jobs
+
+`ScheduleModule.forRoot()` is registered in `AppModule`. One job today:
+`AssetsValuationCron` (23:45 Asia/Ho_Chi_Minh) captures every market asset's
+end-of-day value, so history holds settled days while today stays live — see
+`memory/market-data.md`. It is the only writer of that series; nothing
+re-prices per page visit.
+
+Two rules any new job must follow, both learned from that one:
+
+- **Cap concurrency.** `DATABASE_URL` carries `connection_limit=8` against a
+  project-wide `pool_size: 15`. A job that fans out unbounded drains the pool
+  and starves live requests — background work must never make the app slower
+  for someone using it.
+- **Guard against overlap.** A tick that starts while the previous one is still
+  running doubles that pressure. Keep an in-process `running` flag.
+
+Every instance runs its own scheduler, so a job that must execute exactly once
+needs an env switch (`MARKET_VALUATION_CRON_ENABLED=false`) or an external
+scheduler hitting the equivalent endpoint.
 
 ## Data-writing conventions
 
@@ -165,6 +195,17 @@ materialized into `assets.liquidity` — the single column every consumer alread
 reads. The banned shape is a rule only one consumer knows about. Any future
 "exclude this record from a figure" feature must land in the shared, stored
 value the same way. See `memory/assets.md`.
+
+## Comment style
+
+**Keep code comments short.** Business logic (nghiệp vụ) rationale — why a rule
+exists, trade-offs weighed, alternatives rejected, the measured numbers behind a
+decision — belongs in `memory/`, not inline. A long explanatory comment
+duplicates the doc, drifts out of sync with it, and buries the code.
+
+In code, say *what* a line does, or give a one-line caveat when something is
+genuinely surprising, and point at the memory file for the reasoning. When a
+change needs a paragraph of justification, that paragraph is a `memory/` edit.
 
 ## Business logic memory
 

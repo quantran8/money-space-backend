@@ -43,6 +43,11 @@ any payment can name a different wallet, and a debt that leaves it empty simply
 asks at completion time. Changing it counts as a schedule change
 (`repaymentScheduleChanged`) so the still-open repayments get restamped.
 
+Deleting the asset clears it back to NULL rather than blocking the delete or
+removing the debt (see [[assets]]): money owed is owed whether or not the wallet
+it was borrowed into still exists. The debt then behaves exactly like one that
+never named a wallet — it asks at completion time.
+
 This is why outgoing cashflow events are **not** required to carry a settlement
 wallet at create time — see [[forecast-and-flexible-money]]. Requiring one made
 every debt with a repayment schedule unsaveable.

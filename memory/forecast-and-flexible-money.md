@@ -39,6 +39,38 @@ synthetic events are objects that never leave memory.
    long-term holdings are net worth, not cash flow; counting them would make a
    household look liquid when its money is locked up.
 
+   **Zero `usable_now` assets is not a balance of 0đ.** The sum is 0 either way,
+   but the two mean different things: a wallet holding nothing is a balance the
+   household has, while no wallet at all means there is no balance to run down.
+   With no source, every projected figure derived from it (`lowestProjectedBalance`,
+   the timeline's running-balance column) is arithmetic on money nobody holds —
+   a 1tr outflow rendered as "−1,0 triệu", which reads as an overdraft that does
+   not exist. The UI shows **"—"** for both in that case, gated on
+   `usableNowAssetCount === 0`; `no_liquid_sources` (a financial-state reason)
+   is what explains why. A genuine deficit — an outflow larger than a real
+   wallet — still shows its negative figure: that is the screen's whole purpose.
+   Sums of real events (`Tiền vào` / `Tiền ra`) are unaffected, since they
+   depend on no balance existing.
+
+   The count rides on **both** payloads — `ForecastResult` and
+   `FlexibleMoneyResult` — because the dashboard's hero reads the flexible one
+   and would otherwise have no way to tell 0đ from "no wallet".
+   `currentSharedLiquidMoney` cannot answer it: it is the same 0 either way.
+
+   One predicate, `canProjectBalance(usableNowAssetCount)` in the web's
+   `forecast-presentation`, gates every surface: the dashboard hero
+   (`financial-picture-section`), the dashboard's projected low and its
+   running-balance column (`upcoming-section` / `buildTimelineRows`), and the
+   Upcoming screen's summary and timeline. It is deliberately shared — the rule
+   was first fixed on Upcoming alone, and the dashboard went on showing
+   "−1,0 triệu" in red because it computes the same figures from its own copy of
+   the logic. `undefined` reads as "there is a source", so an older server can
+   never blank a column.
+
+   **Not yet applied to what-if**, which compares a before/after pair through
+   `WhatIfSideResult` — a payload that does not carry the count. With no wallet
+   both sides are projections of money nobody holds.
+
    The household can overrule the type default per asset —
    `assets.counts_as_flexible` (see [[assets]]) — but that override is
    **materialized into the `liquidity` column**, so this step is unchanged and

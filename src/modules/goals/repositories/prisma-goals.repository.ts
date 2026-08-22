@@ -158,22 +158,45 @@ export class PrismaGoalsRepository
     });
   }
 
+  /**
+   * Every LIVE claim in the household — live in BOTH directions.
+   *
+   * `asset: { deletedAt: null }` is not defensive noise. Assets are
+   * soft-deleted, so the `onDelete: Cascade` declared on this relation never
+   * fires: deleting an asset leaves its allocations sitting there, pointing at
+   * a row nothing else will ever return. Those orphans then reach the goal
+   * screens, where the asset resolves to no value and no name — a claim shown
+   * against money that no longer exists.
+   *
+   * The filter lives HERE rather than in `GoalsService` because it is a
+   * condition on what an allocation IS, not on what one caller wants. Every
+   * consumer reads goal progress from these rows; a service-level filter would
+   * have to be repeated at each of them, and the next one added would forget.
+   *
+   * `findAllocationById` deliberately does NOT filter this way — see there.
+   */
   async findAllocationsByHousehold(
     householdId: string,
   ): Promise<GoalAssetAllocation[]> {
     const rows = await this.prisma.goalAssetAllocation.findMany({
-      where: { householdId, deletedAt: null },
+      where: { householdId, deletedAt: null, asset: { deletedAt: null } },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map((row) => mapGoalAssetAllocation(row));
   }
 
+  /** One goal's live claims. Skips deleted assets for the reason above. */
   async findAllocationsByGoal(
     householdId: string,
     goalId: string,
   ): Promise<GoalAssetAllocation[]> {
     const rows = await this.prisma.goalAssetAllocation.findMany({
-      where: { householdId, financialGoalId: goalId, deletedAt: null },
+      where: {
+        householdId,
+        financialGoalId: goalId,
+        deletedAt: null,
+        asset: { deletedAt: null },
+      },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map((row) => mapGoalAssetAllocation(row));
@@ -215,6 +238,15 @@ export class PrismaGoalsRepository
     }));
   }
 
+  /**
+   * One claim by id, WITHOUT the `asset.deletedAt` filter the list reads apply.
+   *
+   * The lists answer "what does this goal hold?", so a claim over a deleted
+   * asset does not belong in them. This answers "which row am I editing?", and
+   * an orphaned claim is exactly the row a household needs to be able to reach
+   * — to delete it, or to point it somewhere real. Filtering here would make
+   * the orphan invisible AND unremovable.
+   */
   async findAllocationById(
     householdId: string,
     allocationId: string,
@@ -300,6 +332,31 @@ export class PrismaGoalsRepository
   ): Promise<void> {
     await this.prisma.goalAssetAllocation.updateMany({
       where: { householdId, financialGoalId: goalId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+  }
+
+  /**
+   * Every live claim over one asset. No `asset.deletedAt` filter on purpose —
+   * see the interface: the caller is asking about an asset being removed.
+   */
+  async findAllocationsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<GoalAssetAllocation[]> {
+    const rows = await this.prisma.goalAssetAllocation.findMany({
+      where: { householdId, assetId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((row) => mapGoalAssetAllocation(row));
+  }
+
+  async deleteAllocationsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<void> {
+    await this.prisma.goalAssetAllocation.updateMany({
+      where: { householdId, assetId, deletedAt: null },
       data: { deletedAt: new Date() },
     });
   }

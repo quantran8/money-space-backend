@@ -388,4 +388,20 @@ export class PrismaDebtsRepository
         AND h.deleted_at IS NULL
     `;
   }
+
+  async unlinkAssetFromDebts(
+    householdId: string,
+    assetId: string,
+  ): Promise<void> {
+    // Sequential for the same reason as the cashflow equivalent: this runs
+    // inside the asset delete transaction, on its single connection.
+    await this.prisma.debt.updateMany({
+      where: { householdId, receivedToAssetId: assetId },
+      data: { receivedToAssetId: null },
+    });
+    await this.prisma.debt.updateMany({
+      where: { householdId, repaymentAssetId: assetId },
+      data: { repaymentAssetId: null },
+    });
+  }
 }

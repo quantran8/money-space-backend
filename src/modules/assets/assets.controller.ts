@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CurrentMembership } from '../auth/decorators/current-membership.decorator';
@@ -108,12 +109,36 @@ export class AssetsController {
     return this.assetsService.updateAsset(householdId, assetId, payload);
   }
 
+  /**
+   * What deleting this asset would detach. A READ, called by the delete
+   * confirmation before anything happens — the household is told what it is
+   * about to lose while it can still say no.
+   */
+  @Get(':assetId/delete-impact')
+  assetDeleteImpact(
+    @Param('householdId') householdId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.assetsService.getAssetDeleteImpact(householdId, assetId);
+  }
+
+  /**
+   * `?cascade=true` is the household's answer to the 409 this returns while the
+   * asset still backs anything. Never a default: the links it clears are the
+   * ones that make a goal's progress mean what it means.
+   */
   @Delete(':assetId')
   deleteAsset(
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
+    @Query('cascade') cascade?: string,
     @CurrentUser() user?: AuthUser,
   ) {
-    return this.assetsService.deleteAsset(householdId, assetId, user?.id);
+    return this.assetsService.deleteAsset(
+      householdId,
+      assetId,
+      user?.id,
+      cascade === 'true',
+    );
   }
 }

@@ -307,6 +307,35 @@ can I spend", and money earmarked for a bill cannot be spent twice. A goal's pac
 answers "what have we put in" — a different question about a different moment.
 The two must not be "fixed" into agreement.
 
+### A goal may exist with no wallet behind it
+
+**It used to be refused, in three places, and all three are gone.** Creating a
+goal backed only by holdings, and removing a goal's last `contribution` share,
+both raised a 400; the web form mirrored the same rule.
+
+The rule was right about the consequence and wrong about the remedy. A goal with
+no wallet has nothing that can be paid into it, so its monthly pace panel can
+only stay empty — that is still true, and still worth telling the household. But
+the state was **reachable without anyone choosing it**: deleting the asset that
+was a goal's last wallet got there by a route that had no guard at all. Enforced
+only on create and on allocation-delete, the rule left goals that existed and
+could not be edited back into legality.
+
+So the state is now legal and **named** instead:
+
+- `goal_without_wallet` — a derived attention signal (level `important`,
+  `relatedObjectType: 'financial_goal'`), recomputed on every read, so it clears
+  itself the moment a wallet is added. See [[attention-items]].
+- The goal detail's allocations panel and the create form both show a notice.
+- The pace resolves to **NULL**, exactly as it does for any goal where no share
+  declares a figure — so "no wallet" reports as "no pace planned", never as a
+  missed month.
+- Deleting an asset warns separately about goals it would leave in this state
+  (`goalsLosingLastWallet` on the delete-impact payload). See [[assets]].
+
+**Still refused:** a goal with *no allocations at all*. That one has no progress
+and no way to gain any, so it would sit at a permanent 0%.
+
 ### Where the pace comes from: the wallets declare it
 
 **The monthly pace is declared per wallet, never on the goal.** Each

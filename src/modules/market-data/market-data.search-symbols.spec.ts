@@ -3,6 +3,16 @@ import type { MarketDataRepository } from './repositories/market-data.repository
 import type { PriceProvider } from './providers/price-provider.interface';
 import type { SymbolReferenceProvider } from './providers/symbol-reference-provider.interface';
 import type { SymbolReference } from './entities/symbol-reference.entity';
+import type { CacheService } from '../../common/cache/cache.service';
+
+/** Cache disabled, as in tests (`NODE_ENV=test`): every read is a miss. */
+function noopCache(): CacheService {
+  return {
+    get: jest.fn().mockResolvedValue(undefined),
+    set: jest.fn().mockResolvedValue(undefined),
+    wrap: jest.fn((_key: string, loader: () => Promise<unknown>) => loader()),
+  } as unknown as CacheService;
+}
 
 function buildService(reference: SymbolReference[]) {
   const repository = {
@@ -19,6 +29,11 @@ function buildService(reference: SymbolReference[]) {
     repository,
     priceProvider,
     symbolReferenceProvider,
+    {
+      getGoldPrices: jest.fn().mockResolvedValue([]),
+      getFxCounterRates: jest.fn().mockResolvedValue([]),
+    },
+    noopCache(),
   );
 }
 
@@ -120,5 +135,24 @@ describe('MarketDataService.searchSymbols', () => {
       limit: '999',
     });
     expect(result.items.length).toBeLessThanOrEqual(50);
+  });
+
+  it('shows the whole gold/silver list, not a curated shortlist', async () => {
+    // Gold and FX lists are already short and curated upstream (the dealer's
+    // products, the supported currencies). Filtering them through
+    // DEFAULT_SYMBOLS would hide most of what the user can actually pick.
+    const products = Array.from({ length: 15 }, (_, i) => ({
+      assetClass: 'gold' as const,
+      symbol: `SẢN PHẨM ${i}`,
+      name: `Sản phẩm ${i}`,
+      exchange: 'Đại lý',
+      currency: 'VND',
+      unit: 'lượng',
+    }));
+    const service = buildService(products);
+
+    const result = await service.searchSymbols({ assetClass: 'gold' });
+
+    expect(result.total).toBe(15);
   });
 });

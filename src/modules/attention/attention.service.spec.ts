@@ -45,6 +45,8 @@ function setup(
     dismissals?: DismissalTombstone[];
     input?: Partial<ForecastInput>;
     updateFrequency?: 'weekly' | 'monthly' | 'manual';
+    goals?: Array<{ id: string; name: string }>;
+    allocations?: Array<{ financialGoalId: string; role: string }>;
   } = {},
 ) {
   const insertItem = jest.fn(async () => undefined);
@@ -70,8 +72,19 @@ function setup(
     loadInput: jest.fn(async () => forecastInput(options.input)),
   } as never;
 
+  // Feeds `goal_without_wallet`. Empty by default: these cases are about the
+  // forecast-derived signals, and a household with no goals raises none of it.
+  const goalsRepository = {
+    findFinancialGoalsByHousehold: jest.fn(async () => options.goals ?? []),
+    findAllocationsByHousehold: jest.fn(async () => options.allocations ?? []),
+  } as never;
+
   return {
-    service: new AttentionService(attentionRepository, forecast),
+    service: new AttentionService(
+      attentionRepository,
+      forecast,
+      goalsRepository,
+    ),
     attentionRepository: attentionRepository as Record<string, jest.Mock>,
     insertItem,
   };
@@ -221,6 +234,55 @@ describe('AttentionService.listAttentionItems', () => {
    * A household on `manual` said "we'll update when we want to". Grading them
    * against a cadence they never agreed to is the nagging §29 forbids.
    */
+  // The signal reads `role`, not the asset's type: `role` is the household's own
+  // answer to "is this wallet feeding the goal, or value it already holds?", and
+  // it is the same field the asset delete flow checks when it warns a goal is
+  // about to lose its last wallet. Two places answering "does this goal have a
+  // wallet?" differently is how the warning and the signal would disagree.
+  it('flags a goal whose claims are all holdings', async () => {
+    const { service } = setup({
+      goals: [{ id: 'goal-car', name: 'Mua xe' }],
+      allocations: [{ financialGoalId: 'goal-car', role: 'holding' }],
+    });
+
+    const result = await service.listAttentionItems('hh-1');
+    const signal = result.items.find(
+      (item) => item.ruleCode === 'goal_without_wallet',
+    );
+    expect(signal).toBeDefined();
+    expect(signal?.relatedObjectId).toBe('goal-car');
+  });
+
+  it('does not flag a goal that still has a contribution wallet', async () => {
+    const { service } = setup({
+      goals: [{ id: 'goal-car', name: 'Mua xe' }],
+      allocations: [
+        { financialGoalId: 'goal-car', role: 'holding' },
+        { financialGoalId: 'goal-car', role: 'contribution' },
+      ],
+    });
+
+    const result = await service.listAttentionItems('hh-1');
+    expect(
+      result.items.some((item) => item.ruleCode === 'goal_without_wallet'),
+    ).toBe(false);
+  });
+
+  // A goal with NOTHING behind it is a different situation — nothing has been
+  // chosen yet, rather than the wallet having gone away — and is not this
+  // signal's job.
+  it('does not flag a goal with no claims at all', async () => {
+    const { service } = setup({
+      goals: [{ id: 'goal-new', name: 'Chưa chọn tài sản' }],
+      allocations: [],
+    });
+
+    const result = await service.listAttentionItems('hh-1');
+    expect(
+      result.items.some((item) => item.ruleCode === 'goal_without_wallet'),
+    ).toBe(false);
+  });
+
   it('raises no staleness signal for a household on manual cadence', async () => {
     const { service } = setup({
       updateFrequency: 'manual',

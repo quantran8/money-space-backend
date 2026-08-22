@@ -47,6 +47,23 @@ export interface CashflowEventsRepository {
   deleteCashflowEvent(eventId: string): Promise<void>;
   unlinkCashflowEventFromMoneyEvents(eventId: string): Promise<void>;
   /**
+   * Clear every reference to one asset from the household's events.
+   *
+   * Called when the asset is deleted. The events themselves stay: an expected
+   * bill is a fact about money that still has to move, and it does not stop
+   * being true because the wallet it was going to come out of was removed. Only
+   * the pointer goes, so the household is asked to name a new wallet rather than
+   * being shown one that no longer exists.
+   *
+   * Covers all three columns — planned, settlement, and last-completed — because
+   * an asset can be referenced by any of them and a missed one is exactly the
+   * dangling pointer this exists to prevent.
+   */
+  unlinkAssetFromCashflowEvents(
+    householdId: string,
+    assetId: string,
+  ): Promise<void>;
+  /**
    * Set `amount` on the still-open events for a debt due on/after `fromDate`
    * (an effective-from-now repayment-amount change). Past and completed ones
    * are left alone.

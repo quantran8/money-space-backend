@@ -30,6 +30,7 @@ import {
   resolveGoalProgressAmount,
   resolvePlannedMonthlyContribution,
   sumAllocatedAgainstAsset,
+  toAllocationInput,
 } from './domain/goal-progress';
 import type {
   GoalAllocationInput,
@@ -811,16 +812,22 @@ export class GoalsService {
       });
     }
 
-    // Money is only ever put INTO a goal through a wallet, so a goal with no
-    // wallet behind it is one nobody can save towards — its figure would move on
-    // the gold price alone, and "did we keep our pace?" would have no source to
-    // read. Asked here, where the household is already choosing which money this
-    // is, rather than left to be discovered when the pace panel stays empty.
-    if (!rows.some((row) => isWalletType(assets.types.get(row.assetId)))) {
-      throw new BadRequestException(
-        'A goal needs at least one cash or bank account behind it — that is where the money you put in each month comes from. Add one alongside any gold, stocks or other holdings.',
-      );
-    }
+    // A goal with no wallet behind it USED to be refused here: money is only put
+    // into a goal through one, so such a goal has nothing to be saved into and
+    // its pace panel can only stay empty.
+    //
+    // That is still true, and it is still worth telling the household — but it
+    // is no longer worth REFUSING, because the state turned out to be reachable
+    // without anyone choosing it. Deleting an asset can take a goal's last
+    // wallet with it, and a rule enforced only at create time would leave goals
+    // that exist but cannot be edited back into legality. A goal is now allowed
+    // to be in this state, and `goal_without_wallet` (a derived attention
+    // signal, recomputed on every read) is what tells the household about it —
+    // one place, whether the goal got there by being created that way or by
+    // outliving its wallet.
+    //
+    // "At least one allocation of ANY kind" is still required, above: a goal
+    // with no assets at all has no progress and no way to gain any.
 
     const goal: FinancialGoal = {
       id: goalId,
@@ -1419,17 +1426,12 @@ export class GoalsService {
       this.assetIndex(householdId),
     ]);
     const remaining = siblings.filter((other) => other.id !== allocationId);
-    // The wallet rule is a rule about the goal, not about creating one: removing
-    // the last wallet would leave exactly the goal that create refuses to make,
-    // one with nothing to be saved into.
-    if (
-      isWalletType(assets.types.get(current.assetId)) &&
-      !remaining.some((other) => isWalletType(assets.types.get(other.assetId)))
-    ) {
-      throw new BadRequestException(
-        'This is the only cash or bank account behind the goal, and a goal needs one to be saved into. Add another wallet first, or delete the goal.',
-      );
-    }
+    // Removing the last wallet used to be refused, to mirror the create-time
+    // rule. Both are gone for the same reason — see `createFinancialGoal`: the
+    // state is reachable by deleting the asset instead, so refusing it here only
+    // moved the household to the route that had no guard at all. The goal is now
+    // allowed to lose its last wallet, and the `goal_without_wallet` attention
+    // signal says so on every read.
 
     await this.prisma.runInTransaction(async () => {
       await this.goalsRepository.deleteAllocation(householdId, allocationId);
@@ -1724,19 +1726,7 @@ function normalizeSharePercent(
 }
 
 /** Entity → the pure domain's input shape. */
-function toAllocationInput(
-  allocation: GoalAssetAllocation,
-): GoalAllocationInput {
-  return {
-    assetId: allocation.assetId,
-    kind: allocation.kind,
-    role: allocation.role,
-    monthlyContribution: allocation.monthlyContribution,
-    sharePercent: allocation.sharePercent,
-    allocatedAmount: allocation.allocatedAmount,
-    percent: allocation.percent,
-  };
-}
+
 
 /**
  * The wire shape of an allocation. `currentValue` is what this claim is worth

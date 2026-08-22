@@ -211,6 +211,7 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
       ? {
           assetClass: position.assetClass ?? position.asset_class,
           symbol: position.symbol,
+          market: position.market ?? undefined,
           quantity: numberFromDb(position.quantity),
           unit: position.unit,
           quoteCurrency: position.quoteCurrency ?? position.quote_currency,

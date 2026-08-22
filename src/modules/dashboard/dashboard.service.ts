@@ -1,5 +1,4 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { AssetsService } from '../assets/assets.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import {
   computeCurrentValue,
@@ -21,7 +20,6 @@ export class DashboardService {
     @Inject(DASHBOARD_REPOSITORY)
     private readonly dashboardRepository: DashboardRepository,
     private readonly marketData: MarketDataService,
-    private readonly assets: AssetsService,
     private readonly cache: CacheService,
   ) {}
 
@@ -37,14 +35,11 @@ export class DashboardService {
     // It also throws for an unknown household before any cache key is built.
     await this.dashboardRepository.assertHousehold(householdId);
 
-    // Fire-and-forget: the first dashboard hit of the day for a household kicks
-    // off a market-price refresh in the background (deduped + gated to once/day
-    // inside the service). We do NOT await it — this response returns today's
-    // cached values immediately; the refreshed prices land for the next load.
-    void this.assets
-      .refreshMarketValuationsIfStale(householdId)
-      .catch(() => undefined);
-
+    // No background re-price here. The dashboard computes every asset's
+    // `currentValue` live from `marketPrices` in `buildDashboard`, so it never
+    // needed one, and the daily series is captured by `AssetsValuationCron`
+    // after the close — a per-visit write only added load and put an unsettled
+    // intraday figure next to end-of-day points.
     return this.cache.wrap(
       cacheKeys.dashboard(householdId),
       () => this.buildDashboard(householdId),

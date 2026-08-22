@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -45,6 +46,20 @@ import type { UpdateAssetDto } from './dto/update-asset.dto';
 import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import { MarketDataService } from '../market-data/market-data.service';
+// Repositories, not services: Goals/CashflowEvents/Debts all import Assets, so
+// depending on their SERVICES here would close a cycle. Only plain reads and
+// the unlink writes are needed, which is exactly what GoalsModule already does
+// with SNAPSHOTS_REPOSITORY and CASHFLOW_EVENTS_REPOSITORY for the same reason.
+import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interface';
+import type { GoalsRepository } from '../goals/repositories/goals.repository.interface';
+import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import type { CashflowEventsRepository } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import { DEBTS_REPOSITORY } from '../debts/repositories/debts.repository.interface';
+import type { DebtsRepository } from '../debts/repositories/debts.repository.interface';
+import {
+  resolvePlannedMonthlyContribution,
+  toAllocationInput,
+} from '../goals/domain/goal-progress';
 
 /**
  * Ties a valuation write back to the money event that caused it, so the value
@@ -65,11 +80,15 @@ export class AssetsService {
     private readonly prisma: PrismaService,
     private readonly marketData: MarketDataService,
     private readonly audit: AuditService,
+    @Inject(GOALS_REPOSITORY)
+    private readonly goalsRepository: GoalsRepository,
+    @Inject(CASHFLOW_EVENTS_REPOSITORY)
+    private readonly cashflowEventsRepository: CashflowEventsRepository,
+    @Inject(DEBTS_REPOSITORY)
+    private readonly debtsRepository: DebtsRepository,
   ) {}
 
   private readonly logger = new Logger(AssetsService.name);
-  /** Households with a dashboard-triggered refresh in flight, to de-dup concurrent hits. */
-  private readonly refreshInFlight = new Set<string>();
 
   async listAssets(householdId: string) {
     // `assertHousehold` only guards; it does not feed `getAssetRecords`. Running
@@ -126,7 +145,20 @@ export class AssetsService {
    * Daily/external-worker entry point: refresh provider cache once, then persist
    * one value-history point per active market asset for today.
    */
-  async refreshMarketValuations(householdId: string) {
+  /**
+   * Re-price every market asset and record the day's point.
+   *
+   * `valuationDate` defaults to today. `AssetsValuationCron` passes the **day it
+   * is capturing** — it runs at the end of that day, so the prices it reads are
+   * that day's closing figures and must be stamped with that day's date, not
+   * with whatever day a long batch happens to finish on.
+   *
+   * This is the ONLY writer of the daily series. Nothing re-prices mid-session
+   * any more: `assets.current_value` is recomputed live on every read, so an
+   * intraday write bought nothing and would have put an unsettled figure next
+   * to end-of-day points.
+   */
+  async refreshMarketValuations(householdId: string, valuationDate?: string) {
     await this.assetsRepository.assertHousehold(householdId);
     const [assets, marketPrices, fxRates] = await Promise.all([
       this.assetsRepository.findAssetsByHousehold(householdId),
@@ -139,70 +171,44 @@ export class AssetsService {
         asset.valuationMode === 'market_priced' &&
         !!asset.marketPosition,
     );
+    // Values are pure arithmetic over data already in memory, so compute the
+    // whole batch first and write it in two statements.
+    //
+    // The per-asset path costs three round-trips each (lookup + write + current
+    // value). At ~53ms RTT that is ~1.6s for ten positions, and a household with
+    // ~30 would exceed the interactive-transaction timeout and roll the whole
+    // day back — losing the data point entirely. Run across every household by
+    // the daily job it would also monopolise the small connection pool and
+    // starve real requests. Two bulk statements make the cost per household flat.
+    const asOf = valuationDate ?? todayInTimeZone();
+    const pointDate = valuationDate ?? this.todayIso();
+    const priced = marketAssets.map((asset) => ({
+      asset,
+      value: computeCurrentValue(asset, marketPrices, fxRates, asOf),
+    }));
+
     await this.prisma.runInTransaction(async () => {
-      for (const asset of marketAssets) {
-        const value = computeCurrentValue(
-          asset,
-          marketPrices,
-          fxRates,
-          todayInTimeZone(),
-        );
-        await this.assetsRepository.insertAssetValueHistory({
+      await this.assetsRepository.upsertMarketValuationPoints(
+        priced.map(({ asset, value }) => ({
           id: this.assetsRepository.createId('valuation'),
           assetId: asset.id,
           householdId,
-          valuationDate: this.todayIso(),
+          valuationDate: pointDate,
           value,
           currency: asset.currency,
           note: `Định giá định kỳ: ${asset.name}`,
           ...this.valuationLineage(asset),
-        });
-        await this.assetsRepository.updateAssetCurrentValue(asset.id, value);
-      }
+        })),
+      );
+      await this.assetsRepository.updateAssetCurrentValues(
+        priced.map(({ asset, value }) => ({ assetId: asset.id, value })),
+      );
     });
     return {
       householdId,
       refreshed: marketAssets.length,
-      asOf: this.todayIso(),
+      asOf: pointDate,
     };
-  }
-
-  /**
-   * Once-per-day, dashboard-triggered price refresh. Called fire-and-forget when
-   * a household opens the dashboard: if its market assets were not already
-   * repriced today it runs {@link refreshMarketValuations}, otherwise it no-ops.
-   * De-duplicates concurrent dashboard hits with an in-process in-flight guard so
-   * two tabs loading at once don't double-refresh. Never throws — callers do not
-   * await it; failures are logged and the dashboard still returns cached prices.
-   */
-  async refreshMarketValuationsIfStale(
-    householdId: string,
-  ): Promise<{ refreshed: number; skipped: boolean } | undefined> {
-    if (this.refreshInFlight.has(householdId)) {
-      return { refreshed: 0, skipped: true };
-    }
-    this.refreshInFlight.add(householdId);
-    try {
-      const alreadyRefreshed =
-        await this.assetsRepository.hasMarketValuationOnDate(
-          householdId,
-          this.todayIso(),
-        );
-      if (alreadyRefreshed) {
-        return { refreshed: 0, skipped: true };
-      }
-      const result = await this.refreshMarketValuations(householdId);
-      return { refreshed: result.refreshed, skipped: false };
-    } catch (error) {
-      this.logger.error(
-        `Daily market refresh failed for household ${householdId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return undefined;
-    } finally {
-      this.refreshInFlight.delete(householdId);
-    }
   }
 
   async getAssetSnapshots(householdId: string) {
@@ -1102,8 +1108,143 @@ export class AssetsService {
     });
   }
 
-  async deleteAsset(householdId: string, assetId: string, actorId?: string) {
+  /**
+   * Everything that would be left pointing at nothing if this asset went away.
+   *
+   * Assets are SOFT-deleted, so the `onDelete: Cascade` declared on each of
+   * these relations never fires — the rows simply outlive the asset. Read
+   * before the delete so the household can be told what it is about to lose,
+   * and read again inside the delete so the decision is made on current facts.
+   */
+  async getAssetDeleteImpact(householdId: string, assetId: string) {
+    const asset = await this.ensureAsset(householdId, assetId);
+    const [allocations, goals, cashflowEvents, debts] = await Promise.all([
+      this.goalsRepository.findAllocationsByAsset(householdId, assetId),
+      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+      this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+      this.debtsRepository.findDebtsByHousehold(householdId),
+    ]);
+
+    const goalsById = new Map(goals.map((goal) => [goal.id, goal]));
+    const allocationsByGoal = new Map<string, typeof allocations>();
+    for (const allocation of allocations) {
+      const list = allocationsByGoal.get(allocation.financialGoalId) ?? [];
+      list.push(allocation);
+      allocationsByGoal.set(allocation.financialGoalId, list);
+    }
+
+    // A goal whose LAST contribution wallet this is: after the delete it still
+    // exists and still has a target, but nothing left to be saved into. It is
+    // allowed (the household asked for that), and it is the one consequence
+    // worth naming louder than the rest — hence its own list rather than a flag
+    // buried in the goal rows.
+    const goalsLosingLastWallet: Array<{ id: string; name: string }> = [];
+    const affectedGoals: Array<{
+      id: string;
+      name: string;
+      priority: string;
+      allocationCount: number;
+      losesLastWallet: boolean;
+    }> = [];
+    for (const [goalId, claimed] of allocationsByGoal) {
+      const goal = goalsById.get(goalId);
+      // A claim whose goal is already gone reports nothing: it went with the
+      // goal, exactly as `assetGoalUsage` treats the same case.
+      if (!goal) {
+        continue;
+      }
+      const survivors = await this.goalsRepository.findAllocationsByGoal(
+        householdId,
+        goalId,
+      );
+      const remaining = survivors.filter(
+        (allocation) => allocation.assetId !== assetId,
+      );
+      const losesLastWallet =
+        claimed.some((allocation) => allocation.role === 'contribution') &&
+        !remaining.some((allocation) => allocation.role === 'contribution');
+      if (losesLastWallet) {
+        goalsLosingLastWallet.push({ id: goal.id, name: goal.name });
+      }
+      affectedGoals.push({
+        id: goal.id,
+        name: goal.name,
+        priority: goal.priority,
+        allocationCount: claimed.length,
+        losesLastWallet,
+      });
+    }
+
+    const affectedCashflowEvents = cashflowEvents
+      .filter(
+        (event) =>
+          event.plannedAssetId === assetId ||
+          event.settlementAssetId === assetId ||
+          event.lastCompletedAssetId === assetId,
+      )
+      .map((event) => ({
+        id: event.id,
+        name: event.name,
+        expectedDate: event.expectedDate,
+        status: event.status,
+      }));
+
+    const affectedDebts = debts
+      .filter(
+        (debt) =>
+          debt.receivedToAssetId === assetId ||
+          debt.repaymentAssetId === assetId,
+      )
+      .map((debt) => ({ id: debt.id, name: debt.name, status: debt.status }));
+
+    return {
+      householdId,
+      assetId,
+      assetName: asset.name,
+      goals: affectedGoals,
+      goalsLosingLastWallet,
+      cashflowEvents: affectedCashflowEvents,
+      debts: affectedDebts,
+      /** Nothing points here; the delete needs no confirmation. */
+      isClear:
+        affectedGoals.length === 0 &&
+        affectedCashflowEvents.length === 0 &&
+        affectedDebts.length === 0,
+    };
+  }
+
+  /**
+   * Delete an asset, refusing by default while anything still points at it.
+   *
+   * The refusal is the point. Deleting an asset used to leave its goal claims,
+   * its scheduled events and its debts behind, still naming a row nothing would
+   * ever return again — a goal would go on showing a wallet the household had
+   * removed, its progress quietly reading zero for that share. Nothing surfaced
+   * it, because every one of those relations declares `onDelete: Cascade` and
+   * cascade cannot fire against a soft delete.
+   *
+   * So the household is asked first. `cascade` is their answer, and it is only
+   * ever given after `getAssetDeleteImpact` has told them what it costs — which
+   * is also why cascade does not need to warn about anything itself.
+   */
+  async deleteAsset(
+    householdId: string,
+    assetId: string,
+    actorId?: string,
+    cascade = false,
+  ) {
     const current = await this.ensureAsset(householdId, assetId);
+    const impact = await this.getAssetDeleteImpact(householdId, assetId);
+
+    if (!impact.isClear && !cascade) {
+      throw new ConflictException({
+        message:
+          'This asset still backs goals, events or debts. Confirm to remove those links, or detach them first.',
+        code: 'asset_in_use',
+        impact,
+      });
+    }
+
     // These writes must all land or none: run them in one transaction,
     // sequentially (they share the transaction's single connection). The
     // journal entry joins the same transaction, so it can never describe a
@@ -1111,7 +1252,36 @@ export class AssetsService {
     await this.prisma.runInTransaction(async () => {
       await this.assetsRepository.deleteAsset(assetId);
       await this.assetsRepository.deleteAssetValueHistory(assetId);
+      await this.assetsRepository.deleteAssetDetails(assetId);
       await this.assetsRepository.unlinkAssetFromMoneyEvents(assetId);
+      await this.cashflowEventsRepository.unlinkAssetFromCashflowEvents(
+        householdId,
+        assetId,
+      );
+      await this.debtsRepository.unlinkAssetFromDebts(householdId, assetId);
+      await this.goalsRepository.deleteAllocationsByAsset(householdId, assetId);
+
+      // `financial_goals.planned_monthly_contribution` is a MIRROR of the
+      // surviving claims, kept so the goals list and the forecast can show a
+      // pace without reading allocations. Dropping this asset's claims without
+      // rewriting it would leave every affected goal advertising a monthly pace
+      // partly funded by a wallet that no longer exists — a number nobody could
+      // trace back to anything. Recomputed from the claims that REMAIN, using
+      // the same resolver every other allocation write ends in.
+      for (const goal of impact.goals) {
+        const remaining = await this.goalsRepository.findAllocationsByGoal(
+          householdId,
+          goal.id,
+        );
+        await this.goalsRepository.updatePlannedMonthlyContribution(
+          householdId,
+          goal.id,
+          resolvePlannedMonthlyContribution(
+            remaining.map((allocation) => toAllocationInput(allocation)),
+          ),
+        );
+      }
+
       await this.audit.record(householdId, {
         actorId,
         action: 'asset.deleted',
@@ -1123,12 +1293,26 @@ export class AssetsService {
         },
         details: {
           objectName: current.name,
+          // What the delete took with it, so the journal can answer "why did
+          // this goal's pace change?" without anyone re-deriving it.
+          detachedGoals: impact.goals.map((goal) => goal.name),
+          goalsLeftWithoutWallet: impact.goalsLosingLastWallet.map(
+            (goal) => goal.name,
+          ),
+          detachedCashflowEventCount: impact.cashflowEvents.length,
+          detachedDebtCount: impact.debts.length,
         },
       });
     });
     return {
       deleted: true,
       assetId,
+      detached: {
+        goals: impact.goals.length,
+        goalsLeftWithoutWallet: impact.goalsLosingLastWallet.length,
+        cashflowEvents: impact.cashflowEvents.length,
+        debts: impact.debts.length,
+      },
     };
   }
 
