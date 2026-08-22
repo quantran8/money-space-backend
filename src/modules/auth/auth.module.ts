@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { HouseholdAccessGuard } from './guards/household-access.guard';
 import { SupabaseAuthGuard } from './guards/supabase-auth.guard';
 import { AuthMiddleware } from './middleware/auth.middleware';
+import { OauthVerifierStore } from './oauth-verifier.store';
 import { AUTH_REPOSITORY } from './repositories/auth.repository.interface';
 import { PrismaAuthRepository } from './repositories/prisma-auth.repository';
 import { TokenVerifierService } from './token-verifier.service';
@@ -18,6 +19,7 @@ import { TokenVerifierService } from './token-verifier.service';
     SupabaseAuthGuard,
     HouseholdAccessGuard,
     TokenVerifierService,
+    OauthVerifierStore,
     {
       provide: AUTH_REPOSITORY,
       useClass: PrismaAuthRepository,

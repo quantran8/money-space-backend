@@ -49,18 +49,20 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
     resolveGoalCommitments: jest.fn(async () => 0),
     // The per-goal cost of a hypothetical spend. Its arithmetic is exercised by
     // `spend-impact.spec.ts`; here it only has to exist and be shaped right.
-    spendImpact: jest.fn(async (_hh: string, assetId: string, amount: number) => ({
-      householdId: 'hh-1',
-      assetId,
-      assetValue: 0,
-      amount,
-      assetValueAfter: 0,
-      totalReduction: 0,
-      totalPaceReduction: 0,
-      totalSetAsideReduction: 0,
-      goals: [],
-      exceedsWallet: false,
-    })),
+    spendImpact: jest.fn(
+      async (_hh: string, assetId: string, amount: number) => ({
+        householdId: 'hh-1',
+        assetId,
+        assetValue: 0,
+        amount,
+        assetValueAfter: 0,
+        totalReduction: 0,
+        totalPaceReduction: 0,
+        totalSetAsideReduction: 0,
+        goals: [],
+        exceedsWallet: false,
+      }),
+    ),
     // What-if's household-wide form. Its arithmetic lives in
     // `goal-progress.spec.ts` / `spend-impact.spec.ts`; these fixtures have no
     // goals, so zeroes are the honest answer.
@@ -71,8 +73,7 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
       goals: [],
     })),
     goalClaimsByWallet: jest.fn(
-      async () =>
-        new Map<string, { amount: number; topPriority: null }>(),
+      async () => new Map<string, { amount: number; topPriority: null }>(),
     ),
   } as never;
   // A real CacheService with no Redis configured: `wrap` falls straight through
@@ -248,7 +249,6 @@ describe('ForecastService.whatIf', () => {
 
     expect(resolve).toHaveBeenCalledTimes(2);
   });
-
 
   it('classifies a comfortable spend', async () => {
     const { service } = setup();

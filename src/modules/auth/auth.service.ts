@@ -1,11 +1,17 @@
+import { randomUUID } from 'node:crypto';
+
 import {
+  BadRequestException,
   Inject,
   Injectable,
   InternalServerErrorException,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Session, User } from '@supabase/supabase-js';
-import { SupabaseService } from '../../database/supabase/supabase.service';
+import {
+  OAUTH_VERIFIER_ITEM,
+  SupabaseService,
+} from '../../database/supabase/supabase.service';
 import type { GoogleCallbackDto } from './dto/google-auth.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -18,13 +24,34 @@ import type {
 } from './entities/auth-user.entity';
 import { AUTH_REPOSITORY } from './repositories/auth.repository.interface';
 import type { AuthRepository } from './repositories/auth.repository.interface';
+import { OauthVerifierStore } from './oauth-verifier.store';
 import { TokenVerifierService } from './token-verifier.service';
+
+/** Long enough for a real sign-in, short enough that a leaked code is stale. */
+const GOOGLE_VERIFIER_TTL_SECONDS = 600;
+
+function verifierKey(state: string) {
+  return `oauth:pkce:${state}`;
+}
+
+/** Adds `state` to the callback URL, leaving any existing `next` intact. */
+function withState(redirectTo: string | undefined, state: string) {
+  if (!redirectTo) return undefined;
+  try {
+    const url = new URL(redirectTo);
+    url.searchParams.set('state', state);
+    return url.toString();
+  } catch {
+    throw new BadRequestException('redirectTo must be an absolute URL');
+  }
+}
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly tokenVerifier: TokenVerifierService,
+    private readonly verifiers: OauthVerifierStore,
     @Inject(AUTH_REPOSITORY)
     private readonly authRepository: AuthRepository,
   ) {}
@@ -88,10 +115,26 @@ export class AuthService {
    * that is exchanged via `googleCallback`.
    */
   async getGoogleAuthUrl(redirectTo?: string): Promise<{ url: string }> {
-    const { data, error } = await this.client().auth.signInWithOAuth({
+    // supabase-js emits no OAuth `state`, so we mint one and carry it on the
+    // callback URL — Supabase preserves the query string of `redirectTo`, and
+    // it is what lets the callback find this verifier again.
+    const state = randomUUID();
+    const callbackUrl = withState(redirectTo, state);
+
+    // Captures the code_verifier supabase-js mints while building the URL.
+    let verifier: string | undefined;
+    const client = this.supabase.getOAuthClient({
+      getItem: () => null,
+      setItem: (key, value) => {
+        if (key === OAUTH_VERIFIER_ITEM) verifier = value;
+      },
+      removeItem: () => {},
+    });
+
+    const { data, error } = await client.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo,
+        redirectTo: callbackUrl,
         skipBrowserRedirect: true,
       },
     });
@@ -102,11 +145,42 @@ export class AuthService {
       );
     }
 
+    if (!verifier) {
+      throw new InternalServerErrorException(
+        'Google sign-in URL carried no PKCE verifier',
+      );
+    }
+
+    await this.verifiers.set(
+      verifierKey(state),
+      verifier,
+      GOOGLE_VERIFIER_TTL_SECONDS,
+    );
+
     return { url: data.url };
   }
 
   async googleCallback(payload: GoogleCallbackDto): Promise<AuthResult> {
-    const { data, error } = await this.client().auth.exchangeCodeForSession(
+    if (!payload.state) {
+      throw new UnauthorizedException('Missing state for Google sign-in');
+    }
+
+    const verifier = await this.verifiers.take(verifierKey(payload.state));
+    if (!verifier) {
+      // Expired, already used, or from an instance that has since restarted
+      // without Redis. Retrying the sign-in mints a fresh one.
+      throw new UnauthorizedException(
+        'Google sign-in expired. Please try again.',
+      );
+    }
+
+    const client = this.supabase.getOAuthClient({
+      getItem: (key) => (key === OAUTH_VERIFIER_ITEM ? verifier : null),
+      setItem: () => {},
+      removeItem: () => {},
+    });
+
+    const { data, error } = await client.auth.exchangeCodeForSession(
       payload.code,
     );
 

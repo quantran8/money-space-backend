@@ -89,12 +89,8 @@ export function walletValuesAfterPendingOutflows(
     // Floored at 0 for the same reason the forecast floors it: a wallet cannot
     // hold negative money, and letting it go negative would make one overdrawn
     // wallet cancel out another's goal backing.
-    values.set(
-      event.settlementAssetId,
-      Math.max(0, current - event.amount),
-    );
+    values.set(event.settlementAssetId, Math.max(0, current - event.amount));
   }
 
   return values;
 }
-

@@ -19,7 +19,7 @@ function event(overrides: Partial<CashflowEvent> = {}): CashflowEvent {
     attentionLevel: 'normal',
     settlementAssetId: WALLET,
     ...overrides,
-  } as CashflowEvent;
+  };
 }
 
 describe('walletValuesAfterPendingOutflows', () => {
