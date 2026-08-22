@@ -24,6 +24,7 @@ snapshots. Those are facts about a moment, so a row is the right home.
 |---|---|
 | `cashflow_required_due_soon`, `cashflow_overdue` | derived |
 | `low_projected_balance` | derived |
+| `goal_without_wallet` | derived — **not dismissible** |
 | `stale_data` | derived |
 | `user_flagged`, `money_event_flagged` | stored |
 | `asset_moved_sharply` | stored (needs a comparison base) |
@@ -53,6 +54,18 @@ stop working on the next read. Pinned by a test.
 
 ## Rules that need care
 
+- **`goal_without_wallet` is not in `DISMISSIBLE_RULE_CODES`.** The other derived
+  signals describe a *situation* the household may reasonably choose to live
+  with — a bill is close, the balance dips. This one describes a goal that
+  **cannot make progress at all** until a wallet is pointed at it, so there is
+  nothing to acknowledge and move past; silencing it would just hide a goal that
+  is permanently stuck. It clears the moment a contribution share is added, since it is
+  recomputed on every read.
+  - It reads the allocation's **`role`**, not the asset's type — the same field
+    the asset-delete warning checks, so the two can never disagree about whether
+    a goal "has a wallet". See [[goals]] and [[assets]].
+  - A goal with **no allocations at all** raises nothing: that is "nothing chosen
+    yet", a different situation from "the wallet went away".
 - **Only `required` outgoing money raises a signal.** A `planned` purchase is a
   choice; the household has not failed at anything by not spending money they
   merely intended to. Treating a plan like an obligation is exactly the nagging

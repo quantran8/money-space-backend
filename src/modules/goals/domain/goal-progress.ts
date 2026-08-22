@@ -439,6 +439,36 @@ function shareForWallet(
  * measured on contribution shares alone, so counting a holding into the target
  * would report a shortfall for money that was never going to move.
  */
+/**
+ * A stored allocation row, narrowed to the fields every progress/pace rule
+ * reads.
+ *
+ * Lives here rather than in `GoalsService` because two callers now need it —
+ * the goals code, and the asset delete flow recomputing a goal's pace from the
+ * claims that survive an asset being removed. A second, near-identical mapper
+ * beside the other would be free to drift, and the two answers would then
+ * disagree about the same goal.
+ */
+export function toAllocationInput(allocation: {
+  assetId: string;
+  kind: GoalAllocationKind;
+  role?: GoalAllocationRole | null;
+  monthlyContribution?: number | null;
+  sharePercent?: number | null;
+  allocatedAmount?: number | null;
+  percent?: number | null;
+}): GoalAllocationInput {
+  return {
+    assetId: allocation.assetId,
+    kind: allocation.kind,
+    role: allocation.role,
+    monthlyContribution: allocation.monthlyContribution,
+    sharePercent: allocation.sharePercent,
+    allocatedAmount: allocation.allocatedAmount,
+    percent: allocation.percent,
+  };
+}
+
 export function resolvePlannedMonthlyContribution(
   allocations: GoalAllocationInput[],
 ): number | null {

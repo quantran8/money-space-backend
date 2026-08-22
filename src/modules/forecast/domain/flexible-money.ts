@@ -28,6 +28,16 @@ export interface FlexibleMoneyResult {
   asOfDate: IsoDate;
   horizonDays: number;
   currentSharedLiquidMoney: number;
+  /**
+   * How many `usable_now` assets that figure is the sum of.
+   *
+   * Carried alongside the amount because 0đ is ambiguous on its own: a wallet
+   * holding nothing and NO WALLET AT ALL both sum to zero, and only the second
+   * means there is no balance for a projection to be about. Every consumer that
+   * renders a projected balance needs to tell those apart — see
+   * [[forecast-and-flexible-money]].
+   */
+  usableNowAssetCount: number;
 
   /** §26B conservative form. MAY BE NEGATIVE. */
   flexibleMoneyToday: number;
@@ -100,6 +110,7 @@ export function computeFlexibleMoney(
     asOfDate: forecast.asOfDate,
     horizonDays: forecast.horizonDays,
     currentSharedLiquidMoney: forecast.startingLiquidBalance,
+    usableNowAssetCount: forecast.usableNowAssetCount,
 
     // Deliberately NOT clamped at zero — negative is the signal.
     flexibleMoneyToday: Math.round(flexibleMoneyToday),

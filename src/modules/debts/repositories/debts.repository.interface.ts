@@ -46,4 +46,12 @@ export interface DebtsRepository {
       metadata: Record<string, unknown>;
     },
   ): Promise<void>;
+  /**
+   * Clear every reference to one asset from the household's debts.
+   *
+   * Called when the asset is deleted. Like the cashflow equivalent, the debt
+   * survives — money owed is owed whether or not the wallet it was borrowed
+   * into still exists — and only the wallet pointer is dropped.
+   */
+  unlinkAssetFromDebts(householdId: string, assetId: string): Promise<void>;
 }

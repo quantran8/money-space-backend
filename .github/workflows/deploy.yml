@@ -43,21 +43,37 @@ jobs:
     # guarantees that, but "Run workflow" accepts any branch from the UI — this
     # stops a feature branch from being deployed by an accidental click.
     if: github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
+    # Build on a runner whose CPU already matches the target. QEMU emulation of
+    # arm64 on an x86 runner crashed the Node/Prisma layers with
+    # "uncaught target signal 4 (Illegal instruction)" and, when it did survive,
+    # took 10-15 minutes. A native runner does neither.
+    runs-on: ${{ vars.BUILD_PLATFORM == 'linux/amd64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
     steps:
       - uses: actions/checkout@v4
 
       # The image architecture must match the instance's. A1 is aarch64, while
       # E2.1.Micro is x86_64 — build for the wrong one and the container dies
       # immediately with "exec format error". `terraform output image_platform`
-      # prints the right value; BUILD_PLATFORM carries it here.
-      #
-      # QEMU is only needed to cross-build arm64 on an x86 runner. It is slow,
-      # so an arm64 build is much faster on a native runner (`ubuntu-24.04-arm`)
-      # and an amd64 build needs no emulation at all.
-      - uses: docker/setup-qemu-action@v3
-        if: vars.BUILD_PLATFORM != 'linux/amd64'
+      # prints the right value; BUILD_PLATFORM carries it here, and it also
+      # selects the runner above so the build is never emulated.
       - uses: docker/setup-buildx-action@v3
+
+      - name: Check runner matches the target platform
+        run: |
+          # A mismatch here means the build silently falls back to QEMU, which
+          # is exactly what this workflow no longer wants. Fail instead.
+          want='${{ vars.BUILD_PLATFORM || 'linux/arm64' }}'
+          case "$(uname -m)" in
+            aarch64|arm64) have=linux/arm64 ;;
+            x86_64)        have=linux/amd64 ;;
+            *)             have="linux/$(uname -m)" ;;
+          esac
+          echo "target=$want runner=$have ($(uname -m))"
+          if [ "$want" != "$have" ]; then
+            echo "::error::Runner is $have but BUILD_PLATFORM is $want — the build would be emulated under QEMU."
+            echo "Set BUILD_PLATFORM to linux/arm64 or linux/amd64 so it maps to a native runner." >&2
+            exit 1
+          fi
 
       - name: Log in to OCIR
         uses: docker/login-action@v3

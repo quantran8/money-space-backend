@@ -89,6 +89,16 @@ Two behaviours worth knowing:
    goal (understating what it costs) or force a guess at which one. Asking at
    create is also what lets the form show the goal impact before saving. See
    [[forecast-and-flexible-money]].
+
+   **Required at CREATE, nullable in the column.** Deleting the settling asset
+   clears `settlement_asset_id` back to NULL (see [[assets]]) — the event is a
+   fact about money that still has to move, so it survives its wallet. That
+   leaves a live outgoing event with no wallet, which `assertValid` would refuse
+   to create: legal, because the rule is about the moment of creating, not an
+   invariant of the row. The edit form detects it (the stored id matches no
+   wallet in the picker) and says the wallet was deleted, instead of rendering a
+   blank select that reads as "none chosen" and silently rewrites the event on
+   the next save.
 2. **Create the money event via `MoneyEventsService.createMoneyEvent`** (never a
    raw insert), so wallet debit/credit, valuation points and the goal mirror all
    fire. `outgoing` → `payment_paid` debiting `fromAssetId`; `incoming` →

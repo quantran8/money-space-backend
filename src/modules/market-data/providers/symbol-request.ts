@@ -16,4 +16,10 @@ export interface SymbolRequest {
   providerSymbol?: string;
   /** Currency the position is denominated in; defaults to USD upstream. */
   quoteCurrency: string;
+  /**
+   * Venue the position trades on (`asset_market_positions.market`), e.g. `HOSE`,
+   * `HNX`, `UPCOM`, `NASDAQ`. Routing uses it to tell a Vietnamese listing from
+   * a foreign one, since both are `assetClass: 'stock'`.
+   */
+  market?: string;
 }

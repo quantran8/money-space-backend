@@ -65,6 +65,16 @@ export interface AssetsRepository {
     assetIds: string[],
   ): Promise<number>;
   deleteAsset(assetId: string): Promise<void>;
+  /**
+   * Soft-delete the asset's own detail rows — its market position and its
+   * calculation term.
+   *
+   * They belong to the asset and describe nothing else, so they go with it.
+   * Prisma's `onDelete: Cascade` on both relations never fires here because the
+   * asset is only soft-deleted, which is how a deleted holding's ticker stayed
+   * in the market-data poll universe.
+   */
+  deleteAssetDetails(assetId: string): Promise<void>;
   findAssetValueHistoryByAsset(
     householdId: string,
     assetId: string,
@@ -75,10 +85,34 @@ export interface AssetsRepository {
   ): Promise<AssetValueHistory | undefined>;
   insertAssetValueHistory(valuation: AssetValueHistory): Promise<void>;
   /**
+   * Bulk equivalent of {@link insertAssetValueHistory} for the daily market
+   * revaluation: writes every asset's dated cache point in ONE statement
+   * instead of a lookup + write per asset. Only for unlinked
+   * (`moneyEventId`-less) points — the event-linked path keeps its own upsert.
+   */
+  upsertMarketValuationPoints(valuations: AssetValueHistory[]): Promise<void>;
+  /** Bulk `current_value` write, one statement for many assets. */
+  updateAssetCurrentValues(
+    values: Array<{ assetId: string; value: number }>,
+  ): Promise<void>;
+  /**
    * Whether any market-priced valuation point already exists for this household
    * on the given date — the gate for the once-per-day dashboard-triggered
    * refresh, so a household is re-priced at most once per day.
    */
+  /**
+   * Households holding at least one active market-priced asset that has NOT
+   * been re-priced on `valuationDate` yet — the work list for the daily job.
+   *
+   * Filtered in SQL rather than by loading every household and checking each:
+   * the job must not scan households it has nothing to do for, and the "already
+   * done today" check has to be part of the same query or it becomes one
+   * round-trip per household.
+   */
+  findHouseholdsNeedingMarketValuation(
+    valuationDate: string,
+    limit: number,
+  ): Promise<string[]>;
   hasMarketValuationOnDate(
     householdId: string,
     valuationDate: string,

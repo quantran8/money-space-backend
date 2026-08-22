@@ -78,7 +78,16 @@ describe('AssetsService', () => {
       getMarketPrices: jest.fn().mockResolvedValue([]),
     } as unknown as MarketDataService;
     const audit = { record: jest.fn() } as never;
-    const service = new AssetsService(repository, prisma, marketData, audit);
+    const service = new AssetsService(
+      repository,
+      prisma,
+      marketData,
+      audit,
+      // Delete-only collaborators; untouched by these cases.
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.createAsset('household-1', {
       name: 'BTC mua thêm',
@@ -146,7 +155,16 @@ describe('AssetsService', () => {
       getMarketPrices: jest.fn().mockResolvedValue([]),
     } as unknown as MarketDataService;
     const audit = { record: jest.fn() } as never;
-    const service = new AssetsService(repository, prisma, marketData, audit);
+    const service = new AssetsService(
+      repository,
+      prisma,
+      marketData,
+      audit,
+      // Delete-only collaborators; untouched by these cases.
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     await service.updateAsset('household-1', current.id, {
       manualValue: 13_500_000,
@@ -187,7 +205,16 @@ describe('AssetsService', () => {
       return {
         insertAsset,
         updateAsset,
-        service: new AssetsService(repository, prisma, marketData, audit),
+        service: new AssetsService(
+          repository,
+          prisma,
+          marketData,
+          audit,
+          // Delete-only collaborators; untouched by these cases.
+          {} as never,
+          {} as never,
+          {} as never,
+        ),
       };
     }
 
@@ -368,7 +395,16 @@ describe('AssetsService', () => {
         getMarketPrices: jest.fn().mockResolvedValue([]),
       } as unknown as MarketDataService;
       const audit = { record: jest.fn() } as never;
-      const service = new AssetsService(repository, prisma, marketData, audit);
+      const service = new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        audit,
+        // Delete-only collaborators; untouched by these cases.
+        {} as never,
+        {} as never,
+        {} as never,
+      );
       return {
         service,
         insertAssetPurchaseEvent,

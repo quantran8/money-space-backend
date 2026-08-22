@@ -139,4 +139,53 @@ export const DEFAULT_SYMBOLS: Record<SymbolAssetClass, SymbolReference[]> = {
       unit: 'coin',
     },
   ],
+  /**
+   * Fallback only. The live list comes from the dealer feed
+   * (`VnstockCommoditySymbolReferenceProvider`); these are the products a
+   * Vietnamese household most often holds, used when that feed is unavailable.
+   */
+  gold: [
+    {
+      assetClass: 'gold',
+      symbol: 'VÀNG MIẾNG SJC',
+      name: 'Vàng miếng SJC',
+      exchange: 'Vàng SJC',
+      currency: 'VND',
+      unit: 'lượng',
+    },
+    {
+      assetClass: 'gold',
+      symbol: 'NHẪN TRÒN TRƠN',
+      name: 'Nhẫn tròn trơn',
+      exchange: 'Vàng Rồng Thăng Long',
+      currency: 'VND',
+      unit: 'lượng',
+    },
+    {
+      assetClass: 'gold',
+      symbol: 'VÀNG MIẾNG VRTL',
+      name: 'Vàng miếng Rồng Thăng Long',
+      exchange: 'Vàng Rồng Thăng Long',
+      currency: 'VND',
+      unit: 'lượng',
+    },
+  ],
+  foreign_currency: [
+    {
+      assetClass: 'foreign_currency',
+      symbol: 'USD',
+      name: 'Đô la Mỹ',
+      exchange: '',
+      currency: 'VND',
+      unit: 'USD',
+    },
+    {
+      assetClass: 'foreign_currency',
+      symbol: 'JPY',
+      name: 'Yên Nhật',
+      exchange: '',
+      currency: 'VND',
+      unit: 'JPY',
+    },
+  ],
 };

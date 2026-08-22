@@ -150,18 +150,38 @@ describe('GoalsService — creating a goal', () => {
     expect(card.currentAmount).toBe(150 * M);
   });
 
-  // Money is only ever put into a goal through a wallet. Backed by gold alone,
-  // the figure moves on the gold price and "did we keep our pace?" has no source
-  // to read at all.
-  it('refuses a goal backed only by holdings', async () => {
+  // Money is only ever put into a goal through a wallet, so backed by stocks
+  // alone the figure moves on the market and the pace panel has no source to
+  // read. This USED to be refused. It is allowed now, because the state is
+  // reachable without anyone choosing it — deleting an asset can take a goal's
+  // last wallet — and a create-time-only rule left such goals unable to be
+  // edited back into legality. The household is told instead: the
+  // `goal_without_wallet` attention signal fires for exactly this shape.
+  it('allows a goal backed only by holdings, with no pace', async () => {
+    const { service, insertFinancialGoal } = setup();
+    const card = await service.createFinancialGoal('hh-1', {
+      ...withAssets,
+      allocations: [
+        { assetId: 'stocks', kind: 'fixed', allocatedAmount: 50 * M },
+      ],
+    });
+    expect(insertFinancialGoal).toHaveBeenCalled();
+    // Progress still counts — the stocks really are behind the goal.
+    expect(card.currentAmount).toBe(50 * M);
+    // But there is no pace: null means "no target", not "planned to save zero".
+    // Create writes the pace onto the goal row itself, so it is read from the
+    // inserted goal rather than from the mirror-update call.
+    expect(insertFinancialGoal).toHaveBeenCalledWith(
+      expect.objectContaining({ plannedMonthlyContribution: null }),
+    );
+  });
+
+  // The one thing still refused: a goal with NOTHING behind it has no progress
+  // and no way to gain any, so it would sit at a permanent 0%.
+  it('still refuses a goal with no allocations at all', async () => {
     const { service, insertFinancialGoal } = setup();
     await expect(
-      service.createFinancialGoal('hh-1', {
-        ...withAssets,
-        allocations: [
-          { assetId: 'stocks', kind: 'fixed', allocatedAmount: 50 * M },
-        ],
-      }),
+      service.createFinancialGoal('hh-1', { ...withAssets, allocations: [] }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(insertFinancialGoal).not.toHaveBeenCalled();
   });
@@ -645,10 +665,14 @@ describe('GoalsService — the goal pace mirror', () => {
     );
   });
 
-  // Removing the last wallet would leave exactly the goal that create refuses
-  // to make: one with nothing to be saved into.
-  it("refuses to remove the goal's only wallet", async () => {
-    const { service } = setup({
+  // Removing the last wallet was refused, to mirror the create-time rule. Both
+  // are gone for the same reason (see the create case above): deleting the
+  // ASSET reached the same state with no guard at all, so refusing it here only
+  // pushed the household onto the unguarded route. The goal survives without a
+  // wallet, and its pace drops to null rather than keeping a figure no wallet
+  // is funding any more.
+  it("allows removing the goal's only wallet, clearing the pace", async () => {
+    const { service, updatePlannedMonthlyContribution } = setup({
       allocations: [
         allocation({
           id: 'alloc-vcb',
@@ -661,7 +685,12 @@ describe('GoalsService — the goal pace mirror', () => {
     });
     await expect(
       service.deleteAllocation('hh-1', 'goal-car', 'alloc-vcb'),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).resolves.toEqual({ deleted: true, allocationId: 'alloc-vcb' });
+    expect(updatePlannedMonthlyContribution).toHaveBeenCalledWith(
+      'hh-1',
+      'goal-car',
+      null,
+    );
   });
 
   it('allows removing a holding, and a wallet that is not the last', async () => {

@@ -3,6 +3,8 @@ import { CommonModule } from '../../common/common.module';
 import { ForecastModule } from '../forecast/forecast.module';
 import { AttentionController } from './attention.controller';
 import { AttentionService } from './attention.service';
+import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interface';
+import { PrismaGoalsRepository } from '../goals/repositories/prisma-goals.repository';
 import { ATTENTION_REPOSITORY } from './repositories/attention.repository.interface';
 import { PrismaAttentionRepository } from './repositories/prisma-attention.repository';
 
@@ -22,6 +24,13 @@ import { PrismaAttentionRepository } from './repositories/prisma-attention.repos
     {
       provide: ATTENTION_REPOSITORY,
       useClass: PrismaAttentionRepository,
+    },
+    // Bound directly rather than by importing GoalsModule: Goals imports
+    // Forecast's neighbours and Forecast imports Goals, so the module edge
+    // would be a cycle. `goal_without_wallet` needs only two plain reads.
+    {
+      provide: GOALS_REPOSITORY,
+      useClass: PrismaGoalsRepository,
     },
   ],
   exports: [AttentionService, ATTENTION_REPOSITORY],

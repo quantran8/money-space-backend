@@ -28,27 +28,38 @@ export class PrismaMarketDataRepository
     const rows = await this.prisma.assetMarketPosition.findMany({
       where: {
         deletedAt: null,
+        // The POSITION being live is not enough — its asset has to be live too.
+        // Assets are soft-deleted, so the position outlives the asset and would
+        // otherwise keep this symbol in the universe forever: the provider gets
+        // polled, on every refresh, for a holding no household still has.
+        asset: { deletedAt: null },
         symbol: { not: null },
         assetClass: { in: PROVIDER_ASSET_CLASSES },
       },
       select: {
         assetClass: true,
         symbol: true,
+        market: true,
         priceSourceSymbol: true,
         quoteCurrency: true,
       },
     });
 
-    // Collapse to distinct (assetClass, symbol) — many households hold the same
-    // ticker; the provider only needs to price each once.
+    // Collapse to distinct (assetClass, symbol, market) — many households hold
+    // the same ticker; the provider only needs to price each once.
     const seen = new Map<string, SymbolRequest>();
     for (const row of rows) {
       if (!row.symbol) continue;
-      const key = `${row.assetClass}:${row.symbol.toUpperCase()}`;
+      // `market` joins the key: the same ticker on two venues is two distinct
+      // instruments (and may route to different providers).
+      const key = `${row.assetClass}:${row.symbol.toUpperCase()}:${
+        row.market?.toUpperCase() ?? ''
+      }`;
       if (seen.has(key)) continue;
       seen.set(key, {
         assetClass: row.assetClass,
         symbol: row.symbol,
+        market: row.market ?? undefined,
         providerSymbol: row.priceSourceSymbol ?? undefined,
         quoteCurrency: row.quoteCurrency,
       });

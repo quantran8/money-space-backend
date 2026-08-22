@@ -31,6 +31,17 @@ export type DerivedAttentionRuleCode =
   | 'cashflow_required_due_soon'
   | 'cashflow_overdue'
   | 'low_projected_balance'
+  /**
+   * A goal with assets behind it but no cash/bank account among them, so there
+   * is nowhere to put money in each month and its pace panel can only stay
+   * empty.
+   *
+   * Derived, not stored, and that is the whole point: the household can fix it
+   * by adding a wallet, and a stored row would then have to be found and
+   * cleared by whichever write happened to notice. Recomputing it on every read
+   * means the signal disappears the moment the goal has a wallet again.
+   */
+  | 'goal_without_wallet'
   | 'stale_data';
 
 /** Signals that are genuine point-in-time records, so they ARE persisted. */
@@ -77,6 +88,12 @@ export interface DeriveAttentionInput {
   flexible: FlexibleMoneyResult;
   /** Assets whose value is older than the household's update cadence. */
   staleAssets?: { assetId: string; name: string; daysSinceUpdate: number }[];
+  /**
+   * Goals left with no contribution wallet — usually because the asset that was
+   * their last one got deleted. Resolved by the caller, which is where goal
+   * allocations and asset types can be read together.
+   */
+  goalsWithoutWallet?: { goalId: string; name: string }[];
 }
 
 /**
@@ -198,6 +215,22 @@ export function deriveAttentionItems(
   // Stale values are a data-quality signal, never a judgement: the household
   // isn't doing anything wrong, the picture is just older than it looks. One
   // signal per stale asset so the client can link straight to it.
+  // A goal cannot be saved into without a wallet. `important` rather than
+  // `urgent`: nothing is being lost right now and no date is being missed — the
+  // goal simply cannot make progress until the household points a wallet at it.
+  for (const goal of input.goalsWithoutWallet ?? []) {
+    items.push({
+      id: derivedAttentionId('goal_without_wallet', goal.goalId),
+      source: 'derived',
+      ruleCode: 'goal_without_wallet',
+      level: 'important',
+      amount: null,
+      relatedObjectType: 'financial_goal',
+      relatedObjectId: goal.goalId,
+      params: { goalName: goal.name },
+    });
+  }
+
   for (const asset of input.staleAssets ?? []) {
     items.push({
       id: derivedAttentionId('stale_data', asset.assetId),
