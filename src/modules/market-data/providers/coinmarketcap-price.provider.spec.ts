@@ -42,6 +42,32 @@ describe('CoinMarketCapPriceProvider', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // The asset form's money fields are đồng, so it asks for the quote in VND and
+  // prefills the purchase price from it. That only works if `convert` is
+  // forwarded and the VND key is the one read back off the response.
+  it('quotes in VND when asked, so the đồng price can be prefilled', async () => {
+    process.env.COIN_MARKETCAP_API_KEY = 'test-key';
+    const fetchMock = mockFetchJson({
+      data: {
+        BTC: [{ symbol: 'BTC', quote: { VND: { price: 2_050_000_000 } } }],
+      },
+    });
+    const provider = new CoinMarketCapPriceProvider();
+
+    const result = await provider.getLatestPrices([
+      { assetClass: 'crypto', symbol: 'BTC', quoteCurrency: 'VND' },
+    ]);
+
+    expect(firstFetchUrl(fetchMock).searchParams.get('convert')).toBe('VND');
+    expect(result).toEqual([
+      expect.objectContaining({
+        symbol: 'BTC',
+        price: 2_050_000_000,
+        quoteCurrency: 'VND',
+      }),
+    ]);
+  });
+
   it('batches crypto symbols into one call and maps quotes back', async () => {
     process.env.COIN_MARKETCAP_API_KEY = 'test-key';
     const fetchMock = mockFetchJson({

@@ -216,4 +216,53 @@ describe('VnstockCommodityProvider FX counter rates', () => {
 
     await expect(provider.getFxCounterRates()).resolves.toEqual([]);
   });
+
+  it('gives up on a hung upstream instead of holding the request', async () => {
+    // Production symptom: vnstock retries 3x15s internally, so a slow dealer
+    // feed held /symbols for ~48s. The provider caps it at COMMODITY_TIMEOUT_MS
+    // (default 4s) and falls back rather than waiting the full retry budget.
+    goldPrice.mockReturnValue(new Promise(() => undefined));
+    const provider = new VnstockCommodityProvider();
+
+    const started = Date.now();
+    const result = await provider.getGoldPrices();
+    const elapsed = Date.now() - started;
+
+    expect(elapsed).toBeLessThan(15_000);
+    expect(result).toEqual([]);
+  }, 20_000);
+
+  it('serves the last good list when a later call fails', async () => {
+    // Returning [] would make getQuote report "no such product" — the null the
+    // quote endpoint was returning in production.
+    goldPrice.mockResolvedValue({
+      source: 'btmc',
+      data: [
+        {
+          name: 'NHẪN TRÒN TRƠN (Vàng Rồng Thăng Long)',
+          buyPrice: '14550000',
+          sellPrice: '14950000',
+          updatedAt: '22/08/2026 10:43',
+        },
+      ],
+    });
+    const provider = new VnstockCommodityProvider();
+    expect(await provider.getGoldPrices()).toHaveLength(1);
+
+    goldPrice.mockRejectedValue(new Error('ECONNRESET'));
+    const afterFailure = await provider.getGoldPrices();
+
+    expect(afterFailure).toHaveLength(1);
+    expect(afterFailure[0].name).toBe('NHẪN TRÒN TRƠN');
+  });
+
+  it('coalesces concurrent callers onto one upstream call', async () => {
+    goldPrice.mockReset();
+    goldPrice.mockResolvedValue({ source: 'btmc', data: [] });
+    const provider = new VnstockCommodityProvider();
+
+    await Promise.all([provider.getGoldPrices(), provider.getGoldPrices()]);
+
+    expect(goldPrice).toHaveBeenCalledTimes(1);
+  });
 });
