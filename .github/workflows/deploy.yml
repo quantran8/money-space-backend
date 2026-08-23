@@ -193,6 +193,15 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_JWKS_URL: ${{ secrets.SUPABASE_JWKS_URL }}
+          # Market-data providers. Each price provider activates only when its
+          # key is present (see provider-routing.ts), so omitting one is a
+          # supported configuration, not a failure: routing simply drops the
+          # asset classes it served. The base URLs stay variables — they are
+          # host names with defaults in code, not credentials.
+          COIN_MARKETCAP_API_KEY: ${{ secrets.COIN_MARKETCAP_API_KEY }}
+          COIN_MARKETCAP_BASE_URL: ${{ vars.COIN_MARKETCAP_BASE_URL }}
+          TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
+          TWELVEDATA_BASE_URL: ${{ vars.TWELVEDATA_BASE_URL }}
           BACKEND_IMAGE: ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
           APP_PORT: ${{ vars.APP_PORT || '3000' }}
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
@@ -211,10 +220,16 @@ jobs:
           {
             for key in DATABASE_URL DIRECT_URL SUPABASE_URL SUPABASE_ANON_KEY \
                        SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWKS_URL \
+                       COIN_MARKETCAP_API_KEY COIN_MARKETCAP_BASE_URL \
+                       TWELVEDATA_API_KEY TWELVEDATA_BASE_URL \
                        BACKEND_IMAGE APP_PORT DOMAIN_NAME ACME_EMAIL \
                        REDIS_MAXMEMORY; do
               # ACME_EMAIL goes to Caddy's own env file, written below.
               if [ "$key" = "ACME_EMAIL" ]; then continue; fi
+              # An unset optional key must be absent, not empty: the code tests
+              # truthiness of the key to decide whether a provider is active,
+              # and `KEY=""` would also override a default base URL with "".
+              if [ -z "${!key}" ]; then continue; fi
               # Compose parses env_file with dotenv rules, not shell rules:
               # inside double quotes only \ and " are escapes, and $ / # are
               # literal. Shell-style '\'' quoting would make Compose drop the

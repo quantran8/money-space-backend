@@ -192,6 +192,12 @@ export function deriveDirection(
   if (type === 'debt_update') {
     return 'outflow';
   }
+  // Completing an outgoing cashflow event records a `payment_paid`. Money left
+  // the household, so it is spending — falling through to `neutral` kept it out
+  // of the month's chi and out of the debt's repaid total.
+  if (type === 'payment_paid') {
+    return 'outflow';
+  }
   if (type === 'adjustment') {
     // A balance reconcile is a bookkeeping correction, not money moving — it
     // must not touch a wallet or auto-reduce a debt (both are outflow-gated).
