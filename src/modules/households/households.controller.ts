@@ -15,7 +15,7 @@ import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import type { CreateHouseholdDto } from './dto/create-household.dto';
 import { HouseholdsService } from './households.service';
 
-@Controller('api/households')
+@Controller('households')
 @UseGuards(SupabaseAuthGuard)
 export class HouseholdsController {
   constructor(private readonly householdsService: HouseholdsService) {}

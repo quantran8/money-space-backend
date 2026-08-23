@@ -21,7 +21,7 @@ import type { HouseholdMembership } from '../auth/guards/household-access.guard'
  * changed (`dueDate` → `expectedDate`, plus direction/certainty/requirement),
  * so a silent redirect would hand clients data they'd misread.
  */
-@Controller('api/households/:householdId/cashflow-events')
+@Controller('households/:householdId/cashflow-events')
 export class CashflowEventsController {
   constructor(private readonly cashflowEvents: CashflowEventsService) {}
 

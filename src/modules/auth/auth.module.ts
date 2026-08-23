@@ -25,7 +25,7 @@ import { TokenVerifierService } from './token-verifier.service';
       useClass: PrismaAuthRepository,
     },
     // Global guards: authenticate every route (except @Public), then enforce
-    // household membership + capability on `/api/households/:householdId/*`.
+    // household membership + capability on `/api/v1/households/:householdId/*`.
     // Order matters — SupabaseAuthGuard runs first to populate `req.user`.
     { provide: APP_GUARD, useClass: SupabaseAuthGuard },
     { provide: APP_GUARD, useClass: HouseholdAccessGuard },

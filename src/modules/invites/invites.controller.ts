@@ -17,7 +17,7 @@ import { RequireHouseholdCreator } from '../auth/decorators/require-household-cr
  * The invitee's side lives in `invite-tokens.controller.ts`, on a route with no
  * `:householdId` — see that file for why it must.
  */
-@Controller('api/households/:householdId/invites')
+@Controller('households/:householdId/invites')
 export class InvitesController {
   constructor(private readonly invites: InvitesService) {}
 

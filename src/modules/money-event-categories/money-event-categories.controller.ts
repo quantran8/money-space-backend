@@ -13,7 +13,7 @@ import type { CreateMoneyEventCategoryDto } from './dto/create-money-event-categ
 import type { UpdateMoneyEventCategoryDto } from './dto/update-money-event-category.dto';
 import type { SetDefaultCategoryDto } from './dto/set-default-category.dto';
 
-@Controller('api/households/:householdId/money-event-categories')
+@Controller('households/:householdId/money-event-categories')
 export class MoneyEventCategoriesController {
   constructor(private readonly service: MoneyEventCategoriesService) {}
 

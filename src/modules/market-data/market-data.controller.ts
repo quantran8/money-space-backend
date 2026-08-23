@@ -7,7 +7,7 @@ import type { GetQuoteQuery } from './dto/get-quote.query';
 import type { ListMarketPricesQuery } from './dto/list-market-prices.query';
 import type { SearchSymbolsQuery } from './dto/search-symbols.query';
 
-@Controller('api/market-data')
+@Controller('market-data')
 export class MarketDataController {
   constructor(private readonly marketDataService: MarketDataService) {}
 
@@ -17,7 +17,7 @@ export class MarketDataController {
   }
 
   /**
-   * Symbol picker for asset creation. `GET /api/market-data/symbols?assetClass=
+   * Symbol picker for asset creation. `GET /api/v1/market-data/symbols?assetClass=
    * stock|crypto&q=<query>&limit=<n>`. Empty `q` → curated default list.
    */
   @Get('symbols')
@@ -32,7 +32,7 @@ export class MarketDataController {
 
   /**
    * Price one instrument on demand, for the asset-create flow.
-   * `GET /api/market-data/quote?assetClass=stock&symbol=VNM&market=HOSE`.
+   * `GET /api/v1/market-data/quote?assetClass=stock&symbol=VNM&market=HOSE`.
    *
    * Returns `{ quote: MarketPrice | null }` — `null` when the symbol cannot be
    * priced, so the client falls back to a typed price instead of failing.
@@ -44,7 +44,7 @@ export class MarketDataController {
 
   /**
    * Live Vietnamese dealer gold quotes, VND per lượng.
-   * `GET /api/market-data/gold-prices?brand=SJC`.
+   * `GET /api/v1/market-data/gold-prices?brand=SJC`.
    */
   @Get('gold-prices')
   listGoldPrices(@Query() query: ListGoldPricesQuery) {
@@ -53,7 +53,7 @@ export class MarketDataController {
 
   /**
    * Live bank counter rates against VND (buy cash / buy transfer / sell).
-   * `GET /api/market-data/fx-counter-rates?currencyCode=USD`.
+   * `GET /api/v1/market-data/fx-counter-rates?currencyCode=USD`.
    *
    * Separate from `fx-rates`, which serves the persisted reference rate.
    */

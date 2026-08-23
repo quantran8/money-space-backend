@@ -144,7 +144,7 @@ export class ForecastService {
     asOfDate?: IsoDate,
   ): Promise<ForecastInput> {
     // No `assertHousehold` here: every route that reaches this service is
-    // `/api/households/:householdId/*`, and `HouseholdAccessGuard` has already
+    // `/api/v1/households/:householdId/*`, and `HouseholdAccessGuard` has already
     // proved the household exists (404) and the caller is a member (403)
     // before the handler ran. Re-checking was a third redundant lookup of the
     // same row per request.

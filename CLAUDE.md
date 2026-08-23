@@ -17,6 +17,27 @@ npm run prisma:generate  # regenerate the Prisma client
 npm run db:init          # scripts/init-db.sh
 ```
 
+## API versioning
+
+Every route is served under **`/api/v1/*`**. The prefix and the version are set
+once in [src/main.ts](src/main.ts) via `setGlobalPrefix('api')` +
+`enableVersioning({ type: VersioningType.URI, defaultVersion: '1' })` — a
+`@Controller` declares only its own path (`'households/:householdId/debts'`),
+never `api/` or a version.
+
+- **Adding an endpoint**: nothing to do. `defaultVersion: '1'` puts it on v1.
+- **Introducing v2**: put `@Version('2')` on the individual route or controller
+  that changed. Everything else stays on v1 — versioning is a per-route opt-in,
+  not a repo-wide migration.
+- **`/` and `/health` are `VERSION_NEUTRAL`** and excluded from the prefix. The
+  container healthcheck in [deploy/docker-compose.prod.yml](deploy/docker-compose.prod.yml)
+  hits `/health` directly, so it must not move when the API version changes.
+  Note `exclude` alone is not enough — it strips the prefix but still applies
+  the version, which would yield `/v1/health`.
+- **Frontend**: repositories pass version-free paths and `API_PREFIX` in
+  `packages/core/src/shared/api/http.ts` applies `/api/v1`. Keep it that way so
+  the version stays a one-line change on both sides.
+
 ## Caching (Redis)
 
 Optional and **fail-open**: with `REDIS_URL` unset no client is built and every

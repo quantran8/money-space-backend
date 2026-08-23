@@ -6,7 +6,7 @@ import { ActivityService, type ActivityQuery } from './activity.service';
  * on to see what the other did, so restricting it would remove the very thing
  * that replaced the permission system.
  */
-@Controller('api/households/:householdId/activity')
+@Controller('households/:householdId/activity')
 export class ActivityController {
   constructor(private readonly activity: ActivityService) {}
 

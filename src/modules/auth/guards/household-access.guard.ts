@@ -30,7 +30,7 @@ export interface RequestWithMembership extends AuthenticatedRequest {
 }
 
 /**
- * Authorization guard for `/api/households/:householdId/*` routes (app-layer, no
+ * Authorization guard for `/api/v1/households/:householdId/*` routes (app-layer, no
  * RLS).
  *
  * Membership IS the content permission: a live member of the household may read
