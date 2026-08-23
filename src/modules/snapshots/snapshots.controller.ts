@@ -8,7 +8,7 @@ import type { AuthUser } from '../auth/entities/auth-user.entity';
  * no PATCH and no DELETE by design — a snapshot that can be edited is not a
  * snapshot (§26).
  */
-@Controller('api/households/:householdId/snapshots')
+@Controller('households/:householdId/snapshots')
 export class SnapshotsController {
   constructor(private readonly snapshotsService: SnapshotsService) {}
 

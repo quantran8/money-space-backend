@@ -16,7 +16,7 @@ import { AssetsService } from './assets.service';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
 
-@Controller('api/households/:householdId/assets')
+@Controller('households/:householdId/assets')
 export class AssetsController {
   constructor(private readonly assetsService: AssetsService) {}
 

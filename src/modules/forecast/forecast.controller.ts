@@ -11,7 +11,7 @@ import type { WhatIfRequestDto } from './dto/what-if.dto';
  * `view_summary` partner must be able to ask "what happens if we spend this?".
  * It is a POST only because it needs a request body.
  */
-@Controller('api/households/:householdId')
+@Controller('households/:householdId')
 export class ForecastController {
   constructor(private readonly forecast: ForecastService) {}
 

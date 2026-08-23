@@ -4,7 +4,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
 import type { StoredAttentionItem } from './entities/attention-item.entity';
 
-@Controller('api/households/:householdId/attention-items')
+@Controller('households/:householdId/attention-items')
 export class AttentionController {
   constructor(private readonly attention: AttentionService) {}
 

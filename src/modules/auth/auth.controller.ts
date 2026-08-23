@@ -26,7 +26,7 @@ import {
 } from './guards/supabase-auth.guard';
 import type { AuthenticatedRequest } from './guards/supabase-auth.guard';
 
-@Controller('api/auth')
+@Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 

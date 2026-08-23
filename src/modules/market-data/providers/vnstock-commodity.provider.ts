@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { commodity } from 'vnstock-js';
 import type { FxCounterRate } from '../entities/fx-rate.entity';
 import type { GoldPrice } from '../entities/gold-price.entity';
@@ -27,23 +27,71 @@ interface RawExchangeRow {
  * Gold and bank FX counter rates (`vnstock-js`, no API key). Never throws — an
  * upstream failure yields `[]`. See memory/market-data.md.
  */
+/**
+ * Hard ceiling on an upstream call. vnstock retries internally (3 attempts x 15s
+ * timeout), so a slow dealer feed can otherwise hold a request ~48s.
+ */
+const UPSTREAM_TIMEOUT_MS = Number(process.env.COMMODITY_TIMEOUT_MS ?? 4000);
+
 @Injectable()
-export class VnstockCommodityProvider implements CommodityProvider {
+export class VnstockCommodityProvider
+  implements CommodityProvider, OnModuleInit
+{
   private readonly logger = new Logger(VnstockCommodityProvider.name);
 
-  async getGoldPrices(): Promise<GoldPrice[]> {
-    let result: { source?: string; data?: unknown };
-    try {
-      result = await commodity.gold.price();
-    } catch (error) {
-      this.logger.error(
-        `vnstock gold price request failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return [];
-    }
+  /** Last good result, served when the upstream is slow or down. */
+  private lastGold: GoldPrice[] = [];
+  private lastRates: FxCounterRate[] = [];
 
+  /** Coalesces concurrent callers onto one upstream call. */
+  private goldInFlight?: Promise<GoldPrice[]>;
+  private ratesInFlight?: Promise<FxCounterRate[]>;
+
+  /** Warm the stale cache at boot so the first real request never pays for it. */
+  onModuleInit(): void {
+    void this.getGoldPrices();
+    void this.getFxCounterRates();
+  }
+
+  /** Rejects if `work` outruns the deadline, so a request is never held hostage. */
+  private withTimeout<T>(work: Promise<T>, label: string): Promise<T> {
+    return Promise.race([
+      work,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(`${label} timed out after ${UPSTREAM_TIMEOUT_MS}ms`),
+            ),
+          UPSTREAM_TIMEOUT_MS,
+        ).unref(),
+      ),
+    ]);
+  }
+
+  async getGoldPrices(): Promise<GoldPrice[]> {
+    this.goldInFlight ??= this.withTimeout(commodity.gold.price(), 'gold price')
+      .then((result) => {
+        const parsed = this.parseGold(result);
+        if (parsed.length > 0) this.lastGold = parsed;
+        return parsed;
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          `vnstock gold price request failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        // Stale beats empty: an empty list reads as "no such product".
+        return this.lastGold;
+      })
+      .finally(() => {
+        this.goldInFlight = undefined;
+      });
+    return this.goldInFlight;
+  }
+
+  private parseGold(result: { source?: string; data?: unknown }): GoldPrice[] {
     const rows: RawGoldRow[] = Array.isArray(result?.data)
       ? (result.data as RawGoldRow[])
       : [];
@@ -82,19 +130,30 @@ export class VnstockCommodityProvider implements CommodityProvider {
   }
 
   async getFxCounterRates(): Promise<FxCounterRate[]> {
-    let rows: RawExchangeRow[];
-    try {
-      const result = await commodity.exchange();
-      rows = Array.isArray(result) ? result : [];
-    } catch (error) {
-      this.logger.error(
-        `vnstock exchange rate request failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-      return [];
-    }
+    this.ratesInFlight ??= this.withTimeout(
+      commodity.exchange(),
+      'exchange rates',
+    )
+      .then((result) => {
+        const parsed = this.parseRates(Array.isArray(result) ? result : []);
+        if (parsed.length > 0) this.lastRates = parsed;
+        return parsed;
+      })
+      .catch((error: unknown) => {
+        this.logger.error(
+          `vnstock exchange rate request failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+        return this.lastRates;
+      })
+      .finally(() => {
+        this.ratesInFlight = undefined;
+      });
+    return this.ratesInFlight;
+  }
 
+  private parseRates(rows: RawExchangeRow[]): FxCounterRate[] {
     const results: FxCounterRate[] = [];
     for (const row of rows) {
       const currencyCode = row.currencyCode?.trim().toUpperCase();

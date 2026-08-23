@@ -15,7 +15,7 @@ import { DebtsService } from './debts.service';
 import { CurrentMembership } from '../auth/decorators/current-membership.decorator';
 import type { HouseholdMembership } from '../auth/guards/household-access.guard';
 
-@Controller('api/households/:householdId/debts')
+@Controller('households/:householdId/debts')
 export class DebtsController {
   constructor(private readonly debtsService: DebtsService) {}
 

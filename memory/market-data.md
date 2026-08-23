@@ -336,9 +336,18 @@ is the adapter (no API key); `NoopCommodityProvider` is the documented fallback.
     reference rate from the `fx_rates` table. Both endpoints exist on purpose:
     one is the stored reference figure, the other is what a bank quotes today.
 
-Neither method ever throws: an upstream failure is logged and yields `[]`, so a
-dealer being down returns an empty list rather than 5xx-ing a page that merely
-shows gold alongside other figures.
+Neither method ever throws, and neither can hold a request for long:
+
+- **Hard timeout** (`COMMODITY_TIMEOUT_MS`, default 4s). `vnstock` retries
+  internally — 3 attempts x 15s — so a slow dealer feed held
+  `GET /symbols?assetClass=gold` for **~48s in production**. The provider caps
+  the call itself rather than inheriting that retry budget.
+- **Stale beats empty.** On timeout or failure the last good list is served.
+  Returning `[]` made `getQuote` find no matching product and answer `null` —
+  the second production symptom, on the same root cause.
+- **Concurrent callers coalesce** onto one upstream call, and the lists are
+  **prewarmed at boot** (`onModuleInit`) so the first real request never pays
+  for a cold fetch.
 
 - Code: `src/modules/market-data/providers/{commodity-provider.interface,
   vnstock-commodity.provider,noop-commodity.provider}.ts`,

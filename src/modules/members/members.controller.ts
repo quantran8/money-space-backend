@@ -12,7 +12,7 @@ import type { CreateMemberDto } from './dto/create-member.dto';
 import type { UpdateMemberDto } from './dto/update-member.dto';
 import { RequireHouseholdCreator } from '../auth/decorators/require-household-creator.decorator';
 
-@Controller('api/households/:householdId/members')
+@Controller('households/:householdId/members')
 export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 

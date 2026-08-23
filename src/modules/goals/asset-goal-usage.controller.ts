@@ -16,7 +16,7 @@ import { GoalsService } from './goals.service';
  * reverse edge would be a cycle. Mounting the route here keeps the dependency
  * one-way while still giving the asset page the URL it expects.
  */
-@Controller('api/households/:householdId/assets')
+@Controller('households/:householdId/assets')
 export class AssetGoalUsageController {
   constructor(private readonly goalsService: GoalsService) {}
 

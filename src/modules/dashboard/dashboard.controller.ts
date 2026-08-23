@@ -1,7 +1,7 @@
 import { Controller, Get, Param } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 
-@Controller('api/households/:householdId')
+@Controller('households/:householdId')
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 

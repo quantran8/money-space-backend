@@ -14,7 +14,7 @@ import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
 import { Public } from '../auth/decorators/public.decorator';
 
-@Controller('api/households/:householdId/money-events')
+@Controller('households/:householdId/money-events')
 export class MoneyEventsController {
   constructor(private readonly moneyEventsService: MoneyEventsService) {}
 

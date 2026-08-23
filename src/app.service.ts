@@ -9,14 +9,14 @@ export class AppService {
       version: '0.0.1',
       endpoints: [
         '/health',
-        '/api/households',
-        '/api/households/:householdId/dashboard',
-        '/api/households/:householdId/assets',
-        '/api/households/:householdId/debts',
-        '/api/households/:householdId/members',
-        '/api/households/:householdId/money-events',
-        '/api/households/:householdId/upcoming-payments',
-        '/api/households/:householdId/financial-goals',
+        '/api/v1/households',
+        '/api/v1/households/:householdId/dashboard',
+        '/api/v1/households/:householdId/assets',
+        '/api/v1/households/:householdId/debts',
+        '/api/v1/households/:householdId/members',
+        '/api/v1/households/:householdId/money-events',
+        '/api/v1/households/:householdId/upcoming-payments',
+        '/api/v1/households/:householdId/financial-goals',
       ],
     };
   }

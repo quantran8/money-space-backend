@@ -19,7 +19,7 @@ import type { AuthUser } from '../auth/entities/auth-user.entity';
  * to a real member row, so we must know who is joining. What is not required —
  * and cannot be — is prior membership.
  */
-@Controller('api/invites')
+@Controller('invites')
 export class InviteTokensController {
   constructor(private readonly invites: InvitesService) {}
 

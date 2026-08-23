@@ -16,7 +16,7 @@ import type {
   UpdateGoalAllocationDto,
 } from './dto/goal-allocation.dto';
 
-@Controller('api/households/:householdId/financial-goals')
+@Controller('households/:householdId/financial-goals')
 export class GoalsController {
   constructor(private readonly goalsService: GoalsService) {}
 
