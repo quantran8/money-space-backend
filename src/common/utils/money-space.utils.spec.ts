@@ -1,4 +1,5 @@
 import {
+  deriveDirection,
   liquidityForAsset,
   liquidityForAssetType,
   marketUnitForAssetType,
@@ -78,5 +79,25 @@ describe('marketUnitForAssetType', () => {
     ['gold', 'SJC', ' chỉ ', 'chỉ'],
   ] as const)('derives the unit for %s', (type, symbol, entered, expected) => {
     expect(marketUnitForAssetType(type, symbol, entered)).toBe(expected);
+  });
+});
+
+describe('deriveDirection', () => {
+  it.each([
+    ['income', 'inflow'],
+    ['expense', 'outflow'],
+    ['debt_update', 'outflow'],
+    // Completing an outgoing cashflow event: money left the household, so it
+    // has to reach the month's chi and the debt's repaid total, both of which
+    // sum by direction.
+    ['payment_paid', 'outflow'],
+    ['adjustment', 'neutral'],
+    ['transfer', 'neutral'],
+  ] as const)('derives %s as %s', (type, expected) => {
+    expect(deriveDirection(type)).toBe(expected);
+  });
+
+  it('keeps an explicit direction over the type default', () => {
+    expect(deriveDirection('payment_paid', 'neutral')).toBe('neutral');
   });
 });

@@ -92,10 +92,20 @@ Copy these from your local `.env` — the same values the app already uses:
 | `SUPABASE_ANON_KEY` |
 | `SUPABASE_SERVICE_ROLE_KEY` |
 | `SUPABASE_JWKS_URL` |
+| `COIN_MARKETCAP_API_KEY` |
+| `TWELVEDATA_API_KEY` |
 
 `REDIS_URL` is deliberately **not** a secret: Compose sets it to
 `redis://redis:6379` on the server, because inside the Docker network the host
 is the service name.
+
+The two market-data keys are each optional in the sense that the app boots
+without them — but a missing key silently disables the asset classes that
+provider serves. Without `COIN_MARKETCAP_API_KEY` crypto prices come back empty
+(the provider logs `COIN_MARKETCAP_API_KEY not set — returning no quotes`);
+without `TWELVEDATA_API_KEY` the equity/FX routes go the same way. Set both
+unless you mean to turn a class off. An unset key is written as no line at all,
+never `KEY=""`, because the routing code decides by truthiness.
 
 ---
 
@@ -113,6 +123,8 @@ Putting them here rather than in secrets means you can read back what is set.
 | `ACME_EMAIL` | your e-mail | no |
 | `APP_PORT` | `3000` | no, this is the default |
 | `REDIS_MAXMEMORY` | `256mb` | no, this is the default |
+| `COIN_MARKETCAP_BASE_URL` | `https://pro-api.coinmarketcap.com` | no, this is the default |
+| `TWELVEDATA_BASE_URL` | `https://api.twelvedata.com` | no, this is the default |
 
 Two of these matter more than they look:
 
