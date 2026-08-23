@@ -1,14 +1,33 @@
 import { VnstockCommodityProvider } from './vnstock-commodity.provider';
 
-const goldPrice = jest.fn<Promise<unknown>, []>();
+const goldPrice = jest.fn<Promise<unknown>, [{ source?: string }?]>();
 const exchange = jest.fn<Promise<unknown>, []>();
 
 jest.mock('vnstock-js', () => ({
   commodity: {
-    gold: { price: (): Promise<unknown> => goldPrice() },
+    gold: {
+      price: (options?: { source?: string }): Promise<unknown> =>
+        goldPrice(options),
+    },
     exchange: (): Promise<unknown> => exchange(),
   },
 }));
+
+/**
+ * A short BTMC body is treated as truncated, so a fixture must clear
+ * `MIN_GOLD_ROWS`. Pads with filler rows the parser drops (no price).
+ */
+const btmc = (rows: unknown[]): { source: string; data: unknown[] } => ({
+  source: 'btmc',
+  data: [
+    ...rows,
+    ...Array.from({ length: 25 }, (_, i) => ({
+      name: `FILLER ${i} (Filler)`,
+      buyPrice: '0',
+      sellPrice: '0',
+    })),
+  ],
+});
 
 describe('VnstockCommodityProvider gold', () => {
   beforeEach(() => {
@@ -16,9 +35,8 @@ describe('VnstockCommodityProvider gold', () => {
   });
 
   it('parses a dealer quote, splitting product from brand', async () => {
-    goldPrice.mockResolvedValue({
-      source: 'btmc',
-      data: [
+    goldPrice.mockResolvedValue(
+      btmc([
         {
           name: 'VÀNG MIẾNG SJC (Vàng SJC)',
           karat: '24k',
@@ -27,8 +45,8 @@ describe('VnstockCommodityProvider gold', () => {
           sellPrice: '14700000',
           updatedAt: '21/08/2026 16:17',
         },
-      ],
-    });
+      ]),
+    );
     const provider = new VnstockCommodityProvider();
 
     const result = await provider.getGoldPrices();
@@ -50,9 +68,8 @@ describe('VnstockCommodityProvider gold', () => {
 
   it('keeps only the most recent row per product', async () => {
     // The feed republishes each product at several times the same day.
-    goldPrice.mockResolvedValue({
-      source: 'btmc',
-      data: [
+    goldPrice.mockResolvedValue(
+      btmc([
         {
           name: 'VÀNG MIẾNG SJC (Vàng SJC)',
           buyPrice: '14400000',
@@ -65,8 +82,8 @@ describe('VnstockCommodityProvider gold', () => {
           sellPrice: '14660000',
           updatedAt: '21/08/2026 09:00',
         },
-      ],
-    });
+      ]),
+    );
     const provider = new VnstockCommodityProvider();
 
     const result = await provider.getGoldPrices();
@@ -76,17 +93,16 @@ describe('VnstockCommodityProvider gold', () => {
   });
 
   it('reports an unquoted sell side as null, never as a free price', async () => {
-    goldPrice.mockResolvedValue({
-      source: 'btmc',
-      data: [
+    goldPrice.mockResolvedValue(
+      btmc([
         {
           name: 'VÀNG NGUYÊN LIỆU (Vàng thị trường)',
           buyPrice: '13650000',
           sellPrice: '0',
           updatedAt: '21/08/2026 16:17',
         },
-      ],
-    });
+      ]),
+    );
     const provider = new VnstockCommodityProvider();
 
     const result = await provider.getGoldPrices();
@@ -96,20 +112,18 @@ describe('VnstockCommodityProvider gold', () => {
   });
 
   it('drops a row with neither side priced', async () => {
-    goldPrice.mockResolvedValue({
-      source: 'btmc',
-      data: [{ name: 'X (Y)', buyPrice: '0', sellPrice: '0' }],
-    });
+    goldPrice.mockResolvedValue(
+      btmc([{ name: 'X (Y)', buyPrice: '0', sellPrice: '0' }]),
+    );
     const provider = new VnstockCommodityProvider();
 
     expect(await provider.getGoldPrices()).toEqual([]);
   });
 
   it('handles a name with no brand in parentheses', async () => {
-    goldPrice.mockResolvedValue({
-      source: 'btmc',
-      data: [{ name: 'VÀNG TRƠN', buyPrice: '100', updatedAt: '21/08/2026' }],
-    });
+    goldPrice.mockResolvedValue(
+      btmc([{ name: 'VÀNG TRƠN', buyPrice: '100', updatedAt: '21/08/2026' }]),
+    );
     const provider = new VnstockCommodityProvider();
 
     const result = await provider.getGoldPrices();
@@ -235,17 +249,16 @@ describe('VnstockCommodityProvider FX counter rates', () => {
   it('serves the last good list when a later call fails', async () => {
     // Returning [] would make getQuote report "no such product" — the null the
     // quote endpoint was returning in production.
-    goldPrice.mockResolvedValue({
-      source: 'btmc',
-      data: [
+    goldPrice.mockResolvedValue(
+      btmc([
         {
           name: 'NHẪN TRÒN TRƠN (Vàng Rồng Thăng Long)',
           buyPrice: '14550000',
           sellPrice: '14950000',
           updatedAt: '22/08/2026 10:43',
         },
-      ],
-    });
+      ]),
+    );
     const provider = new VnstockCommodityProvider();
     expect(await provider.getGoldPrices()).toHaveLength(1);
 
@@ -256,9 +269,76 @@ describe('VnstockCommodityProvider FX counter rates', () => {
     expect(afterFailure[0].name).toBe('NHẪN TRÒN TRƠN');
   });
 
+  it('rejects a truncated btmc body instead of caching the few products in it', async () => {
+    goldPrice.mockReset();
+    // A cut-off body parses fine and would otherwise drop most of the list.
+    const truncated = {
+      source: 'btmc',
+      data: [
+        { name: 'VÀNG MIẾNG SJC (Vàng SJC)', buyPrice: '1', sellPrice: '2' },
+      ],
+    };
+    goldPrice.mockResolvedValue(truncated);
+    const provider = new VnstockCommodityProvider();
+
+    await provider.getGoldPrices();
+
+    // Two btmc attempts, then the giavangnet fallback.
+    expect(goldPrice).toHaveBeenCalledTimes(3);
+    expect(goldPrice).toHaveBeenLastCalledWith({ source: 'giavangnet' });
+  });
+
+  it('maps giavangnet codes onto the products the allowlist names', async () => {
+    goldPrice.mockReset();
+    goldPrice.mockImplementation((options) =>
+      Promise.resolve(
+        options?.source === 'giavangnet'
+          ? {
+              source: 'giavangnet',
+              data: [
+                {
+                  code: 'BTSJC',
+                  buyPrice: 144600000,
+                  sellPrice: 147600000,
+                  updatedAt: 1787443201,
+                },
+                {
+                  code: 'BT9999NTT',
+                  buyPrice: 145500000,
+                  sellPrice: 149500000,
+                  updatedAt: 1787443201,
+                },
+                // An index, not a retail product — must not be listed.
+                { code: 'XAUUSD', buyPrice: 4604.4, sellPrice: 0 },
+              ],
+            }
+          : { source: 'btmc', data: [] },
+      ),
+    );
+    const provider = new VnstockCommodityProvider();
+
+    const result = await provider.getGoldPrices();
+
+    expect(result.map((item) => item.name)).toEqual([
+      'VÀNG MIẾNG SJC',
+      'NHẪN TRÒN TRƠN',
+    ]);
+    expect(result[0]).toMatchObject({
+      brand: 'Vàng SJC',
+      buyPrice: 144_600_000,
+      sellPrice: 147_600_000,
+      source: 'giavangnet',
+      priceTime: '2026-08-23T00:00:01.000Z',
+    });
+  });
+
   it('coalesces concurrent callers onto one upstream call', async () => {
     goldPrice.mockReset();
-    goldPrice.mockResolvedValue({ source: 'btmc', data: [] });
+    goldPrice.mockResolvedValue(
+      btmc([
+        { name: 'VÀNG MIẾNG SJC (Vàng SJC)', buyPrice: '1', sellPrice: '2' },
+      ]),
+    );
     const provider = new VnstockCommodityProvider();
 
     await Promise.all([provider.getGoldPrices(), provider.getGoldPrices()]);

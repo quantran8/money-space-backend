@@ -383,6 +383,42 @@ instruments exist) is a separate concern from quotes (their price):
     held, priced and sold the same way. Measured live: 4 gold + 11 silver = 15.
   - **Currencies** are a short supported list (USD, JPY) intersected with the
     bank counter-rate feed; a currency the bank is not quoting is not offered.
+
+### Gold feed integrity (BTMC truncation)
+
+The BTMC feed is plain **HTTP on port 80** and its ~17KB body can be cut off
+mid-stream on the way out of the region. Axios then resolves with whatever
+arrived, so a truncated response looks like a success — it does not throw, and
+`vnstock-js`'s own `auto` fallback never fires.
+
+Observed on prod (OCI Singapore, 2026-08-23): the symbol endpoint returned only
+the first 3 gold products and no silver at all, while the quote for
+`VÀNG MIẾNG SJC` returned `null`. Replaying the parser against a payload cut at
+6 of 92 rows reproduces that response exactly. Local (Vietnam) gets all 92 rows
+in ~130ms.
+
+Guards in `VnstockCommodityProvider`:
+
+- **A short body is rejected, not cached.** Under `MIN_GOLD_ROWS` (20; a healthy
+  payload is ~92) the round is treated as truncated and retried once. A partial
+  list is worse than a stale one — it silently drops products people hold, so
+  both the picker and the quote go missing for an asset that exists.
+- **The fallback is explicit**, not `source: 'auto'`: two failed BTMC attempts
+  fall through to giavang.net.
+- **giavang.net rows are remapped.** That feed keys rows by `type_code` and
+  sends `type: "GOLD"` for every row, which vnstock's transform maps onto
+  `name` — so an unmapped fallback collapses to a single product called `GOLD`
+  matching nothing in `GOLD_PRODUCTS`. `GIAVANGNET_PRODUCTS` maps each code onto
+  the BTMC product name it quotes (verified by matching quoted prices), keeping
+  symbols stable across sources so stored assets keep resolving. Index codes
+  (`XAUUSD`, `USDX`) are excluded — not retail products. Its `update_time` is
+  unix **seconds**, unlike BTMC's `DD/MM/YYYY HH:mm` in UTC+7.
+- **`COMMODITY_TIMEOUT_MS` defaults to 10s** (was 4s): a cross-border round trip
+  to a Vietnamese feed needs the headroom that a local run never shows.
+
+Both the gold quote and the gold list read through the **same Redis key**
+(`market:gold`); the quote path formerly called the provider directly, letting
+the two disagree about which products exist.
 - `VnstockSymbolReferenceProvider` lists **VN equities** and needs no network
   call per lookup: `stock.search` is a *synchronous* query over a directory
   bundled with the package, which `init()` loads once (the promise is reused so
