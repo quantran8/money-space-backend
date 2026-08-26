@@ -2,141 +2,69 @@ import {
   CallHandler,
   ExecutionContext,
   Injectable,
-  Logger,
   NestInterceptor,
 } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 
-interface LoggableRequest {
-  method: string;
-  originalUrl?: string;
-  url: string;
-  body?: unknown;
-  query?: unknown;
-  params?: unknown;
-}
-
-interface LoggableResponse {
-  statusCode: number;
+interface PinoRequest {
+  log?: { setBindings?: (bindings: Record<string, unknown>) => void };
+  user?: { id?: string; sub?: string };
+  route?: { path?: string };
 }
 
 /**
- * Logs every incoming request and its successful response. Errors are logged
- * by `HttpExceptionFilter`, so this interceptor only reports the success path
- * (the `error` branch below is a safety net if a request bypasses the filter).
+ * pino-http already logs one line per request/response with method, url, status
+ * and duration, so this interceptor no longer logs anything itself — two
+ * interceptor lines plus pino's own line was the same request written three
+ * times, tripling Loki ingest for no extra information.
+ *
+ * What it still does is enrich pino's line with what only Nest knows: the
+ * matched route pattern (so `/assets/:id` groups in Grafana instead of
+ * splitting per id), the authenticated user, and the SHAPE of the response.
+ * `setBindings` mutates the request-scoped child logger, so these fields land
+ * on the single completion line pino emits when the response closes.
  */
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
-  private readonly logger = new Logger('HTTP');
-
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const http = context.switchToHttp();
-    const request = http.getRequest<LoggableRequest>();
-    const response = http.getResponse<LoggableResponse>();
+    const request = context.switchToHttp().getRequest<PinoRequest>();
+    const setBindings = request.log?.setBindings?.bind(request.log);
 
-    const method = request.method;
-    const url = request.originalUrl ?? request.url;
-    const startedAt = Date.now();
+    if (!setBindings) return next.handle();
 
-    this.logger.log(
-      `--> ${method} ${url} ${this.serialize({
-        body: sanitize(request.body),
-        query: request.query,
-        params: request.params,
-      })}`,
-    );
+    setBindings({
+      handler: `${context.getClass().name}.${context.getHandler().name}`,
+      route: request.route?.path,
+      userId: request.user?.id ?? request.user?.sub,
+    });
 
     return next.handle().pipe(
       tap({
-        next: (data) => {
-          const ms = Date.now() - startedAt;
-          this.logger.log(
-            `<-- ${method} ${url} ${response.statusCode} ${ms}ms ${this.describe(data)}`,
-          );
-        },
-        error: (err: unknown) => {
-          const ms = Date.now() - startedAt;
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.error(`<-- ${method} ${url} FAILED ${ms}ms - ${message}`);
-        },
+        next: (data) => setBindings({ payload: describe(data) }),
       }),
     );
   }
-
-  private serialize(value: unknown): string {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return '[unserializable]';
-    }
-  }
-
-  /**
-   * Describe a response by SHAPE, not by content.
-   *
-   * This used to `sanitize()` (a recursive walk) and `JSON.stringify()` the
-   * entire response body on every request. A snapshots payload is up to 365
-   * snapshots × their per-asset value lines — thousands of objects walked and
-   * serialized twice, synchronously, on the single-threaded event loop. That
-   * cost is paid while every other in-flight request waits.
-   *
-   * Item count and payload size are what the log was actually useful for; the
-   * full body belongs in a debugger, not in every production log line.
-   */
-  private describe(data: unknown): string {
-    if (data === null || data === undefined) return '(empty)';
-    if (Array.isArray(data)) return `(array, ${data.length} items)`;
-    if (typeof data !== 'object') return `(${typeof data})`;
-
-    const record = data as Record<string, unknown>;
-    if (Array.isArray(record.items)) {
-      const total =
-        typeof record.total === 'number' ? record.total : record.items.length;
-      return `(items: ${record.items.length}, total: ${total})`;
-    }
-    return `(keys: ${Object.keys(record).length})`;
-  }
 }
 
-const SENSITIVE_KEYS = new Set([
-  'password',
-  'newpassword',
-  'oldpassword',
-  'currentpassword',
-  'token',
-  'accesstoken',
-  'refreshtoken',
-  'refresh_token',
-  'access_token',
-  'authorization',
-  'apikey',
-  'api_key',
-  'secret',
-  'clientsecret',
-  'client_secret',
-]);
-
 /**
- * Recursively redact sensitive fields so credentials never reach the logs.
+ * Describe a response by SHAPE, not by content.
+ *
+ * A snapshots payload is up to 365 snapshots x their per-asset value lines.
+ * Serializing that on every request costs event-loop time every other in-flight
+ * request waits on, and stores megabytes in Loki nobody queries. Item count and
+ * shape are what the log was actually useful for; the body belongs in a
+ * debugger.
  */
-function sanitize(value: unknown, depth = 0): unknown {
-  if (value === null || value === undefined || depth > 6) {
-    return value;
-  }
+function describe(data: unknown): string {
+  if (data === null || data === undefined) return 'empty';
+  if (Array.isArray(data)) return `array:${data.length}`;
+  if (typeof data !== 'object') return typeof data;
 
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitize(item, depth + 1));
+  const record = data as Record<string, unknown>;
+  if (Array.isArray(record.items)) {
+    const total =
+      typeof record.total === 'number' ? record.total : record.items.length;
+    return `items:${record.items.length}/total:${total}`;
   }
-
-  if (typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = SENSITIVE_KEYS.has(key.toLowerCase())
-        ? '[REDACTED]'
-        : sanitize(val, depth + 1);
-    }
-    return out;
-  }
-
-  return value;
+  return `keys:${Object.keys(record).length}`;
 }

@@ -90,6 +90,34 @@ Redis is configured but unreachable, `CacheService` logs once and reports a miss
 - **Anything cached must be JSON round-trippable** — `undefined`, `Date`, and
   `Decimal` do not survive. The dashboard already returns plain numbers/strings.
 
+## Logging
+
+Pino via `nestjs-pino`, configured once in
+[src/config/logger.config.ts](src/config/logger.config.ts). Every existing
+`new Logger('Context')` keeps working — the output is JSON in production
+(pino-pretty in dev), which Alloy ships to Grafana Cloud.
+
+Why it is shaped this way, and the four failure modes that are invisible until
+production: [memory/infrastructure/logging.md](memory/infrastructure/logging.md).
+Operator setup (Grafana Cloud credentials, importing the dashboard):
+[deploy/observability/README.md](deploy/observability/README.md).
+
+- **One line per request.** `pino-http` logs the completion; `LoggingInterceptor`
+  only *enriches* that line (`handler`, `route`, `userId`, payload shape) via
+  `req.log.setBindings`. Do not add a second `logger.log()` per request — three
+  lines for one request triples ingest for no extra information.
+- **Never log a response body.** Describe it by shape. A snapshots payload is
+  hundreds of objects, serialized synchronously on the event loop while every
+  other in-flight request waits.
+- **Redaction is by key name, at any depth** (`censor()`), plus a fixed
+  projection in the `req` serializer that keeps headers out entirely. Add a new
+  credential-shaped field to `SENSITIVE_KEYS`; do NOT reach for pino's `redact`
+  option, whose `*` wildcard matches only one level.
+- **`censor()` must not rebuild non-plain objects** — doing so once turned
+  `res.statusCode` into `null` on every line.
+- **A new health/probe route belongs in `SILENT_ROUTES`.** Anything polled on a
+  timer fills the log with lines nobody reads.
+
 ## Scheduled jobs
 
 `ScheduleModule.forRoot()` is registered in `AppModule`. One job today:
@@ -231,6 +259,14 @@ change needs a paragraph of justification, that paragraph is a `memory/` edit.
 ## Business logic memory
 
 **All business logic (nghiệp vụ) of the app must be documented under `memory/`.** This is the durable source of truth for how the app's domain flows work.
+
+> **Infrastructure has its own folder:** [memory/infrastructure/](memory/infrastructure/README.md)
+> holds how the backend *runs* — [logging](memory/infrastructure/logging.md),
+> [deployment](memory/infrastructure/deployment.md),
+> [database connections](memory/infrastructure/database-connections.md),
+> [caching](memory/infrastructure/caching.md). Unlike the domain files those are
+> backend-only. The same rule applies: read the relevant file before changing
+> that layer, and update it when you do.
 
 - **Before changing anything that touches business logic**, read the relevant files in `memory/` first to understand the flow and the nghiệp vụ.
 - **Whenever a task changes business logic**, update the corresponding file(s) in `memory/` so they stay accurate.

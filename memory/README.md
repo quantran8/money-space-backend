@@ -18,6 +18,10 @@ This folder is the **durable source of truth for the app's business logic (nghi�
 
 ## What does NOT belong here
 
+- **How the backend runs** — logging, deployment, database connections, caching
+  → [`infrastructure/`](infrastructure/README.md). Those are backend-only and
+  are not shared with the other repos, which is exactly why they sit in their
+  own folder rather than alongside the domain files.
 - UI styling, component structure, framework config → those live in `CLAUDE.md` / `AGENTS.md` / `design.md`.
 - Per-task change logs → those live in `session/` (frontend-web).
 

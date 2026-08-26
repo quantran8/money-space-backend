@@ -1,5 +1,6 @@
 import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { Logger as PinoLogger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 
 /**
@@ -27,7 +28,11 @@ function registerProcessGuards() {
 async function bootstrap() {
   registerProcessGuards();
 
-  const app = await NestFactory.create(AppModule);
+  // `bufferLogs` holds bootstrap output until useLogger() swaps in Pino, so
+  // even the startup lines come out as JSON instead of Nest's text format.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(PinoLogger));
+  app.flushLogs();
   app.enableCors();
 
   // Every route is served under `/api/v1/*`. The prefix and the version live

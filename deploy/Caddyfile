@@ -29,9 +29,11 @@
 		header_up X-Forwarded-Proto https
 	}
 
+	# JSON so Alloy's json stage can parse the access log the same way it parses
+	# the app's Pino output, instead of it landing in Loki as opaque text.
 	log {
 		output stdout
-		format console
+		format json
 	}
 }
 

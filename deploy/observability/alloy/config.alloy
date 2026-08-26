@@ -1,0 +1,166 @@
+// Grafana Alloy — the only observability component that runs on the VM.
+//
+// It reads every container's stdout off the Docker socket and pushes the lines
+// to Grafana Cloud's managed Loki. Nothing is stored here: no Loki, no Grafana,
+// no volumes to size or back up, which is what makes this fit on a 1 GB
+// instance next to the app.
+//
+// Retention and the query UI are Grafana Cloud's side of the deal; this file
+// only decides what gets sent and how it is labelled.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+// ---------------------------------------------------------------------------
+// Discovery — every container on this host's Docker daemon.
+//
+// By socket rather than by tailing /var/lib/docker/containers: the socket gives
+// Alloy the container labels, which is how a stream ends up tagged with its
+// compose service name instead of a 64-char container id.
+// ---------------------------------------------------------------------------
+discovery.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "15s"
+}
+
+// Turn Docker's metadata into Loki labels. Only low-cardinality values become
+// labels: Loki bills and indexes per stream, and a label carrying a container
+// id or a request id would create a new stream per deploy (or per request).
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Compose writes these on every container it starts.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+  // Fallback for containers started outside compose (no service label): the
+  // container name, minus Docker's leading slash.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  // Opt-out for a container that would otherwise log about its own logging:
+  // `labels: { logs.exclude: "true" }` in compose.
+  rule {
+    source_labels = ["__meta_docker_container_label_logs_exclude"]
+    regex         = "true"
+    action        = "drop"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Collection — backend, caddy and redis alike.
+//
+// Caddy's access log is what distinguishes "the app returned 502" from "the app
+// was never reached", and that question is unanswerable from the app's own logs.
+// ---------------------------------------------------------------------------
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.parse.receiver]
+  labels     = { host = env("HOSTNAME_LABEL") }
+}
+
+// ---------------------------------------------------------------------------
+// Processing — parse the backend's Pino JSON into real fields.
+//
+// Non-JSON lines (Redis, anything else) pass through untouched: a json stage
+// that fails to parse leaves the line as-is rather than dropping it.
+// ---------------------------------------------------------------------------
+loki.process "parse" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+
+  stage.json {
+    expressions = {
+      level   = "level",
+      time    = "time",
+      context = "context",
+      req_id  = "req.id",
+      status  = "res.statusCode",
+      latency = "responseTime",
+      env     = "env",
+    }
+  }
+
+  // Use the app's own timestamp, not the moment Alloy read the line, so a
+  // backlog after a restart lands at the right point on the time axis.
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339Nano"
+    // A line with no parsable `time` — Caddy's access log, any non-Pino JSON —
+    // keeps the moment Alloy read it. The default ("fudge") would instead reuse
+    // the previous line's timestamp + 1ns, which silently backdates every
+    // Caddy line to whenever the backend last logged.
+    action_on_failure = "skip"
+  }
+
+  // `level` and `env` are bounded sets, so they are safe as labels — this is
+  // what makes `{level="error"}` an index lookup instead of a full scan.
+  // req_id / status / latency stay out: each would multiply the stream count.
+  stage.labels {
+    values = {
+      level = "",
+      env   = "",
+    }
+  }
+
+  // Structured metadata is indexed per-entry, not per-stream, so a request id
+  // is filterable without creating a stream per request.
+  stage.structured_metadata {
+    values = {
+      req_id  = "",
+      context = "",
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shipping — Grafana Cloud's managed Loki.
+//
+// The three values come from the stack's "Send Logs" panel in the Grafana Cloud
+// portal (Home > Connections > Loki > Send logs):
+//   GRAFANA_CLOUD_LOKI_URL   the push endpoint, ending in /loki/api/v1/push
+//   GRAFANA_CLOUD_LOKI_USER  the numeric stack/user id, NOT an email address
+//   GRAFANA_CLOUD_LOKI_TOKEN an access policy token with logs:write
+// ---------------------------------------------------------------------------
+loki.write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = env("GRAFANA_CLOUD_LOKI_USER")
+      password = env("GRAFANA_CLOUD_LOKI_TOKEN")
+    }
+
+    // Grafana Cloud rate-limits per stack. Retrying rather than dropping means
+    // a burst costs delay, not missing logs; the WAL below holds them meanwhile.
+    max_backoff_period = "5m"
+  }
+
+  // Applied to every stream regardless of source, so a second VM shipping into
+  // the same stack stays distinguishable.
+  external_labels = {
+    collector = "alloy",
+  }
+
+  // Write-ahead log: entries survive an Alloy restart and a Grafana Cloud
+  // outage on disk instead of being lost. Sized small on purpose — this is a
+  // buffer for a blip, not an archive.
+  //
+  // Marked experimental by Grafana. Losing a few minutes of logs to a bug here
+  // costs nothing, whereas losing them to every restart is the default without
+  // it — worth the trade, but that is the trade.
+  wal {
+    enabled           = true
+    max_segment_age   = "1h"
+    drain_timeout     = "30s"
+  }
+}

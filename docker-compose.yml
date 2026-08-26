@@ -38,5 +38,37 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ---------------------------------------------------------------------------
+  # Log shipper. OFF by default — it needs Grafana Cloud credentials, and a
+  # laptop does not need its logs in a hosted Loki. `pnpm start:dev` already
+  # prints them through pino-pretty.
+  #
+  # To exercise the real pipeline locally, put the same three variables the
+  # deploy writes into deploy/observability/.env.alloy and run:
+  #   docker compose --profile logs up
+  # ---------------------------------------------------------------------------
+  alloy:
+    image: grafana/alloy:v1.12.1
+    profiles: ['logs']
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./deploy/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    env_file: ./deploy/observability/.env.alloy
+    environment:
+      HOSTNAME_LABEL: local
+    user: root
+    restart: unless-stopped
+    labels:
+      logs.exclude: 'true'
+
+volumes:
+  alloy_data:
+
 # No named volume for Redis on purpose — persistence is off (`--save ""`), since
 # a cache that survives restarts would just serve staler data than a cold start.

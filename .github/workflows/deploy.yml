@@ -183,6 +183,21 @@ jobs:
           scp deploy/docker-compose.prod.yml oci:"${{ secrets.APP_DIR }}/docker-compose.yml"
           scp deploy/Caddyfile               oci:"${{ secrets.APP_DIR }}/Caddyfile"
 
+      - name: Upload the log-shipper config
+        # Uploaded unconditionally, even when ENABLE_OBSERVABILITY is off: the
+        # files are inert without the second compose file, so having them on
+        # disk makes turning shipping on a variable flip, not a redeploy. The
+        # observability compose file mounts them by relative path
+        # (./observability/...), so the layout here must match.
+        #
+        # grafana/dashboards/ is deliberately NOT uploaded — the dashboard is
+        # imported by hand into Grafana Cloud, and nothing on the VM reads it.
+        run: |
+          ssh oci "mkdir -p ${{ secrets.APP_DIR }}/observability"
+          scp -r deploy/observability/alloy \
+                 deploy/observability/docker-compose.observability.yml \
+                 oci:"${{ secrets.APP_DIR }}/observability/"
+
       - name: Write .env on the instance
         # Piped over stdin so no secret is ever an argv entry (visible in `ps`)
         # or a file on the runner. Written 0600, owned by the deploy user.
@@ -207,6 +222,15 @@ jobs:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           REDIS_MAXMEMORY: ${{ vars.REDIS_MAXMEMORY || '256mb' }}
+          # Read by the observability compose file, not by the app. Compose
+          # interpolates ${...} from the .env next to the compose file, which is
+          # this one — so it belongs here even though Nest never reads it. It
+          # becomes the `host` label on every stream in Grafana Cloud.
+          HOSTNAME_LABEL: ${{ vars.HOSTNAME_LABEL || 'money-space-vm' }}
+          # Ships the app's own log level; `info` in production keeps the
+          # per-request debug lines out of Loki.
+          LOG_LEVEL: ${{ vars.LOG_LEVEL || 'info' }}
+          SERVICE_NAME: ${{ vars.SERVICE_NAME || 'money-space-backend' }}
         run: |
           # An empty image reference here surfaces on the VM as "service backend
           # has neither an image nor a build context", which points at the
@@ -223,7 +247,8 @@ jobs:
                        COIN_MARKETCAP_API_KEY COIN_MARKETCAP_BASE_URL \
                        TWELVEDATA_API_KEY TWELVEDATA_BASE_URL \
                        BACKEND_IMAGE APP_PORT DOMAIN_NAME ACME_EMAIL \
-                       REDIS_MAXMEMORY; do
+                       REDIS_MAXMEMORY HOSTNAME_LABEL \
+                       LOG_LEVEL SERVICE_NAME; do
               # ACME_EMAIL goes to Caddy's own env file, written below.
               if [ "$key" = "ACME_EMAIL" ]; then continue; fi
               # An unset optional key must be absent, not empty: the code tests
@@ -257,6 +282,45 @@ jobs:
             fi
           } | ssh oci "umask 077 && cat > ${{ secrets.APP_DIR }}/.env.caddy"
 
+      - name: Write Alloy's env file
+        if: vars.ENABLE_OBSERVABILITY == 'true'
+        env:
+          GRAFANA_CLOUD_LOKI_URL: ${{ vars.GRAFANA_CLOUD_LOKI_URL }}
+          GRAFANA_CLOUD_LOKI_USER: ${{ vars.GRAFANA_CLOUD_LOKI_USER }}
+          GRAFANA_CLOUD_LOKI_TOKEN: ${{ secrets.GRAFANA_CLOUD_LOKI_TOKEN }}
+        run: |
+          # Its own file, like Caddy's: Alloy ships logs to a third party and has
+          # no business holding the Supabase service-role key.
+          #
+          # All three values come from the Grafana Cloud portal under
+          # Home > Connections > Loki > Send logs. The user is the numeric stack
+          # id shown there, NOT an email address — an email authenticates fine
+          # against the portal and gets a 401 from the push endpoint.
+          missing=""
+          for key in GRAFANA_CLOUD_LOKI_URL GRAFANA_CLOUD_LOKI_USER GRAFANA_CLOUD_LOKI_TOKEN; do
+            if [ -z "${!key}" ]; then missing="$missing $key"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::ENABLE_OBSERVABILITY is on but these are unset:$missing" >&2
+            echo "URL and USER are Variables; TOKEN is a Secret." >&2
+            echo "Settings > Secrets and variables > Actions." >&2
+            exit 1
+          fi
+
+          # dotenv escaping, same as the app's .env: backslash first, then the
+          # quote, or the escape added for a quote gets escaped again.
+          emit() {
+            local value=$2
+            value=${value//\\/\\\\}
+            value=${value//\"/\\\"}
+            printf '%s="%s"\n' "$1" "$value"
+          }
+          {
+            emit GRAFANA_CLOUD_LOKI_URL "$GRAFANA_CLOUD_LOKI_URL"
+            emit GRAFANA_CLOUD_LOKI_USER "$GRAFANA_CLOUD_LOKI_USER"
+            emit GRAFANA_CLOUD_LOKI_TOKEN "$GRAFANA_CLOUD_LOKI_TOKEN"
+          } | ssh oci "umask 077 && cat > ${{ secrets.APP_DIR }}/.env.alloy"
+
       - name: Log the instance in to OCIR
         run: |
           printf '%s' '${{ secrets.OCIR_TOKEN }}' | ssh oci \
@@ -266,6 +330,7 @@ jobs:
       - name: Pull and restart
         env:
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+          ENABLE_OBSERVABILITY: ${{ vars.ENABLE_OBSERVABILITY }}
         run: |
           # The caddy service sits behind the `tls` profile, so it starts only
           # when a domain is actually configured. --remove-orphans then also
@@ -273,9 +338,18 @@ jobs:
           profile=""
           if [ -n "$DOMAIN_NAME" ]; then profile="--profile tls"; fi
 
+          # Alloy comes from a second compose file rather than a profile in the
+          # first, so shipping logs stays a per-host decision — and
+          # --remove-orphans in the app-only form then stops it cleanly when the
+          # variable is turned off.
+          files="-f docker-compose.yml"
+          if [ "$ENABLE_OBSERVABILITY" = "true" ]; then
+            files="$files -f observability/docker-compose.observability.yml"
+          fi
+
           ssh oci "cd ${{ secrets.APP_DIR }} && \
-            docker compose $profile pull && \
-            docker compose $profile up -d --remove-orphans"
+            docker compose $files $profile pull && \
+            docker compose $files $profile up -d --remove-orphans"
 
       - name: Run database migrations
         if: inputs.run_migrations
