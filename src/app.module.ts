@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CacheModule } from './common/cache/cache.module';
@@ -11,6 +12,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 import { DatabaseModule } from './database/database.module';
 import { MoneySpaceModule } from './modules/money-space.module';
+import { buildLoggerParams } from './config/logger.config';
 
 @Module({
   imports: [
@@ -24,6 +26,11 @@ import { MoneySpaceModule } from './modules/money-space.module';
     // instance runs its own scheduler — see that class for the multi-instance
     // note and the env switch that disables it per instance.
     ScheduleModule.forRoot(),
+    // Replaces Nest's text logger with Pino. Every `new Logger(ctx)` in the
+    // codebase now emits one JSON object per line on stdout, which is what the
+    // Alloy -> Loki -> Grafana pipeline consumes. Registered here (not only via
+    // `app.useLogger`) so request-scoped loggers carry the request id.
+    LoggerModule.forRoot(buildLoggerParams()),
     DatabaseModule,
     CacheModule,
     MoneySpaceModule,

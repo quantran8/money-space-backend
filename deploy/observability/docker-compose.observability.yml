@@ -1,0 +1,55 @@
+# Log shipping: Alloy on this VM -> Grafana Cloud (managed Loki + Grafana UI).
+#
+# One container, no volumes to size, nothing stored here. Loki and Grafana are
+# Grafana Cloud's problem, which is what makes this fit next to the app on a
+# 1 GB instance — self-hosting the pair needed more RAM than the app itself.
+#
+# Kept in its own compose file so the app can be deployed, restarted or rolled
+# back without touching log shipping, and so a host can run the app alone by
+# simply not including this file:
+#
+#   docker compose -f docker-compose.prod.yml \
+#                  -f observability/docker-compose.observability.yml up -d
+#
+# Alloy joins the app stack's network, which is what lets it label streams with
+# the backend's compose service name.
+services:
+  alloy:
+    image: grafana/alloy:v1.12.1
+    command:
+      - run
+      # Bound to loopback: the UI at :12345 exposes the pipeline's state and
+      # recent log lines, and nothing on the internet needs to reach it. Read it
+      # over an SSH tunnel when a push is failing:
+      #   ssh -L 12345:127.0.0.1:12345 <host>
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Read-only socket: Alloy only lists containers and reads their logs, it
+      # never needs to start or stop anything.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Holds the write-ahead log — entries queue here when Grafana Cloud is
+      # unreachable instead of being dropped, so a blip costs delay, not logs.
+      - alloy_data:/var/lib/alloy/data
+    # Credentials come from their own file, not the app's .env: Alloy has no
+    # business holding the Supabase service-role key, and the app has no
+    # business holding a Grafana Cloud token.
+    env_file: .env.alloy
+    environment:
+      HOSTNAME_LABEL: ${HOSTNAME_LABEL:-money-space-vm}
+    # Reading the Docker socket requires membership in the docker group, which
+    # the image's default user is not in. This is why the socket mount is :ro.
+    user: root
+    # A small ceiling so a log burst cannot push the app out of memory on a 1 GB
+    # instance — Alloy's steady state here is well under 100 MB.
+    mem_limit: 256m
+    restart: unless-stopped
+    # Without this Alloy collects its own logs: one warning about a failed push
+    # produces a line that then fails to push.
+    labels:
+      logs.exclude: 'true'
+
+volumes:
+  alloy_data:

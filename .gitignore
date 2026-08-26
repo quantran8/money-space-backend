@@ -41,6 +41,9 @@ lerna-debug.log*
 .env.test.local
 .env.production.local
 .env.local
+# Grafana Cloud push credentials for the local `--profile logs` run. The
+# .example next to it is the template that IS committed.
+deploy/observability/.env.alloy
 
 # temp directory
 .temp
