@@ -32,5 +32,7 @@ export interface HouseholdsRepository {
   getHouseholdsForUser(userId: string): Promise<Household[]>;
   createHousehold(input: CreateHouseholdInput): Promise<Household>;
   setDisplayCurrency(householdId: string, currency: string): Promise<void>;
+  /** Rename the shared space. `name` is a column, unlike the config bag. */
+  setName(householdId: string, name: string): Promise<void>;
   countMembers(householdId?: string): Promise<number>;
 }

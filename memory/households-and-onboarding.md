@@ -23,6 +23,25 @@ A `Household` is the aggregate root (see [[domain-overview]]). Onboarding create
 - Optional partner-invite email validated **only when non-empty** (regex).
 - `updateFrequency` must be weekly / monthly / manual (backend falls back to `manual`).
 
+## Updating a household (`PATCH /households/:householdId/config`)
+
+The household's own settings — its **name** and its **display currency**. Both
+fields are optional and each is validated **only when present**, so a settings
+form may send one or both.
+
+- `name`: trimmed; must be non-empty and ≤ 60 chars (same ceiling as the
+  client's settings schema). Writes the `households.name` column.
+- `currency`: must be `VND | USD | EUR`. Writes `config.displayCurrency` (jsonb
+  merge), **not** the `households.currency` column — the column holds the
+  currency chosen at creation.
+
+Not creator-guarded: unlike delete and transfer-steward, either partner may
+change what the shared space is called or read in.
+
+Before 2026-08-26 this endpoint rejected any request without a valid `currency`,
+which made renaming impossible — the settings form carried a household-name
+field that was never sent.
+
 ## Active household
 
 The active household id is kept in a zustand `household-store`; `use-my-households` lists memberships; `use-active-household` resolves the current one.
@@ -34,7 +53,7 @@ The active household id is kept in a zustand `household-store`; `use-my-househol
 ## Where it lives in code
 
 - **frontend-web**: `src/features/onboarding/{model/onboarding-form.ts, hooks/use-my-households.ts, hooks/use-onboarding-page.ts, api/onboarding.repository.ts, ui/require-household.tsx}`, `src/shared/stores/household-store.ts`, `src/shared/hooks/use-active-household.ts`.
-- **backend**: `src/modules/households/` (`households.service.ts`, `repositories/prisma-households.repository.ts`).
+- **backend**: `src/modules/households/` (`households.service.ts` — `createHousehold`, `updateConfig`; `repositories/prisma-households.repository.ts` — `setName`, `setDisplayCurrency`).
 - **mobile-app**: to be ported.
 
 ## Enums

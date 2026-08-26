@@ -1,7 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AppModule } from './../src/app.module';
-import { AppService } from './../src/app.service';
+import { AppModule } from '../src/app.module';
+import { AppService } from '../src/app.service';
 import { Asset } from '../src/modules/assets/entities/asset.entity';
 import { AssetsService } from '../src/modules/assets/assets.service';
 import { ASSETS_REPOSITORY } from '../src/modules/assets/repositories/assets.repository.interface';
