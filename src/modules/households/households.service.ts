@@ -6,6 +6,8 @@ import type { HouseholdsRepository } from './repositories/households.repository.
 
 const ALLOWED_FREQUENCIES = ['weekly', 'monthly', 'manual'] as const;
 const ALLOWED_CURRENCIES = ['VND', 'USD', 'EUR'] as const;
+/** Matches the client's settings schema so both sides reject the same input. */
+const HOUSEHOLD_NAME_MAX = 60;
 
 @Injectable()
 export class HouseholdsService {
@@ -98,19 +100,49 @@ export class HouseholdsService {
     });
   }
 
-  async updateConfig(householdId: string, payload: { currency?: string }) {
+  /**
+   * The household's own settings: what it is called, and the currency every
+   * figure in it is read in.
+   *
+   * Each field is validated only when it is PRESENT. This used to reject any
+   * request without a currency, which made the endpoint unusable for a rename
+   * — and a partial PATCH is what a settings form sends when one control moved.
+   */
+  async updateConfig(
+    householdId: string,
+    payload: { currency?: string; name?: string },
+  ) {
     await this.householdsRepository.assertHousehold(householdId);
-    if (
-      !ALLOWED_CURRENCIES.includes(
-        payload.currency as (typeof ALLOWED_CURRENCIES)[number],
-      )
-    ) {
-      throw new BadRequestException('currency must be VND, USD, or EUR');
+
+    if (payload.currency !== undefined) {
+      if (
+        !ALLOWED_CURRENCIES.includes(
+          payload.currency as (typeof ALLOWED_CURRENCIES)[number],
+        )
+      ) {
+        throw new BadRequestException('currency must be VND, USD, or EUR');
+      }
+      await this.householdsRepository.setDisplayCurrency(
+        householdId,
+        payload.currency,
+      );
     }
-    await this.householdsRepository.setDisplayCurrency(
-      householdId,
-      payload.currency!,
-    );
+
+    if (payload.name !== undefined) {
+      const name = payload.name.trim();
+      // Same floor and ceiling as creation: a space with no name cannot be
+      // told apart in the switcher, and the client's own schema caps at 60.
+      if (!name) {
+        throw new BadRequestException('name must not be empty');
+      }
+      if (name.length > HOUSEHOLD_NAME_MAX) {
+        throw new BadRequestException(
+          `name must be at most ${HOUSEHOLD_NAME_MAX} characters`,
+        );
+      }
+      await this.householdsRepository.setName(householdId, name);
+    }
+
     return this.householdsRepository.assertHousehold(householdId);
   }
 }

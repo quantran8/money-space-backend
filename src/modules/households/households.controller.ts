@@ -62,7 +62,7 @@ export class HouseholdsController {
   @Patch(':householdId/config')
   updateConfig(
     @Param('householdId') householdId: string,
-    @Body() payload: { currency?: string },
+    @Body() payload: { currency?: string; name?: string },
   ) {
     return this.householdsService.updateConfig(householdId, payload);
   }

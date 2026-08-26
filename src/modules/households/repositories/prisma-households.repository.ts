@@ -214,6 +214,18 @@ export class PrismaHouseholdsRepository
     });
   }
 
+  /**
+   * A plain column update, unlike `setDisplayCurrency` — the name has its own
+   * column and needs no jsonb merge. Scoped to live rows so a renamed
+   * soft-deleted household cannot be resurrected by a stray id.
+   */
+  async setName(householdId: string, name: string): Promise<void> {
+    await this.prisma.household.updateMany({
+      where: { id: householdId, deletedAt: null },
+      data: { name },
+    });
+  }
+
   async setDisplayCurrency(
     householdId: string,
     currency: string,
