@@ -9,9 +9,14 @@ services:
     image: redis:7-alpine
     # maxmemory + LRU so a full cache evicts cold keys instead of refusing
     # writes. Every entry is rebuildable from Postgres, so eviction is safe.
-    # 256 MB suits the A1 shape. On a 1 GB E2.1.Micro that is a quarter of the
-    # machine, so the deploy lowers it via REDIS_MAXMEMORY. Every entry is
-    # rebuildable from Postgres, so a smaller cache costs latency, not data.
+    #
+    # 256 MB is the default and suits the deployed A1.Flex (1 OCPU / 4 GB),
+    # where it is well under a tenth of the machine. The value is a variable
+    # for the E2.1.Micro fallback shape, which terraform still supports when
+    # Ampere capacity is unavailable: 1 GB fixed, where 256 MB would be a
+    # quarter of the machine. Nothing lowers it automatically — set the
+    # REDIS_MAXMEMORY repo variable (e.g. 64mb) when deploying to that shape.
+    # A smaller cache costs latency, not data.
     command: >
       redis-server
       --maxmemory ${REDIS_MAXMEMORY:-256mb}
