@@ -405,6 +405,16 @@ Guards in `VnstockCommodityProvider`:
   both the picker and the quote go missing for an asset that exists.
 - **The fallback is explicit**, not `source: 'auto'`: two failed BTMC attempts
   fall through to giavang.net.
+- **A BTMC rejection must not propagate.** The retry loop originally guarded
+  only the *truncated body* case, so a **timeout/reset threw straight out of
+  `fetchGold`**, past the second attempt and past giavang.net — the fallback
+  never ran in production, the only environment it exists for. Observed
+  2026-08-27: `gold price timed out after 10000ms` on
+  `/symbols?assetClass=gold`, with no giavangnet line anywhere in the logs.
+  Locally BTMC always answers in ~130ms, so that branch never executed and the
+  gap stayed invisible. A rejection is now caught and **ends the BTMC rounds
+  immediately** — retrying answers a short body, not a dead upstream, and a
+  second 10s timeout would only delay the fallback (worst case ~20s, not ~30s).
 - **giavang.net rows are remapped.** That feed keys rows by `type_code` and
   sends `type: "GOLD"` for every row, which vnstock's transform maps onto
   `name` — so an unmapped fallback collapses to a single product called `GOLD`

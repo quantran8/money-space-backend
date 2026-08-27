@@ -231,20 +231,52 @@ describe('VnstockCommodityProvider FX counter rates', () => {
     await expect(provider.getFxCounterRates()).resolves.toEqual([]);
   });
 
-  it('gives up on a hung upstream instead of holding the request', async () => {
+  it('falls back to giavangnet when btmc hangs', async () => {
     // Production symptom: vnstock retries 3x15s internally, so a slow dealer
     // feed held /symbols for ~48s. The provider caps it at COMMODITY_TIMEOUT_MS
-    // (default 4s) and falls back rather than waiting the full retry budget.
-    goldPrice.mockReturnValue(new Promise(() => undefined));
+    // and must reach the secondary feed — a hung btmc used to throw straight
+    // past it, so giavangnet never ran in prod, the one env it exists for.
+    goldPrice.mockImplementation((options) =>
+      options?.source === 'giavangnet'
+        ? Promise.resolve({
+            source: 'giavangnet',
+            data: [
+              {
+                code: 'BTSJC',
+                buyPrice: '14400000',
+                sellPrice: '14700000',
+                updatedAt: 1_756_000_000,
+              },
+            ],
+          })
+        : new Promise(() => undefined),
+    );
     const provider = new VnstockCommodityProvider();
 
     const started = Date.now();
     const result = await provider.getGoldPrices();
     const elapsed = Date.now() - started;
 
+    // One btmc round, not two: a timeout is not retried.
     expect(elapsed).toBeLessThan(15_000);
-    expect(result).toEqual([]);
+    expect(goldPrice).toHaveBeenCalledWith({ source: 'giavangnet' });
+    expect(result).toEqual([
+      expect.objectContaining({
+        name: 'VÀNG MIẾNG SJC',
+        brand: 'Vàng SJC',
+        buyPrice: 14_400_000,
+        sellPrice: 14_700_000,
+        source: 'giavangnet',
+      }),
+    ]);
   }, 20_000);
+
+  it('serves the stale list when btmc hangs and giavangnet fails too', async () => {
+    goldPrice.mockReturnValue(new Promise(() => undefined));
+    const provider = new VnstockCommodityProvider();
+
+    await expect(provider.getGoldPrices()).resolves.toEqual([]);
+  }, 30_000);
 
   it('serves the last good list when a later call fails', async () => {
     // Returning [] would make getQuote report "no such product" — the null the

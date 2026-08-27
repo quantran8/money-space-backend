@@ -126,7 +126,8 @@ export class VnstockCommodityProvider
   }
 
   /**
-   * BTMC first, retried once on a short body, then giavang.net.
+   * BTMC first, retried once on a short body, then giavang.net. A rejection
+   * must never propagate — it would skip the fallback. See memory/market-data.md.
    *
    * BTMC is plain HTTP and the connection can drop mid-body on the way out of
    * the region: axios resolves with whatever arrived, so a truncated feed looks
@@ -134,10 +135,19 @@ export class VnstockCommodityProvider
    */
   private async fetchGold(): Promise<GoldPrice[]> {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const result = await this.withTimeout(
-        commodity.gold.price({ source: 'btmc' }),
-        'gold price',
-      );
+      let result: { source?: string; data?: unknown };
+      try {
+        result = await this.withTimeout(
+          commodity.gold.price({ source: 'btmc' }),
+          'gold price',
+        );
+      } catch (error: unknown) {
+        this.logger.warn(
+          `btmc gold attempt ${attempt + 1} failed: ${this.describeError(error)}`,
+        );
+        // Retry answers a truncated body, not a dead upstream; fall through.
+        break;
+      }
       const rowCount = Array.isArray(result?.data) ? result.data.length : 0;
       if (rowCount >= MIN_GOLD_ROWS) {
         const parsed = this.parseGold(result);

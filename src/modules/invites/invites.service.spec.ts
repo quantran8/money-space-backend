@@ -167,6 +167,26 @@ describe('InvitesService.createInvite', () => {
     expect(days).toBe(14);
   });
 
+  /**
+   * Regression: an invite is a TOKEN, not an email. Both apps call
+   * `createInvite(householdId)` with no payload at all — the normal way to mint
+   * a shareable QR/link — so a contactless invite must reach the repository
+   * with both fields null. A `household_invites_contact_present` CHECK in the
+   * database once rejected exactly this row, turning every QR invite into a
+   * 500; it is dropped in 20260827090000_invite_contact_is_optional.
+   */
+  it('mints a contactless invite, with no email and no phone', async () => {
+    const { service, invitesRepository } = setup();
+
+    const created = await service.createInvite('hh-1', {}, USER);
+
+    expect(created.inviteeEmail).toBeNull();
+    expect(created.inviteePhone).toBeNull();
+    expect(invitesRepository.insertInvite).toHaveBeenCalledWith(
+      expect.objectContaining({ inviteeEmail: null, inviteePhone: null }),
+    );
+  });
+
   it.each([['not-an-email'], ['a@b'], ['@example.com']])(
     'rejects the invalid email %s',
     async (email) => {
