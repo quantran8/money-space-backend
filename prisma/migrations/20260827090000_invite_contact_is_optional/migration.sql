@@ -1,0 +1,44 @@
+-- An invite is a TOKEN, not an email. Drop the contact requirement.
+--
+-- `household_invites_contact_present` (added 20260812101000) asserted
+-- `invitee_email IS NOT NULL OR invitee_phone IS NOT NULL`, under the heading
+-- "an invite must be reachable somehow". That was true of a product that
+-- DELIVERED invitations — you needed an address to send one to.
+--
+-- This one does not. The invite is a token the inviter shares themselves, as a
+-- QR code or a copied link, to a person who is usually standing next to them.
+-- `buildJoinUrl` encodes the token; `POST /api/invites/:token/accept` is the
+-- only way in. Nothing in the join flow reads email or phone — whoever holds
+-- the token and is signed in can accept. The two contact columns survive only
+-- as the inviter's own note of who a token was meant for, which is why both
+-- are nullable in the schema and optional in `CreateInviteDto`.
+--
+-- So the check contradicted the caller: the web and mobile apps both invoke
+-- `createInvite(householdId)` with NO payload, which is the normal, intended
+-- way to mint a shareable code. Every such invite hit
+--
+--   ERROR 23514: new row for relation "household_invites" violates check
+--   constraint "household_invites_contact_present"
+--
+-- and surfaced as a 500. The QR/link path — the primary way anyone joins a
+-- household — was fully broken, while the one caller that still passes an
+-- address (`createHousehold`'s inline `inviteEmail` during onboarding) kept
+-- working, which is why this hid behind the onboarding happy path.
+--
+-- The constraint was created NOT VALID, so it never checked rows already
+-- stored; it only ever rejected new inserts. Dropping it therefore cannot
+-- leave anything inconsistent behind — there is no backfill to do, and no
+-- existing row was ever proven to satisfy it in the first place.
+--
+-- Reachability is not lost, because it never lived here: an invite that reaches
+-- nobody is a token the inviter never shares, and it lapses on its own at
+-- `expires_at` (14 days by default, 90 max).
+
+ALTER TABLE "household_invites"
+  DROP CONSTRAINT IF EXISTS "household_invites_contact_present";
+
+-- Deliberately fixed HERE rather than by editing 20260812101000, which is
+-- already applied in production: `prisma migrate deploy` refuses to run when an
+-- applied migration's checksum changes. That earlier file still adds the
+-- constraint on a fresh database; this migration runs after it and removes it,
+-- so a rebuilt database and production converge on the same state.

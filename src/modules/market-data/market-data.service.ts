@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CacheService } from '../../common/cache/cache.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { MARKET_DATA_AS_OF } from '../../common/seed/money-space.seed';
@@ -48,6 +48,8 @@ export class MarketDataService {
     private readonly commodityProvider: CommodityProvider,
     private readonly cache: CacheService,
   ) {}
+
+  private readonly logger = new Logger(MarketDataService.name);
 
   private cachedPrices: MarketPrice[] = [];
   private pricesExpireAt = 0;
@@ -213,7 +215,13 @@ export class MarketDataService {
     const priceTime = new Date().toISOString();
 
     if (assetClass === 'gold') {
-      const prices = await this.commodityProvider.getGoldPrices();
+      // Same cached list the gold endpoint serves, so a quote and the symbol
+      // picker can never disagree about which products exist.
+      const prices = await this.cache.wrap(
+        cacheKeys.goldPrices(),
+        () => this.commodityProvider.getGoldPrices(),
+        cacheTtl.commodity,
+      );
       const match = prices.find(
         (price) => price.name.trim().toUpperCase() === symbol.toUpperCase(),
       );
@@ -231,7 +239,11 @@ export class MarketDataService {
       };
     }
 
-    const rates = await this.commodityProvider.getFxCounterRates();
+    const rates = await this.cache.wrap(
+      cacheKeys.fxCounterRates(),
+      () => this.commodityProvider.getFxCounterRates(),
+      cacheTtl.commodity,
+    );
     const match = rates.find(
       (rate) => rate.currencyCode === symbol.toUpperCase(),
     );
@@ -422,9 +434,14 @@ export class MarketDataService {
     // actually pick. Stock and crypto run to thousands, so those still lead
     // with the curated popular names.
     if (assetClass === 'gold' || assetClass === 'foreign_currency') {
-      return reference.length > 0
-        ? reference.slice(0, limit)
-        : DEFAULT_SYMBOLS[assetClass].slice(0, limit);
+      if (reference.length === 0) {
+        // The curated list carries no prices, so a quote for it returns null.
+        this.logger.warn(
+          `${assetClass} reference list is empty — serving curated defaults`,
+        );
+        return DEFAULT_SYMBOLS[assetClass].slice(0, limit);
+      }
+      return reference.slice(0, limit);
     }
 
     const curated = DEFAULT_SYMBOLS[assetClass];
