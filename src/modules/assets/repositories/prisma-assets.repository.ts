@@ -423,6 +423,11 @@ export class PrismaAssetsRepository
   /**
    * Bulk `current_value` write. One UPDATE ... FROM (VALUES ...) instead of one
    * statement per asset, for the same reason as above.
+   *
+   * Bumps `value_updated_at` like the single-asset path does: the daily job IS
+   * a re-valuation, so freshness (`getDataFreshness`, attention rules, the
+   * forecast's staleness cut-off) must see it. Leaving it out made every
+   * market_priced asset look days old while its price was current.
    */
   async updateAssetCurrentValues(
     values: Array<{ assetId: string; value: number }>,
@@ -435,7 +440,9 @@ export class PrismaAssetsRepository
 
     await this.prisma.$executeRaw`
       UPDATE "assets" AS a
-      SET "current_value" = v.value, "updated_at" = NOW()
+      SET "current_value" = v.value,
+          "value_updated_at" = NOW(),
+          "updated_at" = NOW()
       FROM (VALUES ${Prisma.join(rows)}) AS v (asset_id, value)
       WHERE a."id" = v.asset_id
     `;
