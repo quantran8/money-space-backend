@@ -403,26 +403,42 @@ Guards in `VnstockCommodityProvider`:
   payload is ~92) the round is treated as truncated and retried once. A partial
   list is worse than a stale one — it silently drops products people hold, so
   both the picker and the quote go missing for an asset that exists.
-- **The fallback is explicit**, not `source: 'auto'`: two failed BTMC attempts
-  fall through to giavang.net.
-- **A BTMC rejection must not propagate.** The retry loop originally guarded
-  only the *truncated body* case, so a **timeout/reset threw straight out of
-  `fetchGold`**, past the second attempt and past giavang.net — the fallback
-  never ran in production, the only environment it exists for. Observed
-  2026-08-27: `gold price timed out after 10000ms` on
-  `/symbols?assetClass=gold`, with no giavangnet line anywhere in the logs.
-  Locally BTMC always answers in ~130ms, so that branch never executed and the
-  gap stayed invisible. A rejection is now caught and **ends the BTMC rounds
-  immediately** — retrying answers a short body, not a dead upstream, and a
-  second 10s timeout would only delay the fallback (worst case ~20s, not ~30s).
+- **BTMC was dropped entirely on 2026-08-27; giavang.net is the only gold
+  feed.** BTMC is plain **HTTP on port 80**: from OCI Singapore its ~17KB body
+  arrived truncated or not at all, and it contributed **zero products in
+  production** while answering fine (373 rows / 135ms) from Vietnam. Keeping a
+  feed that only works from one country is what produced the 10s `/quote` and
+  the 3-item picker. giavang.net is **HTTPS** and answers in ~200ms.
+  Measured after the removal: **11 products in 157ms**.
+  - **Every retail row is its own product** (11 of 14 rows; the two index codes
+    and any stale row are dropped). Collapsing dealers onto three shared names
+    served **3 items** where the feed carried 11 — and the per-dealer spread is
+    the point of the feed: DOJI's nhẫn quotes 152.9M against SJC's 150.0M.
+  - `VÀNG MIẾNG SJC`, `NHẪN TRÒN TRƠN` and `VÀNG MIẾNG VRTL` **keep their BTMC
+    names** so stored assets still resolve; the rest are named per dealer
+    (`VÀNG MIẾNG DOJI HCM`, `NHẪN TRÒN TRƠN PHÚ QUÝ`) and listed in
+    `GOLD_PRODUCTS`.
+  - **⚠️ Silver has no source any more.** BTMC was the only feed carrying it, so
+    the picker lost **11 silver products** (`BẠC THỎI ANCARAT`, `BẠC MIẾNG PHÚ
+    QUÝ`, `BẠC … RỒNG THĂNG LONG`). A household still holding one keeps the
+    asset, but it **cannot be re-priced and no longer appears in the picker**.
+    `SILVER_MARKER` is deliberately left in place so silver returns
+    automatically if a feed ever supplies it.
 - **giavang.net rows are remapped.** That feed keys rows by `type_code` and
   sends `type: "GOLD"` for every row, which vnstock's transform maps onto
   `name` — so an unmapped fallback collapses to a single product called `GOLD`
   matching nothing in `GOLD_PRODUCTS`. `GIAVANGNET_PRODUCTS` maps each code onto
   the BTMC product name it quotes (verified by matching quoted prices), keeping
   symbols stable across sources so stored assets keep resolving. Index codes
-  (`XAUUSD`, `USDX`) are excluded — not retail products. Its `update_time` is
-  unix **seconds**, unlike BTMC's `DD/MM/YYYY HH:mm` in UTC+7.
+  (`XAUUSD`, `USDX`) are excluded — not retail products.
+- **`updatedAt` arrives as `YYYY-MM-DD`, not unix seconds.** The parser assumed
+  seconds, so `Number("2026-08-27")` was `NaN` and **every row fell back to
+  "now"**. Both shapes are now parsed, dates anchored to UTC+7, and an
+  unparseable stamp returns `null` rather than today.
+- **A row the feed has stopped updating is dropped**
+  (`COMMODITY_MAX_ROW_AGE_DAYS`, default 7). giavang.net still ships delisted
+  products at their last-ever price — `VNGN` at its **2025-05-07** figure,
+  `USDX` at 2026-02-01 — which the "now" fallback published as today's price.
 - **`COMMODITY_TIMEOUT_MS` defaults to 10s** (was 4s): a cross-border round trip
   to a Vietnamese feed needs the headroom that a local run never shows.
 

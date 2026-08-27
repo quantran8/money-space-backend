@@ -4,16 +4,6 @@ import type { FxCounterRate } from '../entities/fx-rate.entity';
 import type { GoldPrice } from '../entities/gold-price.entity';
 import type { CommodityProvider } from './commodity-provider.interface';
 
-/** Upstream gold row (BTMC shape); every field arrives as a string. */
-interface RawGoldRow {
-  name?: string;
-  karat?: string;
-  weight?: string;
-  buyPrice?: string | number;
-  sellPrice?: string | number;
-  updatedAt?: string;
-}
-
 /** Transport details vnstock attaches to a wrapped upstream error. */
 interface UpstreamCause {
   code: string;
@@ -49,30 +39,39 @@ interface RawExchangeRow {
 const UPSTREAM_TIMEOUT_MS = Number(process.env.COMMODITY_TIMEOUT_MS ?? 10000);
 
 /**
- * Fewest gold rows a complete BTMC payload can carry. The feed republishes ~10
- * products per publish time across several times a day, so a healthy response
- * is ~90 rows; anything near the floor means the body was cut off mid-stream.
- * Overridable via `COMMODITY_MIN_GOLD_ROWS`.
- */
-const MIN_GOLD_ROWS = Number(process.env.COMMODITY_MIN_GOLD_ROWS ?? 20);
-
-/**
- * giavang.net `type_code` → the BTMC product it quotes, so a fallback round
- * yields the same symbols the allowlist and stored assets already use. Index
- * codes (XAUUSD, USDX) are deliberately absent: they are not retail products.
+ * giavang.net `type_code` → the product it quotes. Every retail row is listed
+ * as its own product: the feed's value is the per-dealer spread, and collapsing
+ * several dealers onto one name threw most of the list away.
+ *
+ * The first three names are inherited from the retired BTMC feed and must not
+ * be renamed — stored assets reference them. Index codes (XAUUSD, USDX) are
+ * deliberately absent: they are not retail products.
  */
 const GIAVANGNET_PRODUCTS: Readonly<
   Record<string, { name: string; brand: string }>
 > = {
+  // Inherited from BTMC; renaming these orphans existing assets.
   BTSJC: { name: 'VÀNG MIẾNG SJC', brand: 'Vàng SJC' },
-  SJL1L10: { name: 'VÀNG MIẾNG SJC', brand: 'Vàng SJC' },
-  VNGSJC: { name: 'VÀNG MIẾNG SJC', brand: 'Vàng SJC' },
-  VIETTINMSJC: { name: 'VÀNG MIẾNG SJC', brand: 'Vàng SJC' },
   BT9999NTT: { name: 'NHẪN TRÒN TRƠN', brand: 'Vàng Rồng Thăng Long' },
-  PQHN24NTT: { name: 'NHẪN TRÒN TRƠN', brand: 'Vàng Rồng Thăng Long' },
   DOJINHTV: { name: 'VÀNG MIẾNG VRTL', brand: 'Vàng Rồng Thăng Long' },
-  PQHNVM: { name: 'VÀNG MIẾNG VRTL', brand: 'Vàng Rồng Thăng Long' },
+  // Per-dealer products; the spread differs meaningfully between them.
+  SJL1L10: { name: 'VÀNG MIẾNG SJC 1L-10L', brand: 'Vàng SJC' },
+  VNGSJC: { name: 'VÀNG MIẾNG SJC (PNJ)', brand: 'PNJ' },
+  VIETTINMSJC: { name: 'VÀNG MIẾNG SJC (VietinBank)', brand: 'VietinBank' },
+  SJ9999: { name: 'VÀNG SJC 9999', brand: 'Vàng SJC' },
+  DOHCML: { name: 'VÀNG MIẾNG DOJI HCM', brand: 'DOJI' },
+  DOHNL: { name: 'VÀNG MIẾNG DOJI HÀ NỘI', brand: 'DOJI' },
+  PQHNVM: { name: 'VÀNG MIẾNG PHÚ QUÝ', brand: 'Phú Quý' },
+  PQHN24NTT: { name: 'NHẪN TRÒN TRƠN PHÚ QUÝ', brand: 'Phú Quý' },
 };
+
+/**
+ * A giavang.net row older than this is a delisted product the feed still
+ * carries (VNGN last moved 2025-05-07). Stamping it "now" would publish a
+ * 15-month-old price as today's. Overridable via `COMMODITY_MAX_ROW_AGE_DAYS`.
+ */
+const MAX_ROW_AGE_MS =
+  Number(process.env.COMMODITY_MAX_ROW_AGE_DAYS ?? 7) * 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class VnstockCommodityProvider
@@ -126,54 +125,35 @@ export class VnstockCommodityProvider
   }
 
   /**
-   * BTMC first, retried once on a short body, then giavang.net. A rejection
-   * must never propagate — it would skip the fallback. See memory/market-data.md.
-   *
-   * BTMC is plain HTTP and the connection can drop mid-body on the way out of
-   * the region: axios resolves with whatever arrived, so a truncated feed looks
-   * like a success. See memory/market-data.md.
+   * giavang.net is the only gold feed. BTMC was dropped 2026-08-27: plain HTTP
+   * on port 80, it truncated or timed out from outside Vietnam and contributed
+   * nothing in production. See memory/market-data.md.
    */
   private async fetchGold(): Promise<GoldPrice[]> {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      let result: { source?: string; data?: unknown };
-      try {
-        result = await this.withTimeout(
-          commodity.gold.price({ source: 'btmc' }),
-          'gold price',
-        );
-      } catch (error: unknown) {
-        this.logger.warn(
-          `btmc gold attempt ${attempt + 1} failed: ${this.describeError(error)}`,
-        );
-        // Retry answers a truncated body, not a dead upstream; fall through.
-        break;
-      }
-      const rowCount = Array.isArray(result?.data) ? result.data.length : 0;
-      if (rowCount >= MIN_GOLD_ROWS) {
-        const parsed = this.parseGold(result);
-        if (parsed.length > 0) {
-          this.lastGold = parsed;
-          return parsed;
-        }
-      }
-      this.logger.warn(
-        `btmc gold feed looks truncated: ${rowCount} rows (min ${MIN_GOLD_ROWS})`,
-      );
-    }
-
-    const fallback = await this.fetchGoldFromGiaVangNet();
-    if (fallback.length > 0) {
-      this.lastGold = fallback;
-      return fallback;
+    const prices = await this.fetchGoldFromGiaVangNet();
+    if (prices.length > 0) {
+      this.lastGold = prices;
+      return prices;
     }
     // A partial list is worse than a stale one: it silently drops products the
     // user holds, so both the symbol list and the quote go missing.
     return this.lastGold;
   }
 
+  /** Union by product name; the earlier list wins a contested product. */
+  private merge(...lists: GoldPrice[][]): GoldPrice[] {
+    const merged = new Map<string, GoldPrice>();
+    for (const price of lists.flat()) {
+      const key = price.name.trim().toUpperCase();
+      if (!key || merged.has(key)) continue;
+      merged.set(key, price);
+    }
+    return [...merged.values()];
+  }
+
   /**
-   * Secondary feed. Its rows are keyed by `type_code` and carry no product
-   * name, so each code is mapped onto the BTMC product it quotes.
+   * Its rows are keyed by `type_code` and carry no product name (every row
+   * sends `type: "GOLD"`), so each code is mapped onto a product.
    */
   private async fetchGoldFromGiaVangNet(): Promise<GoldPrice[]> {
     try {
@@ -193,6 +173,9 @@ export class VnstockCommodityProvider
         const buyPrice = this.parseAmount(row.buyPrice);
         const sellPrice = this.parseAmount(row.sellPrice);
         if (buyPrice === null && sellPrice === null) continue;
+        // The feed still carries delisted products at their last-ever price.
+        const at = this.parseEpoch(row.updatedAt);
+        if (at === null || Date.now() - at > MAX_ROW_AGE_MS) continue;
         // Several codes quote the same product; the first mapped one wins.
         if (latest.has(product.name)) continue;
         latest.set(product.name, {
@@ -202,7 +185,7 @@ export class VnstockCommodityProvider
           fineness: '',
           buyPrice: buyPrice ?? 0,
           sellPrice,
-          priceTime: this.parseEpoch(row.updatedAt),
+          priceTime: new Date(at).toISOString(),
           source: 'giavangnet',
         });
       }
@@ -213,44 +196,6 @@ export class VnstockCommodityProvider
       );
       return [];
     }
-  }
-
-  private parseGold(result: { source?: string; data?: unknown }): GoldPrice[] {
-    const rows: RawGoldRow[] = Array.isArray(result?.data)
-      ? (result.data as RawGoldRow[])
-      : [];
-    const source = result?.source ?? 'vnstock';
-
-    // The feed repeats each product at several publish times; keep the latest.
-    const latest = new Map<string, { row: RawGoldRow; at: number }>();
-    for (const row of rows) {
-      const name = row.name?.trim();
-      if (!name) continue;
-      const at = this.parseTimestamp(row.updatedAt);
-      const key = name.toUpperCase();
-      const seen = latest.get(key);
-      if (!seen || at > seen.at) latest.set(key, { row, at });
-    }
-
-    const results: GoldPrice[] = [];
-    for (const { row, at } of latest.values()) {
-      const buyPrice = this.parseAmount(row.buyPrice);
-      const sellPrice = this.parseAmount(row.sellPrice);
-      // A row with neither side priced carries no information.
-      if (buyPrice === null && sellPrice === null) continue;
-      const { name, brand } = this.splitName(row.name ?? '');
-      results.push({
-        name,
-        brand,
-        karat: row.karat?.trim() ?? '',
-        fineness: row.weight?.trim() ?? '',
-        buyPrice: buyPrice ?? 0,
-        sellPrice,
-        priceTime: new Date(at).toISOString(),
-        source,
-      });
-    }
-    return results;
   }
 
   async getFxCounterRates(): Promise<FxCounterRate[]> {
@@ -324,36 +269,22 @@ export class VnstockCommodityProvider
     return Number.isFinite(value) && value > 0 ? value : null;
   }
 
-  /** `"NHẪN TRÒN TRƠN (Vàng Rồng Thăng Long)"` → product + brand. */
-  private splitName(raw: string): { name: string; brand: string } {
-    const match = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(raw.trim());
-    if (!match) return { name: raw.trim(), brand: '' };
-    return { name: match[1].trim(), brand: match[2].trim() };
-  }
-
-  /** giavang.net publishes `update_time` as unix seconds. Falls back to now. */
-  private parseEpoch(raw?: string | number): string {
+  /**
+   * giavang.net sends either `YYYY-MM-DD` or unix seconds. Returns null when
+   * unparseable, so a bad stamp is never silently published as "now".
+   */
+  private parseEpoch(raw?: string | number): number | null {
+    if (typeof raw === 'string') {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim());
+      // Dates are Vietnamese calendar days; anchor to UTC+7, not UTC.
+      if (match)
+        return (
+          Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) -
+          7 * 60 * 60 * 1000
+        );
+    }
     const seconds = typeof raw === 'number' ? raw : Number(raw);
-    if (!Number.isFinite(seconds) || seconds <= 0)
-      return new Date().toISOString();
-    return new Date(seconds * 1000).toISOString();
-  }
-
-  /** `DD/MM/YYYY HH:mm` in UTC+7; `new Date()` cannot parse it. Falls back to now. */
-  private parseTimestamp(raw?: string): number {
-    const match = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/.exec(
-      raw?.trim() ?? '',
-    );
-    if (!match) return Date.now();
-    const [, day, month, year, hour = '0', minute = '0'] = match;
-    const utc = Date.UTC(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      Number(hour),
-      Number(minute),
-    );
-    // Vietnam is UTC+7 year-round (no DST).
-    return utc - 7 * 60 * 60 * 1000;
+    if (!Number.isFinite(seconds) || seconds <= 0) return null;
+    return seconds * 1000;
   }
 }

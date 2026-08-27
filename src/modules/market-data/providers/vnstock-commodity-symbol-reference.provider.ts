@@ -25,9 +25,22 @@ const GOLD_PRODUCTS: readonly string[] = [
   'QUÀ MỪNG BẢN VỊ VÀNG',
   'TRANG SỨC VÀNG RỒNG THĂNG LONG 999.9',
   'TRANG SỨC VÀNG RỒNG THĂNG LONG 99.9',
+  // Per-dealer products only giavang.net quotes.
+  'VÀNG MIẾNG SJC 1L-10L',
+  'VÀNG MIẾNG SJC (PNJ)',
+  'VÀNG MIẾNG SJC (VietinBank)',
+  'VÀNG SJC 9999',
+  'VÀNG MIẾNG DOJI HCM',
+  'VÀNG MIẾNG DOJI HÀ NỘI',
+  'VÀNG MIẾNG PHÚ QUÝ',
+  'NHẪN TRÒN TRƠN PHÚ QUÝ',
 ];
 
-/** Silver is taken whole from the feed and shares the `gold` class. */
+/**
+ * Silver still shares the `gold` class, but no feed supplies it since BTMC was
+ * dropped. Kept so a household holding silver keeps resolving if a source
+ * returns. See memory/market-data.md.
+ */
 const SILVER_MARKER = /\bB[ẠA]C\b/i;
 
 /**
@@ -66,7 +79,7 @@ export class VnstockCommoditySymbolReferenceProvider implements SymbolReferenceP
     return value;
   }
 
-  /** Allowlisted gold first, then all silver. The product name IS the symbol. */
+  /** Allowlisted gold first, then any silver a feed supplies. Name IS the symbol. */
   private async listGold(): Promise<SymbolReference[]> {
     const prices = await this.commodityProvider.getGoldPrices();
     const byName = new Map(
