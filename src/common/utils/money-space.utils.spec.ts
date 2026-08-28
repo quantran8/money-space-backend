@@ -92,6 +92,10 @@ describe('deriveDirection', () => {
     // sum by direction.
     ['payment_paid', 'outflow'],
     ['adjustment', 'neutral'],
+    // Neutral is what keeps a corrected holding out of thu/chi (summarizeMonth
+    // groups on direction) and out of P&L — asserted rather than left to the
+    // fallthrough, since an exhaustive-map refactor would silently change it.
+    ['asset_quantity_adjustment', 'neutral'],
     ['transfer', 'neutral'],
   ] as const)('derives %s as %s', (type, expected) => {
     expect(deriveDirection(type)).toBe(expected);

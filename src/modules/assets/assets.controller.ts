@@ -15,6 +15,7 @@ import type { HouseholdMembership } from '../auth/guards/household-access.guard'
 import { AssetsService } from './assets.service';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
+import type { PurchaseIntoPositionDto } from './dto/purchase-into-position.dto';
 
 @Controller('households/:householdId/assets')
 export class AssetsController {
@@ -33,6 +34,24 @@ export class AssetsController {
   @Get('snapshots')
   getAssetSnapshots(@Param('householdId') householdId: string) {
     return this.assetsService.getAssetSnapshots(householdId);
+  }
+
+  /**
+   * Buy more of a position already held — the counterpart to selling part of
+   * one. Debits the wallet that paid and re-averages the cost basis, neither of
+   * which a plain quantity edit on the asset could do.
+   */
+  @Post(':assetId/purchase')
+  purchaseIntoPosition(
+    @Param('householdId') householdId: string,
+    @Param('assetId') assetId: string,
+    @Body() payload: PurchaseIntoPositionDto,
+  ) {
+    return this.assetsService.purchaseIntoPosition(
+      householdId,
+      assetId,
+      payload,
+    );
   }
 
   /**

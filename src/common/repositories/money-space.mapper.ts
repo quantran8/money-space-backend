@@ -473,6 +473,14 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
       (row.soldValue ?? row.sold_value) != null
         ? numberFromDb(row.soldValue ?? row.sold_value)
         : undefined,
+    quantityBefore:
+      (row.quantityBefore ?? row.quantity_before) != null
+        ? numberFromDb(row.quantityBefore ?? row.quantity_before)
+        : undefined,
+    quantityAfter:
+      (row.quantityAfter ?? row.quantity_after) != null
+        ? numberFromDb(row.quantityAfter ?? row.quantity_after)
+        : undefined,
     note: row.description ?? '',
     isoDate: dateOnly(row.eventDate ?? row.event_date),
     type: row.eventType ?? row.event_type,

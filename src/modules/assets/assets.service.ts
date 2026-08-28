@@ -43,6 +43,7 @@ import {
 } from '../../common/utils/money-space.utils';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
+import type { PurchaseIntoPositionDto } from './dto/purchase-into-position.dto';
 import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import { MarketDataService } from '../market-data/market-data.service';
@@ -448,10 +449,27 @@ export class AssetsService {
     let quantity = currentQuantity;
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const event = events[i];
-      // Only sales out of this asset changed the quantity held. (Purchases set
-      // the quantity directly on the asset, not through a money event.)
+      // Unwind the holding backwards. A sale reduced it by `soldQuantity`, so
+      // the position before the sale was that much larger.
       if (event.type === 'asset_sale' && event.fromAssetId === asset.id) {
         quantity += event.soldQuantity ?? 0;
+        points.push({
+          date: event.isoDate,
+          value: Math.max(0, quantity * currentUnitPrice),
+        });
+        continue;
+      }
+      // A quantity adjustment states both sides, so unwinding is exact: before
+      // it, the holding was whatever it says it was. This is the case the old
+      // "only sales change the quantity" assumption got wrong — without it, every
+      // point before a correction was priced at the corrected holding and the
+      // whole earlier curve was off by the correction's factor.
+      if (
+        event.type === 'asset_quantity_adjustment' &&
+        event.toAssetId === asset.id &&
+        event.quantityBefore !== undefined
+      ) {
+        quantity = event.quantityBefore;
         points.push({
           date: event.isoDate,
           value: Math.max(0, quantity * currentUnitPrice),
@@ -692,6 +710,20 @@ export class AssetsService {
       await this.assetsRepository.updateAsset(assetId, next);
       const value = await this.computeValueAsync(next);
       const valueChanged = value !== oldValue;
+      // A corrected holding is checked first and gets its OWN event type. It
+      // used to fall through to `logRevaluation` and be recorded as a price
+      // movement, which is how a re-count showed up as a market loss.
+      const quantityOnly = this.isQuantityOnlyUpdate(current, next);
+      if (quantityOnly) {
+        const context = await this.logQuantityAdjustment(
+          next,
+          current.marketPosition?.quantity ?? 0,
+          next.marketPosition?.quantity ?? 0,
+          oldValue,
+          value,
+        );
+        return this.upsertCurrentValuation(next, context);
+      }
       const latestMarketPriceOnly =
         valueChanged && this.isLatestMarketPriceOnlyUpdate(current, next);
       if (latestMarketPriceOnly) {
@@ -701,6 +733,82 @@ export class AssetsService {
         valueChanged && !latestMarketPriceOnly
           ? await this.logRevaluation(next, oldValue, value, 'Định giá lại')
           : undefined;
+      return this.upsertCurrentValuation(next, context);
+    });
+    return this.toAssetRecord(next, currentValue);
+  }
+
+  /**
+   * Buy more of a position the household already holds.
+   *
+   * The counterpart to `sellPosition`. Until it existed the only way to add to a
+   * holding was to type a bigger number into the edit form, which moved no money
+   * and left no event — the quantity simply grew and net worth grew with it.
+   *
+   * Two things happen that a raw quantity edit cannot do:
+   *  - the wallet that paid is debited, so net worth stays put (the purchase
+   *    converts money into an asset rather than conjuring one); and
+   *  - `purchasePrice` is re-averaged across old and new lots, so P&L keeps
+   *    measuring against what was actually paid. Editing quantity alone priced
+   *    the whole enlarged holding at the old basis and invented a gain.
+   *
+   * `fundingAssetId` is optional: quantity can arrive without being bought (a
+   * gift, a stock dividend). Then no wallet moves and net worth does rise —
+   * which is correct, because something arrived from outside the household.
+   */
+  async purchaseIntoPosition(
+    householdId: string,
+    assetId: string,
+    payload: PurchaseIntoPositionDto,
+  ) {
+    const asset = await this.ensureAsset(householdId, assetId);
+    const held = asset.marketPosition;
+    if (!held) {
+      throw new BadRequestException(
+        'Chỉ tài sản theo giá thị trường mới có số lượng để mua thêm',
+      );
+    }
+    if (!(payload.quantity > 0)) {
+      throw new BadRequestException('Số lượng mua thêm phải lớn hơn 0');
+    }
+    if (payload.purchasePrice < 0) {
+      throw new BadRequestException('Giá mua không hợp lệ');
+    }
+
+    const cost = payload.quantity * payload.purchasePrice;
+    const fundingAssetId = payload.fundingAssetId || null;
+    // Checked before the transaction opens, like `createAsset` does, so a
+    // rejected purchase leaves nothing behind.
+    if (fundingAssetId) {
+      await this.assertFundingWalletCovers(householdId, fundingAssetId, cost);
+    }
+
+    // Weighted average across the lots — the same formula the same-symbol merge
+    // in `createAsset` uses, kept identical so the two entry points cannot drift
+    // into disagreeing about what a holding cost.
+    const quantity = held.quantity + payload.quantity;
+    const heldCost = held.purchasePrice ?? 0;
+    const purchasePrice =
+      quantity > 0
+        ? (held.quantity * heldCost + payload.quantity * payload.purchasePrice) /
+          quantity
+        : heldCost;
+    const next: Asset = {
+      ...asset,
+      marketPosition: { ...held, quantity, purchasePrice },
+    };
+
+    const currentValue = await this.prisma.runInTransaction(async () => {
+      await this.assetsRepository.updateAsset(assetId, next);
+      const context = await this.logAdditionalPurchase(
+        next,
+        {
+          ...held,
+          quantity: payload.quantity,
+          purchasePrice: payload.purchasePrice,
+        },
+        fundingAssetId,
+      );
       return this.upsertCurrentValuation(next, context);
     });
     return this.toAssetRecord(next, currentValue);
@@ -818,6 +926,82 @@ export class AssetsService {
       note,
     });
     return { moneyEventId: eventId, valuationDate: today };
+  }
+
+  /**
+   * Log a quantity change that is neither a purchase nor a sale — a corrected
+   * holding, a recount — as a neutral `asset_quantity_adjustment`.
+   *
+   * The sibling of {@link logRevaluation}, and deliberately not the same thing.
+   * A revaluation says the price moved; this says the holding did. Routing a
+   * quantity change through the revaluation path is what made correcting 10 chỉ
+   * to 1 chỉ surface as a ~720tr market loss.
+   *
+   * Dated today: a re-count is knowledge gained now, not a retroactive claim
+   * about the past, so the history it leaves is a new point rather than an edit
+   * to old ones.
+   */
+  private async logQuantityAdjustment(
+    asset: Asset,
+    quantityBefore: number,
+    quantityAfter: number,
+    oldValue: number,
+    newValue: number,
+  ): Promise<ValuationContext> {
+    const today = this.todayIso();
+    const eventId = this.assetsRepository.createId('event');
+    const format = (quantity: number) =>
+      new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 8 }).format(
+        quantity,
+      );
+    const unit = asset.marketPosition?.unit || 'đơn vị';
+    const label = `Điều chỉnh số lượng: ${asset.name} (${format(quantityBefore)} → ${format(quantityAfter)} ${unit})`;
+    const note = asset.note ? `${label} — ${asset.note}` : label;
+    await this.assetsRepository.insertQuantityAdjustmentEvent({
+      id: eventId,
+      householdId: asset.householdId,
+      assetId: asset.id,
+      amount: newValue - oldValue,
+      quantityBefore,
+      quantityAfter,
+      isoDate: today,
+      note,
+    });
+    return { moneyEventId: eventId, valuationDate: today };
+  }
+
+  /**
+   * Whether this update changes only the position's quantity — the holding was
+   * corrected, nothing else moved.
+   *
+   * Checked BEFORE {@link isLatestMarketPriceOnlyUpdate} because the two are
+   * mutually exclusive by construction (that one requires the quantity to be
+   * unchanged) and because a quantity change must never reach `logRevaluation`.
+   *
+   * `purchasePrice` is deliberately part of "unchanged": cost basis is the anchor
+   * P&L is measured against, and a household that edits both at once is doing
+   * something this path cannot describe honestly — that still routes to the
+   * revaluation branch, which at least records a value delta.
+   */
+  private isQuantityOnlyUpdate(current: Asset, next: Asset): boolean {
+    if (
+      current.valuationMode !== 'market_priced' ||
+      next.valuationMode !== 'market_priced' ||
+      !current.marketPosition ||
+      !next.marketPosition
+    ) {
+      return false;
+    }
+    const before = current.marketPosition;
+    const after = next.marketPosition;
+    const restUnchanged =
+      before.assetClass === after.assetClass &&
+      before.symbol === after.symbol &&
+      before.unit === after.unit &&
+      before.quoteCurrency === after.quoteCurrency &&
+      before.purchasePrice === after.purchasePrice &&
+      before.lastPrice === after.lastPrice;
+    return restUnchanged && before.quantity !== after.quantity;
   }
 
   /**
@@ -1067,6 +1251,14 @@ export class AssetsService {
         if (event.toAssetId === assetId) {
           sum += event.amount;
         }
+        continue;
+      }
+      // A quantity adjustment is linked via `toAssetId` like a revaluation, but
+      // its `amount` is the value delta the re-count implied — NOT cash that
+      // arrived. Falling through to the generic branch below would credit the
+      // asset with that delta twice: once here, and again from the position's
+      // own recomputed `quantity × price`. Skip it outright.
+      if (event.type === 'asset_quantity_adjustment') {
         continue;
       }
       const net = event.amount - (event.feeAmount ?? 0);

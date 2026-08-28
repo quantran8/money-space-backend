@@ -197,6 +197,48 @@ export class PrismaAssetsRepository
     `;
   }
 
+  async insertQuantityAdjustmentEvent(event: {
+    id: string;
+    householdId: string;
+    assetId: string;
+    amount: number;
+    quantityBefore: number;
+    quantityAfter: number;
+    isoDate: string;
+    note?: string;
+  }): Promise<void> {
+    // Same shape and same neutrality as `insertRevaluationEvent`, different
+    // meaning: the quantity moved, not the price. `amount` records what the
+    // correction was worth for the ledger row to be readable; nothing derives a
+    // balance from it (`sumEventContributionsAfter` skips this type outright),
+    // so the position stays the single source of the asset's value.
+    await this.prisma.$executeRaw`
+      INSERT INTO money_events
+        (id, household_id, description, event_type, category, amount,
+         fee_amount, currency, event_date, direction, to_asset_id,
+         quantity_before, quantity_after, created_by, updated_at)
+      SELECT
+        ${event.id}::uuid,
+        h.id,
+        ${event.note ?? ''},
+        'asset_quantity_adjustment'::"MoneyEventType",
+        'other',
+        ${event.amount}::numeric,
+        0::numeric,
+        'VND',
+        ${this.toDate(event.isoDate)}::date,
+        'neutral'::"MoneyDirection",
+        ${event.assetId}::uuid,
+        ${event.quantityBefore}::numeric,
+        ${event.quantityAfter}::numeric,
+        h.created_by,
+        now()
+      FROM households h
+      WHERE h.id = ${event.householdId}::uuid
+        AND h.deleted_at IS NULL
+    `;
+  }
+
   async insertAssetPurchaseEvent(event: {
     id: string;
     householdId: string;

@@ -15,7 +15,7 @@
 export type IsoDate = string;
 
 /**
- * The household timezone. Money Space is Vietnam-first, so the day boundary
+ * The household timezone. Oursight is Vietnam-first, so the day boundary
  * that matters for "is this bill due today" is Indochina Time, not UTC and not
  * whatever the server happens to run in.
  */

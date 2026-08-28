@@ -108,9 +108,9 @@ export class MoneyEventsService {
    * be spendable wallets (cash / bank_account). A valued asset (gold, stock,
    * saving deposit, …) is never the wallet of an income/expense/transfer — it
    * changes hands via its own flow (sell / revalue). asset_sale /
-   * asset_purchase / asset_update / debt_update deliberately link non-wallet
-   * assets and are excluded — their own flows validate the wallet side. See
-   * [[money-events]].
+   * asset_purchase / asset_update / asset_quantity_adjustment / debt_update
+   * deliberately link non-wallet assets and are excluded — their own flows
+   * validate the wallet side. See [[money-events]].
    */
   private static readonly WALLET_ONLY_EVENT_TYPES: ReadonlySet<string> =
     new Set(['income', 'expense', 'transfer']);
@@ -702,6 +702,15 @@ export class MoneyEventsService {
     event: MoneyEvent,
     mode: 'apply' | 'reverse',
   ): Promise<void> {
+    // A quantity adjustment carries a value delta in `amount` for readability,
+    // not cash. It links its asset through `toAssetId` like a revaluation, so it
+    // would be credited here as if money arrived. Today that is harmless — the
+    // target is a market-priced asset and `creditManualAsset` no-ops for those —
+    // but the safety would evaporate the moment such an event pointed at a
+    // wallet. State the exclusion instead of inheriting it.
+    if (event.type === 'asset_quantity_adjustment') {
+      return;
+    }
     const { householdId, amount, fromAssetId, toAssetId } = event;
     // The wallet only ever sees the NET cash. For an asset_sale the fee never
     // lands in the account, so the receiving wallet is credited amount - fee.

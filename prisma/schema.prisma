@@ -217,6 +217,11 @@ enum MoneyEventType {
   asset_purchase
   asset_sale
   asset_update
+  // A quantity change that is NOT a purchase or a sale — a corrected holding, a
+  // recount. Neutral and excluded from thu/chi and P&L, like `asset_update`,
+  // but kept distinct from it: `asset_update` means the PRICE moved, this means
+  // the QUANTITY did. Conflating them reported phantom gains and losses.
+  asset_quantity_adjustment
   payment_paid
   debt_update
   adjustment
@@ -1080,6 +1085,13 @@ model MoneyEvent {
   feeAmount       Decimal          @default(0) @map("fee_amount") @db.Decimal(14, 2)
   soldQuantity    Decimal?         @map("sold_quantity") @db.Decimal(20, 8)
   soldValue       Decimal?         @map("sold_value") @db.Decimal(14, 2)
+  // The position held on each side of an event that MOVES quantity (a purchase
+  // into an existing position, a sale, a quantity adjustment). They make the
+  // quantity series replayable: `buildMarketValueHistory` currently rebuilds it
+  // by adding back `sold_quantity`, which silently assumes only sales ever
+  // changed the holding. Recording both sides drops that assumption.
+  quantityBefore  Decimal?         @map("quantity_before") @db.Decimal(20, 8)
+  quantityAfter   Decimal?         @map("quantity_after") @db.Decimal(20, 8)
   currency        String           @default("VND")
   eventDate       DateTime         @map("event_date") @db.Date
   direction       MoneyDirection

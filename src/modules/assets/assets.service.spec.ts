@@ -121,6 +121,250 @@ describe('AssetsService', () => {
     expect(recordedValuation?.moneyEventId).toBe('event-purchase');
   });
 
+  describe('buying more of a position already held', () => {
+    function harness() {
+      const existing: Asset = {
+        id: 'asset-gold',
+        householdId: 'household-1',
+        name: 'Vàng SJC',
+        type: 'gold',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'gold',
+          symbol: 'SJC',
+          quantity: 2,
+          unit: 'chỉ',
+          quoteCurrency: 'VND',
+          purchasePrice: 8_000_000,
+        },
+      } as Asset;
+      const wallet: Asset = {
+        id: 'wallet-1',
+        householdId: 'household-1',
+        name: 'TCB',
+        type: 'bank_account',
+        valuationMode: 'manual',
+        liquidity: 'usable_now',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        manualValue: 500_000_000,
+      } as Asset;
+      const updateAsset = jest.fn().mockResolvedValue(undefined);
+      const insertAssetPurchaseEvent = jest.fn().mockResolvedValue(undefined);
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetById: jest.fn((_hid: string, id: string) =>
+          Promise.resolve(id === wallet.id ? wallet : existing),
+        ),
+        updateAsset,
+        getFxRates: jest.fn().mockResolvedValue([]),
+        createId: jest.fn().mockReturnValue('event-purchase'),
+        insertAssetPurchaseEvent,
+        insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
+        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+      } as unknown as AssetsRepository;
+      const prisma = {
+        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+          work(),
+        ),
+      } as unknown as PrismaService;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([]),
+      } as unknown as MarketDataService;
+      const service = new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      return { service, existing, updateAsset, insertAssetPurchaseEvent };
+    }
+
+    it('re-averages the cost basis instead of pricing the whole holding at the old one', async () => {
+      const { service, existing, updateAsset } = harness();
+
+      // 2 chỉ at 8tr, then 2 more at 10tr → average 9tr, not 8tr.
+      await service.purchaseIntoPosition('household-1', existing.id, {
+        quantity: 2,
+        purchasePrice: 10_000_000,
+        fundingAssetId: 'wallet-1',
+      });
+
+      expect(updateAsset).toHaveBeenCalledWith(
+        existing.id,
+        expect.objectContaining({
+          marketPosition: expect.objectContaining({
+            quantity: 4,
+            purchasePrice: 9_000_000,
+          }),
+        }),
+      );
+    });
+
+    it('logs the purchase so the added quantity is not conjured', async () => {
+      const { service, existing, insertAssetPurchaseEvent } = harness();
+
+      await service.purchaseIntoPosition('household-1', existing.id, {
+        quantity: 2,
+        purchasePrice: 10_000_000,
+        fundingAssetId: 'wallet-1',
+      });
+
+      expect(insertAssetPurchaseEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assetId: existing.id,
+          amount: 20_000_000,
+          fundingAssetId: 'wallet-1',
+        }),
+      );
+    });
+
+    it('rejects a purchase into an asset that has no position', async () => {
+      const { service } = harness();
+      const cash = {
+        id: 'wallet-1',
+        householdId: 'household-1',
+        name: 'TCB',
+        type: 'bank_account',
+        valuationMode: 'manual',
+        liquidity: 'usable_now',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        manualValue: 1_000,
+      } as Asset;
+      void cash;
+
+      await expect(
+        service.purchaseIntoPosition('household-1', 'wallet-1', {
+          quantity: 1,
+          purchasePrice: 1,
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('a corrected holding is not a price movement', () => {
+    // The bug this covers: changing `quantity` fell through to `logRevaluation`
+    // and was written as `asset_update` — the type that means "the price moved".
+    // Correcting 10 chỉ of gold to 1 chỉ therefore reported a ~720tr market loss
+    // the household never took.
+    function goldHarness() {
+      const current: Asset = {
+        id: 'asset-gold',
+        householdId: 'household-1',
+        name: 'Vàng SJC',
+        type: 'gold',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'gold',
+          symbol: 'SJC',
+          quantity: 10,
+          unit: 'chỉ',
+          quoteCurrency: 'VND',
+          purchasePrice: 8_000_000,
+          lastPrice: 8_000_000,
+        },
+      } as Asset;
+      const insertRevaluationEvent = jest.fn().mockResolvedValue(undefined);
+      const insertQuantityAdjustmentEvent = jest
+        .fn()
+        .mockResolvedValue(undefined);
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetById: jest.fn().mockResolvedValue(current),
+        updateAsset: jest.fn().mockResolvedValue(undefined),
+        getFxRates: jest.fn().mockResolvedValue([]),
+        createId: jest
+          .fn()
+          .mockReturnValueOnce('event-adjustment')
+          .mockReturnValueOnce('valuation-adjustment'),
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+        insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
+        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+      } as unknown as AssetsRepository;
+      const prisma = {
+        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+          work(),
+        ),
+      } as unknown as PrismaService;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([]),
+      } as unknown as MarketDataService;
+      const service = new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      return {
+        service,
+        current,
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+      };
+    }
+
+    it('logs a quantity adjustment, not a revaluation, when only quantity changes', async () => {
+      const {
+        service,
+        current,
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+      } = goldHarness();
+
+      await service.updateAsset('household-1', current.id, {
+        marketPosition: { quantity: 1 },
+      } as never);
+
+      expect(insertRevaluationEvent).not.toHaveBeenCalled();
+      expect(insertQuantityAdjustmentEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assetId: current.id,
+          quantityBefore: 10,
+          quantityAfter: 1,
+          // Both sides recorded, so the series stays replayable; the value delta
+          // rides along only to make the ledger row readable.
+          amount: -72_000_000,
+        }),
+      );
+    });
+
+    it('still logs a revaluation when the price moves and quantity holds', async () => {
+      const {
+        service,
+        current,
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+      } = goldHarness();
+
+      // A pure price refresh is a quote update, not a ledger event, so it writes
+      // an unlinked history point and neither event type fires.
+      await service.updateAsset('household-1', current.id, {
+        marketPosition: { lastPrice: 9_000_000 },
+      } as never);
+
+      expect(insertQuantityAdjustmentEvent).not.toHaveBeenCalled();
+      expect(insertRevaluationEvent).not.toHaveBeenCalled();
+    });
+  });
+
   it('records a negative signed delta when an asset is revalued downward', async () => {
     const current: Asset = {
       id: 'asset-tcb',

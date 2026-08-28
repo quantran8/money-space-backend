@@ -9,7 +9,7 @@ How much of a record the shared picture shows. Related: [[assets]],
 
 ## The rule
 
-**Everything recorded in Money Space counts toward every shared figure.** Net
+**Everything recorded in Oursight counts toward every shared figure.** Net
 worth, the forecast, flexible money, snapshot totals: all computed over the same
 set of records, with no exclusions. There is no `isIncludedInSharedCalculation`,
 no `financial_nature`, no `privacy_owner_member_id`, and no `private` level.
@@ -17,10 +17,10 @@ no `financial_nature`, no `privacy_owner_member_id`, and no `private` level.
 `visibility_level` survives with exactly two values and affects **presentation
 only**:
 
-| value | meaning |
-|---|---|
-| `detail` | the shared list shows the source, the amount and the holder |
-| `summary_only` | the amount is counted; the specifics are folded away |
+| value          | meaning                                                     |
+| -------------- | ----------------------------------------------------------- |
+| `detail`       | the shared list shows the source, the amount and the holder |
+| `summary_only` | the amount is counted; the specifics are folded away        |
 
 ## Why it is not an access boundary
 
@@ -28,8 +28,8 @@ Both partners have the same rights and **either can switch any record to
 `detail`** with one edit. Server-side redaction would therefore be bypassable by
 design — security theatre with a redaction layer in every mapper as its price.
 
-So folding is a courtesy about attention — *"don't make me explain this line,
-just count it"* — and it applies to **everyone, including the person who set
+So folding is a courtesy about attention — _"don't make me explain this line,
+just count it"_ — and it applies to **everyone, including the person who set
 it**. That symmetry is the point: what I see is what they see, which is what
 makes the setting trustworthy without a permission system behind it. Changing it
 is journalled.
@@ -46,7 +46,7 @@ Presentation, all client-side:
 - Asset list row and asset detail page.
 - The journal withholds a folded record's **name and amount** — it is the one
   place both partners are guaranteed to look, so leaking specifics there would
-  undo the fold at the worst possible spot. That a change *happened* is still
+  undo the fold at the worst possible spot. That a change _happened_ is still
   always shown.
 
 **The seam, if this ever must become real concealment** (a third member, an

@@ -1,6 +1,6 @@
-# Money Space Backend
+# Oursight Backend
 
-NestJS backend for Money Space with:
+NestJS backend for Oursight with:
 
 - domain-based API modules under `src/money-space`
 - `Prisma` client setup under `src/database/prisma`

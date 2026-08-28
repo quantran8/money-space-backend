@@ -1,8 +1,8 @@
 # Domain overview
 
-## What Money Space is
+## What Oursight is
 
-A Vietnamese-first **family/couple finance dashboard** — explicitly **not** a transaction-tracking / expense-logging app. The core question it answers is *"Tài chính gia đình có ổn không?"* (Is our household OK?).
+A Vietnamese-first **family/couple finance dashboard** — explicitly **not** a transaction-tracking / expense-logging app. The core question it answers is _"Tài chính gia đình có ổn không?"_ (Is our household OK?).
 
 - Central concept is a periodic **financial snapshot** (weekly/monthly), not per-transaction ledgering.
 - Calm, non-judgmental tone: use "khoản cần chú ý / cần trao đổi", never "cảnh báo / vượt chi / đáng ngờ".
@@ -31,6 +31,7 @@ A Vietnamese-first **family/couple finance dashboard** — explicitly **not** a 
 ## Hardcoded "now" (demo state)
 
 The app is in a seed/demo state. A hardcoded valuation date is used across asset/date math instead of the real clock:
+
 - frontend-web: `AS_OF = '2026-07-06'` (assets); `TODAY = '2026-07-08'` (events).
 - backend: `AS_OF` in `src/common/utils/money-space.utils.ts`; dashboard `totalDebt` is temporarily hard-coded to `18,000,000` (known demo shortcut, not a real rollup).
 
@@ -63,5 +64,5 @@ When real-time is wired, replace these constants — they affect interest accrua
   sync with the Prisma schema.
 - **Authorization is app-layer** (NestJS guards), NOT Postgres RLS — the project
   stays DB-portable. Membership IS the content permission; the only distinction
-between members is `households.created_by`, which guards three lifecycle
-operations. See [[members-and-lifecycle-safeguard]].
+  between members is `households.created_by`, which guards three lifecycle
+  operations. See [[members-and-lifecycle-safeguard]].
