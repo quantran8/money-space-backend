@@ -828,6 +828,77 @@ describe('GoalsService — what an asset is backing', () => {
     expect(usage.unassignedAmount).toBe(0);
   });
 
+  /**
+   * A wallet may now hold a NEGATIVE balance: editing a back-dated event replays
+   * the wallet from its opening balance, and an overdrawn result is recorded
+   * rather than clamped (see the wallet-replay work). Every goal figure has to
+   * survive that — a goal can never be committed a negative amount, which would
+   * read as the goals owing the household money.
+   */
+  it('commits nothing when the wallet is overdrawn', async () => {
+    const { service } = setup({
+      goal: goal({ id: 'goal-car', name: 'car', priority: 'high' }),
+      allocations: [
+        allocation({
+          id: 'alloc-car',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          role: 'contribution',
+          kind: 'percent',
+          percent: 90,
+          monthlyContribution: 20 * M,
+        }),
+      ],
+      // The wallet was 30tr when the goal was set up; an edited event since then
+      // drove it below zero.
+      assets: [{ id: 'tcb', type: 'bank_account', currentValue: -168 * M }],
+    });
+
+    const usage = await service.assetGoalUsage('hh-1', 'tcb');
+
+    expect(usage.assetValue).toBe(-168 * M);
+    // Nothing is there, so nothing is claimed, committed or free — and none of
+    // those may go negative.
+    expect(usage.claimedAmount).toBe(0);
+    expect(usage.committedAmount).toBe(0);
+    expect(usage.freeAmount).toBe(0);
+    expect(usage.unassignedAmount).toBe(0);
+    expect(usage.items[0].countedValue).toBe(0);
+  });
+
+  /**
+   * Same floor, on the path that decides WHICH wallet a nameless spend comes out
+   * of. Reporting a negative "promised" amount would rank an overdrawn wallet as
+   * the least-promised money and send the spend straight at it.
+   */
+  it('promises nothing from an overdrawn wallet when ordering by claim', async () => {
+    const { service } = setup({
+      goal: goal({ id: 'goal-car', name: 'car', priority: 'high' }),
+      allocations: [
+        allocation({
+          id: 'alloc-car',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          role: 'contribution',
+          kind: 'percent',
+          percent: 90,
+          monthlyContribution: 20 * M,
+        }),
+      ],
+      assets: [{ id: 'tcb', type: 'bank_account', currentValue: -168 * M }],
+    });
+
+    const byWallet = await service.goalClaimsByWallet(
+      'hh-1',
+      new Map([['tcb', -168 * M]]),
+    );
+
+    expect(byWallet.get('tcb')?.amount).toBe(0);
+    // The goal still backs the wallet, so its priority is still reported — only
+    // the amount is floored.
+    expect(byWallet.get('tcb')?.topPriority).toBe('high');
+  });
+
   // Gold behind a goal is spoken for just as much as a wallet is — the asset
   // page is where someone asks "can I use this?", and a holding must answer.
   it('includes holdings, not just contribution shares', async () => {

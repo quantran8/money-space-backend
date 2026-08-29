@@ -18,6 +18,22 @@ import { Asset, AssetType } from './entities/asset.entity';
  * market-priced or formula-valued asset (stock, gold, saving deposit, …) is
  * valued from its price/formula, not by adding cash to a stored balance.
  */
+/**
+ * A wallet's value before any money event applied. Captured before an edit so
+ * the replay that follows re-derives the balance from the ledger rather than
+ * from the balance the edit already moved.
+ */
+export interface WalletBaseline {
+  openingBalance: number;
+}
+
+/** A point in a wallet's replayed timeline where its balance went below zero. */
+export interface WalletOverdraft {
+  moneyEventId: string;
+  isoDate: string;
+  balance: number;
+}
+
 const WALLET_ASSET_TYPES: ReadonlySet<AssetType> = new Set<AssetType>([
   'cash',
   'bank_account',
@@ -40,6 +56,7 @@ import {
   liquidityForAsset,
   marketUnitForAssetType,
   normalizeCountsAsFlexible,
+  quoteFor,
 } from '../../common/utils/money-space.utils';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
@@ -47,6 +64,7 @@ import type { PurchaseIntoPositionDto } from './dto/purchase-into-position.dto';
 import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import { MarketDataService } from '../market-data/market-data.service';
+import type { MarketPrice } from '../market-data/entities/market-price.entity';
 // Repositories, not services: Goals/CashflowEvents/Debts all import Assets, so
 // depending on their SERVICES here would close a cycle. Only plain reads and
 // the unlink writes are needed, which is exactly what GoalsModule already does
@@ -96,16 +114,59 @@ export class AssetsService {
     // it serially made every request pay an extra Singapore round-trip before
     // the real work could even start. It still throws if the household is gone —
     // `Promise.all` rejects on the first failure — so the guarantee is unchanged.
-    const [household, items] = await Promise.all([
+    const [household, items, marketPrices] = await Promise.all([
       this.assetsRepository.assertHousehold(householdId),
       this.getAssetRecords(householdId),
+      // Today's prices for every held instrument, in ONE batched call behind a
+      // 5-minute cache — the same source the dashboard and summary already
+      // read. Joined in below so a client does not need a second round-trip per
+      // symbol just to show what something trades at now.
+      //
+      // Never allowed to fail the list: an asset list that 500s because a price
+      // provider is down is strictly worse than one without today's prices.
+      this.marketData.getMarketPrices().catch((error) => {
+        this.logger.warn(
+          `listAssets: market prices unavailable — ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return [] as MarketPrice[];
+      }),
     ]);
 
     return {
       household,
       asOf: todayInTimeZone(),
-      items,
+      items: items.map((asset) => this.withMarketPrice(asset, marketPrices)),
       total: items.length,
+    };
+  }
+
+  /**
+   * Attach today's cached price to a market-priced asset, without touching the
+   * stored `lastPrice`/`lastPriceAt` those fields mean something else (see
+   * `MarketPosition`).
+   *
+   * The price is carried in the instrument's OWN currency, never converted:
+   * `quoteFor` matches on class + symbol only, so a USD instrument returns a USD
+   * figure and the client decides what it may do with it.
+   */
+  private withMarketPrice(asset: Asset, marketPrices: MarketPrice[]): Asset {
+    if (!asset.marketPosition || marketPrices.length === 0) return asset;
+
+    const quote = quoteFor(
+      marketPrices,
+      asset.marketPosition.assetClass,
+      asset.marketPosition.symbol,
+    );
+    if (!quote) return asset;
+
+    return {
+      ...asset,
+      marketPosition: {
+        ...asset.marketPosition,
+        marketPrice: quote.price,
+        marketPriceCurrency: quote.quoteCurrency,
+        marketPriceAt: quote.priceTime,
+      },
     };
   }
 
@@ -508,7 +569,10 @@ export class AssetsService {
     let running = currentValue;
     for (let i = changes.length - 1; i >= 0; i -= 1) {
       running -= changes[i].amount;
-      points.push({ date: changes[i].isoDate, value: Math.max(0, running) });
+      // NOT floored: a wallet may genuinely have been overdrawn on a past date
+      // (see [[wallet-replay-on-edit]]), and rewriting those days as 0đ flattened
+      // out exactly the period the household would want to look at.
+      points.push({ date: changes[i].isoDate, value: running });
     }
     points.reverse();
     return points;
@@ -650,15 +714,39 @@ export class AssetsService {
     );
   }
 
+  /**
+   * What an asset IS cannot be edited — only what it is worth (memory/assets.md,
+   * "Identity is fixed"). The forms post the whole record back, so an unchanged
+   * value passes; only a differing one is refused.
+   */
+  private assertIdentityUnchanged(current: Asset, payload: UpdateAssetDto) {
+    if (payload.type !== undefined && payload.type !== current.type) {
+      throw new BadRequestException(
+        'Không thể đổi loại tài sản. Hãy xoá tài sản này và tạo lại nếu ghi nhầm loại.',
+      );
+    }
+    const held = current.marketPosition;
+    const next = payload.marketPosition;
+    if (!held || !next) return;
+    if (next.symbol !== undefined && next.symbol !== held.symbol) {
+      throw new BadRequestException(
+        'Không thể đổi mã tài sản. Hãy bán vị thế này rồi mua mã mới, hoặc xoá và tạo lại nếu ghi nhầm mã.',
+      );
+    }
+    if (next.assetClass !== undefined && next.assetClass !== held.assetClass) {
+      throw new BadRequestException('Không thể đổi loại tài sản.');
+    }
+  }
+
   async updateAsset(
     householdId: string,
     assetId: string,
     payload: UpdateAssetDto,
   ) {
     const current = await this.ensureAsset(householdId, assetId);
-    const nextType = payload.type ?? current.type;
-    // An untouched override survives a type change as INTENT, but is dropped
-    // once it merely restates the new type's own default.
+    this.assertIdentityUnchanged(current, payload);
+    const nextType = current.type;
+    // Dropped once it merely restates the type's own default.
     const nextCountsAsFlexible = normalizeCountsAsFlexible(
       nextType,
       payload.countsAsFlexible !== undefined
@@ -670,8 +758,7 @@ export class AssetsService {
       id: current.id,
       householdId: current.householdId,
       valuationMode:
-        payload.valuationMode ??
-        defaultValuationModeForAssetType(payload.type ?? current.type),
+        payload.valuationMode ?? defaultValuationModeForAssetType(nextType),
       name: payload.name ?? current.name,
       type: nextType,
       countsAsFlexible: nextCountsAsFlexible,
@@ -731,7 +818,7 @@ export class AssetsService {
       }
       const context =
         valueChanged && !latestMarketPriceOnly
-          ? await this.logRevaluation(next, oldValue, value, 'Định giá lại')
+          ? await this.logRevaluation(next, oldValue, value, 'Cập nhật giá trị')
           : undefined;
       return this.upsertCurrentValuation(next, context);
     });
@@ -790,7 +877,8 @@ export class AssetsService {
     const heldCost = held.purchasePrice ?? 0;
     const purchasePrice =
       quantity > 0
-        ? (held.quantity * heldCost + payload.quantity * payload.purchasePrice) /
+        ? (held.quantity * heldCost +
+            payload.quantity * payload.purchasePrice) /
           quantity
         : heldCost;
     const next: Asset = {
@@ -914,7 +1002,7 @@ export class AssetsService {
     const eventId = this.assetsRepository.createId('event');
     // `title` was dropped from money events; the descriptive label now lives in
     // the event's note (description). Prefix the asset's own note with it so the
-    // history entry still reads "Định giá lại: <asset>" without a separate column.
+    // history entry still reads "Cập nhật giá trị: <asset>" without a separate column.
     const label = `${reason}: ${asset.name}`;
     const note = asset.note ? `${label} — ${asset.note}` : label;
     await this.assetsRepository.insertRevaluationEvent({
@@ -1086,9 +1174,8 @@ export class AssetsService {
    * Unlike an expense — which records something that already happened, possibly
    * against a stale balance — a purchase is being declared as it happens. If the
    * wallet cannot cover it, either its balance is out of date or the money came
-   * from somewhere else; both need fixing BEFORE the write, not silently
-   * absorbed by the `Math.max(0, …)` floor in `debitManualAsset`. Letting it
-   * through would leave the wallet at 0 while the asset kept its full value —
+   * from somewhere else; both need fixing BEFORE the write. Letting it through
+   * would drive the wallet negative while the asset kept its full value —
    * inflating net worth, exactly the bug this flow exists to remove.
    *
    * Spending a wallet down to exactly 0 is fine; only overspending is rejected.
@@ -1112,7 +1199,7 @@ export class AssetsService {
   /**
    * Re-apply an edited revaluation (`asset_update`) event: set the asset's value
    * to `newValue` and keep its linked history point + `current_value` cache in
-   * sync, so editing the amount of a "Định giá lại" event actually re-prices the
+   * sync, so editing the amount of a "Cập nhật giá trị" event actually re-prices the
    * asset (two-way sync). Returns the resolved value. Runs inside the caller's
    * transaction (the money-event update owns atomicity).
    *
@@ -1141,7 +1228,7 @@ export class AssetsService {
 
   /**
    * Re-apply an edited revaluation (`asset_update`) event **by its delta**, not by
-   * overwriting an absolute value. Editing a "Định giá lại" record means editing
+   * overwriting an absolute value. Editing a "Cập nhật giá trị" record means editing
    * the *change* it recorded (e.g. −0,5tr), and the edit must:
    *
    * 1. **Adjust the asset's running balance by how much the diff itself moved**
@@ -1246,29 +1333,180 @@ export class AssetsService {
       if (event.id === excludeEventId || event.isoDate <= afterDate) {
         continue;
       }
-      if (event.type === 'asset_update') {
-        // Signed delta already; only counts when this asset is the target.
-        if (event.toAssetId === assetId) {
-          sum += event.amount;
-        }
-        continue;
-      }
-      // A quantity adjustment is linked via `toAssetId` like a revaluation, but
-      // its `amount` is the value delta the re-count implied — NOT cash that
-      // arrived. Falling through to the generic branch below would credit the
-      // asset with that delta twice: once here, and again from the position's
-      // own recomputed `quantity × price`. Skip it outright.
-      if (event.type === 'asset_quantity_adjustment') {
-        continue;
-      }
-      const net = event.amount - (event.feeAmount ?? 0);
-      if (event.toAssetId === assetId) {
-        sum += net;
-      } else if (event.fromAssetId === assetId) {
-        sum -= net;
-      }
+      sum += this.eventContributionTo(event, assetId);
     }
     return sum;
+  }
+
+  /**
+   * Signed cash contribution of one money event to `assetId`, mirroring
+   * `applyWalletEffects`. Shared by the "after" sum and the wallet replay so the
+   * two can never drift apart in how they read an event.
+   */
+  private eventContributionTo(event: MoneyEvent, assetId: string): number {
+    if (event.type === 'asset_update') {
+      // Signed delta already; only counts when this asset is the target.
+      return event.toAssetId === assetId ? event.amount : 0;
+    }
+    // A quantity adjustment is linked via `toAssetId` like a revaluation, but its
+    // `amount` is the value delta the re-count implied — NOT cash that arrived.
+    // Counting it here would credit the asset twice: once here, and again from
+    // the position's own recomputed `quantity × price`.
+    if (event.type === 'asset_quantity_adjustment') {
+      return 0;
+    }
+    const net = event.amount - (event.feeAmount ?? 0);
+    if (event.toAssetId === assetId) {
+      return net;
+    }
+    if (event.fromAssetId === assetId) {
+      return -net;
+    }
+    return 0;
+  }
+
+  /**
+   * Recompute a wallet's balance and its event-linked history from scratch by
+   * replaying every money event that touches it, in date order, on top of the
+   * wallet's opening balance.
+   *
+   * Editing a back-dated event used to be applied as a blind `reverse + apply`
+   * pair on the *current* balance. That is only correct while the balance never
+   * hits the `debitManualAsset` zero floor — once it clamps, the clamped amount
+   * is gone for good and every later event sits on a wrong base. Replaying
+   * removes the whole class of drift: the balance after the edit is a pure
+   * function of (opening balance, events), so it no longer depends on the order
+   * the user happened to edit things in. See [[wallet-replay-on-edit]].
+   *
+   * The opening balance is the wallet's value before any event applied — it is
+   * NOT stored, so it is recovered as `currentBalance − Σ(all events)`, both
+   * halves read from *before* the edit. That is what `snapshotWalletBaseline`
+   * captures; pass it as `baseline`. Without it the opening balance is recovered
+   * from the current row, which is only correct when the events have not changed
+   * yet.
+   *
+   * No-op for non-wallet assets (they carry no free cash balance). Runs inside
+   * the caller's transaction.
+   */
+  async replayWalletBalance(
+    householdId: string,
+    assetId: string,
+    baseline?: WalletBaseline,
+  ): Promise<number> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (!WALLET_ASSET_TYPES.has(asset.type)) {
+      return asset.manualValue ?? 0;
+    }
+    const events = await this.assetsRepository.findMoneyEventsByAsset(
+      householdId,
+      assetId,
+    );
+    // Opening balance = the value the wallet held before its first event. From
+    // the caller's pre-edit snapshot when there is one; recovered from the
+    // current row otherwise (correct only while the events are unchanged).
+    const openingBalance =
+      baseline?.openingBalance ?? this.deriveOpeningBalance(asset, events);
+
+    // Replay in date order. `findMoneyEventsByAsset` already orders by
+    // `eventDate asc`, so a back-dated edit lands in its chronological slot.
+    let running = openingBalance;
+    for (const event of events) {
+      running += this.eventContributionTo(event, assetId);
+      // Re-stamp this event's own history point at the balance AS OF its date,
+      // so the value chart matches the ledger rather than the "now" balance.
+      // Points are keyed on (moneyEventId, assetId), so this updates in place.
+      await this.writeLinkedValuationPoint(
+        { ...asset, manualValue: running },
+        running,
+        { moneyEventId: event.id, valuationDate: event.isoDate },
+      );
+    }
+
+    // The balance is allowed to go negative: it is a truthful signal that the
+    // recorded spending exceeds the recorded income, and clamping it here is
+    // exactly what made edits lossy. The UI surfaces it as a warning instead.
+    const next: Asset = { ...asset, manualValue: running };
+    await this.assetsRepository.updateAsset(assetId, next);
+    await this.assetsRepository.updateAssetCurrentValue(assetId, running);
+    return running;
+  }
+
+  /**
+   * Capture a wallet's balance and its current money events, for a later
+   * `replayWalletBalance` to recover the opening balance from. Must be read
+   * BEFORE the edit is applied — the opening balance is
+   * `balance − Σ(events)`, so both halves have to come from the same pre-edit
+   * moment. Only the resulting number is kept — holding the event rows would let
+   * a later in-place mutation leak into the subtraction and cancel the edit.
+   */
+  async snapshotWalletBaseline(
+    householdId: string,
+    assetId: string,
+  ): Promise<WalletBaseline> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    const events = await this.assetsRepository.findMoneyEventsByAsset(
+      householdId,
+      assetId,
+    );
+    return { openingBalance: this.deriveOpeningBalance(asset, events) };
+  }
+
+  /** Wallet value before its first event: current balance minus every event. */
+  private deriveOpeningBalance(asset: Asset, events: MoneyEvent[]): number {
+    return events.reduce(
+      (balance, event) => balance - this.eventContributionTo(event, asset.id),
+      asset.manualValue ?? 0,
+    );
+  }
+
+  /**
+   * Dates on which a wallet's replayed balance is negative, with the balance at
+   * each. Empty when the wallet never goes below zero.
+   *
+   * Read-only — writes nothing. Serves two callers: the check *after* a write
+   * (to mark the offending events), and the dry-run *before* one, which passes
+   * `simulate` to replay a ledger the database does not hold yet. The opening
+   * balance is always derived from the events as they are STORED, so a simulated
+   * ledger changes only what is replayed on top of it, never the base.
+   */
+  async findWalletOverdrafts(
+    householdId: string,
+    assetId: string,
+    options?: {
+      baseline?: WalletBaseline;
+      /** Rewrite the stored ledger before replaying it. */
+      simulate?: (events: MoneyEvent[]) => MoneyEvent[];
+    },
+  ): Promise<WalletOverdraft[]> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (!WALLET_ASSET_TYPES.has(asset.type)) {
+      return [];
+    }
+    const stored = await this.assetsRepository.findMoneyEventsByAsset(
+      householdId,
+      assetId,
+    );
+    const openingBalance =
+      options?.baseline?.openingBalance ??
+      this.deriveOpeningBalance(asset, stored);
+    const events = options?.simulate
+      ? [...options.simulate(stored)].sort((left, right) =>
+          left.isoDate.localeCompare(right.isoDate),
+        )
+      : stored;
+    let running = openingBalance;
+    const overdrafts: WalletOverdraft[] = [];
+    for (const event of events) {
+      running += this.eventContributionTo(event, assetId);
+      if (running < 0) {
+        overdrafts.push({
+          moneyEventId: event.id,
+          isoDate: event.isoDate,
+          balance: running,
+        });
+      }
+    }
+    return overdrafts;
   }
 
   /**
@@ -1546,7 +1784,11 @@ export class AssetsService {
    * asset's stored value and refresh its valuation. Used when money leaves a
    * wallet — e.g. an expense / transfer-out money event debits its `fromAsset`,
    * or deleting a debt reverses the credit its borrow put into the "received to"
-   * wallet. Floors at 0 so a debit can never drive a wallet negative. No-op for
+   * wallet. The result is allowed to go negative: clamping it at 0 silently ate
+   * the clamped amount and made `reverse + apply` on an edit non-invertible, so
+   * a wallet that ever hit the floor drifted for good (see
+   * [[wallet-replay-on-edit]]). A negative balance is a truthful signal that the
+   * recorded spending exceeds the recorded income; the UI flags it. No-op for
    * non-wallet asset types, mirroring the credit side.
    *
    * Meant to run inside an existing `runInTransaction`.
@@ -1566,7 +1808,7 @@ export class AssetsService {
     }
     const next: Asset = {
       ...asset,
-      manualValue: Math.max(0, (asset.manualValue ?? 0) - amount),
+      manualValue: (asset.manualValue ?? 0) - amount,
     };
     await this.assetsRepository.updateAsset(assetId, next);
     await this.upsertCurrentValuation(next, context);

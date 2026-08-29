@@ -49,7 +49,7 @@ When real-time is wired, replace these constants — they affect interest accrua
 - [[activity-log]] — the journal that replaced the permission system
 - [[households-and-onboarding]] — household creation & onboarding
 - [[dashboard]] — overview / status buckets
-- [[snapshots-and-networth]] — net-worth history & attention items
+- [[snapshots-and-networth]] — net-worth history & frozen snapshots
 - [[market-data]] — market prices & FX reference data
 - [[settings-and-sharing]] — household config, reminders, sharing levels
 - [[auth]] — authentication & session gating

@@ -312,12 +312,6 @@ enum FinancialManagementMode {
   unsure
 }
 
-enum AttentionItemStatus {
-  open
-  seen
-  resolved
-  dismissed
-}
 
 /// ISO-4217 currency reference. Every `currency`/`baseCurrency`/`quoteCurrency`
 /// column across the schema is a 3-letter code validated against this table at
@@ -406,10 +400,6 @@ model Profile {
   goalAllocationsUpdated   GoalAssetAllocation[] @relation("GoalAssetAllocationUpdatedBy")
   moneyEventsCreated       MoneyEvent[]          @relation("MoneyEventCreatedBy")
   moneyEventsUpdated       MoneyEvent[]          @relation("MoneyEventUpdatedBy")
-  attentionItemsCreated    AttentionItem[]       @relation("AttentionItemCreatedBy")
-  attentionItemsSeen       AttentionItem[]       @relation("AttentionItemSeenBy")
-  attentionItemsResolved   AttentionItem[]       @relation("AttentionItemResolvedBy")
-  attentionItemsDismissed  AttentionItem[]       @relation("AttentionItemDismissedBy")
   auditLogsActed           AuditLog[]            @relation("AuditLogActor")
 
   @@map("profiles")
@@ -447,7 +437,6 @@ model Household {
   snapshotGoalValues      SnapshotGoalValue[]
   moneyEvents             MoneyEvent[]
   moneyEventCategories    MoneyEventCategory[]
-  attentionItems          AttentionItem[]
   auditLogs               AuditLog[]
 
   @@index([createdById])
@@ -1101,9 +1090,10 @@ model MoneyEvent {
   debtId          String?          @map("debt_id") @db.Uuid
   financialGoalId String?          @map("financial_goal_id") @db.Uuid
   snapshotId      String?          @map("snapshot_id") @db.Uuid
-  // is_large_event / is_attention_needed dropped: never read in code, and
-  // attention is centralized in the AttentionItem table (derive from amount /
-  // AttentionItem, don't store denormalized flags on the ledger).
+  // is_large_event / is_attention_needed dropped: an overdraft is a property of
+  // the WALLET's running balance, not of one row, so a flag here would need
+  // rewriting across every later event on every edit. Attention is derived at
+  // read time instead — see backend memory/attention-items.md.
   // Who owns the privacy right (spec §30) — distinct from `createdById`.
   status          MoneyEventStatus @default(recorded)
   createdById     String           @map("created_by") @db.Uuid
@@ -1155,49 +1145,6 @@ model MoneyEventCategory {
   @@map("money_event_categories")
 }
 
-model AttentionItem {
-  id                String              @id @default(uuid(7)) @db.Uuid
-  householdId       String              @map("household_id") @db.Uuid
-  title             String
-  reason            String?
-  amount            Decimal?            @db.Decimal(14, 2)
-  relatedObjectType RelatedObjectType?  @map("related_object_type")
-  relatedObjectId   String?             @map("related_object_id") @db.Uuid
-  level             AttentionLevel      @default(normal)
-  // status IS the lifecycle (open → seen → resolved / dismissed). There is no
-  // `deletedAt`: `dismissed` already means "gone", so a second delete flag would
-  // be a redundant, conflicting source of truth.
-  status            AttentionItemStatus @default(open)
-  /// Machine-readable signal identity (`cashflow_overdue`, `user_flagged`, …).
-  /// Most v3.1 signals are DERIVED at read time and never stored; when a member
-  /// dismisses one, the dismissal is persisted as a TOMBSTONE row carrying this
-  /// code, and the read merge suppresses the matching derived signal. Without
-  /// it there would be nothing to match a dismissal against.
-  ruleCode          String?             @map("rule_code")
-  createdById       String?             @map("created_by") @db.Uuid
-  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
-  seenById          String?             @map("seen_by") @db.Uuid
-  seenAt            DateTime?           @map("seen_at") @db.Timestamptz(6)
-  resolvedById      String?             @map("resolved_by") @db.Uuid
-  resolvedAt        DateTime?           @map("resolved_at") @db.Timestamptz(6)
-  /// Separate from `resolvedAt` on purpose: "we dealt with it" and "don't show
-  /// me this" are different facts about the household.
-  dismissedById     String?             @map("dismissed_by") @db.Uuid
-  dismissedAt       DateTime?           @map("dismissed_at") @db.Timestamptz(6)
-  household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy         Profile?            @relation("AttentionItemCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  seenBy            Profile?            @relation("AttentionItemSeenBy", fields: [seenById], references: [id])
-  resolvedBy        Profile?            @relation("AttentionItemResolvedBy", fields: [resolvedById], references: [id])
-  dismissedBy       Profile?            @relation("AttentionItemDismissedBy", fields: [dismissedById], references: [id], onDelete: SetNull)
-
-  @@index([householdId, status])
-  @@index([householdId, level])
-  @@index([relatedObjectType, relatedObjectId])
-  // Mirrors `attention_items_household_id_rule_code_idx` — the dismissal
-  // tombstone lookup on every attention read.
-  @@index([householdId, ruleCode])
-  @@map("attention_items")
-}
 
 model AuditLog {
   id          String    @id @default(uuid(7)) @db.Uuid

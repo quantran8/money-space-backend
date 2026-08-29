@@ -1,6 +1,5 @@
 import type { Asset } from '../../modules/assets/entities/asset.entity';
 import type { AssetValueHistory } from '../../modules/assets/entities/asset-value-history.entity';
-import type { AttentionItem } from '../../modules/dashboard/entities/attention-item.entity';
 import type { SnapshotPoint } from '../../modules/dashboard/entities/snapshot-point.entity';
 import type {
   Debt,
@@ -311,16 +310,6 @@ export function mapFxRate(row: DbRow): FxRate {
     rate: numberFromDb(row.rate),
     asOf: row.rateTime ?? row.rate_time,
     source: row.source,
-  };
-}
-
-export function mapAttentionItem(row: DbRow): AttentionItem {
-  return {
-    id: row.id,
-    householdId: row.householdId ?? row.household_id,
-    title: row.title,
-    reason: row.reason ?? '',
-    level: row.level,
   };
 }
 

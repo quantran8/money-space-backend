@@ -254,7 +254,14 @@ export class GoalsService {
       assetValue,
       claimedAmount: claimed,
       freeAmount: Math.max(0, assetValue - claimed),
-      committedAmount: Math.min(committed, assetValue),
+      // Floored at 0: a wallet can now hold a NEGATIVE balance (an overdrawn
+      // wallet is recorded rather than clamped — see [[wallet-replay-on-edit]]),
+      // and the `Math.min` cap was written when `assetValue` could not go below
+      // zero. Against a wallet at −168tr it reported −168tr committed, which
+      // reads as the goals owing money. Nothing is committed when there is
+      // nothing there: the claim resolvers already return 0 for a non-positive
+      // wallet, so this floor only stops the cap reintroducing the negative.
+      committedAmount: Math.max(0, Math.min(committed, assetValue)),
       unassignedAmount: Math.max(0, assetValue - committed),
       items: items.map((item) => ({
         ...item,
@@ -325,9 +332,18 @@ export class GoalsService {
       }
 
       byWallet.set(assetId, {
-        amount: Math.min(
-          value,
-          resolveGoalCommittedAmount(claims, new Map([[assetId, value]])),
+        // Floored at 0 for the same reason as `assetGoalUsage`: an overdrawn
+        // wallet holds a negative value, and the `Math.min` cap would report
+        // that negative as the amount promised — which would then sort an
+        // empty, overdrawn wallet as the LEAST promised money and send a
+        // nameless spend straight at it. Nothing is promised when nothing is
+        // there. See [[wallet-replay-on-edit]].
+        amount: Math.max(
+          0,
+          Math.min(
+            value,
+            resolveGoalCommittedAmount(claims, new Map([[assetId, value]])),
+          ),
         ),
         topPriority,
       });

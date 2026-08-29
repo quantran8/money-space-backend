@@ -204,8 +204,7 @@ Two cross-cutting rules for any create/update/delete flow:
 - **Which tables soft-delete**: most domain tables carry `deletedAt` and every
   read filters `deletedAt: null`. Exceptions by design: `profiles` and
   `audit_logs` (identity / append-only — never soft-deleted);
-  `snapshot_asset_values` (child of an immutable snapshot); `attention_items`
-  (its `status = dismissed` IS the "gone" state — do NOT add `deletedAt`).
+  `snapshot_asset_values` (child of an immutable snapshot).
 - **One disappearance mechanism per row**: use `deletedAt` OR a terminal
   `status`, never both.
 - **Filtering is still manual** (`where: { deletedAt: null }`) — a follow-up is

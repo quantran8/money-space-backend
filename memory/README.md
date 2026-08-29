@@ -59,7 +59,7 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [invites.md](invites.md) — joining a household; why accept is NOT household-scoped
 - [households-and-onboarding.md](households-and-onboarding.md) — household creation & onboarding
 - [dashboard.md](dashboard.md) — overview / status buckets
-- [snapshots-and-networth.md](snapshots-and-networth.md) — net-worth history & attention items
+- [snapshots-and-networth.md](snapshots-and-networth.md) — net-worth history & frozen snapshots
 - [market-data.md](market-data.md) — market prices & FX reference data
 - [money-formatting.md](money-formatting.md) — API returns raw numbers; client formats money
 - [settings-and-sharing.md](settings-and-sharing.md) — household config, reminders, sharing

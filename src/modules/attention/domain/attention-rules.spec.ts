@@ -48,6 +48,7 @@ function derive(
   over: Partial<ForecastInput> = {},
   staleAssets?: { assetId: string; name: string; daysSinceUpdate: number }[],
   goalsWithoutWallet?: { goalId: string; name: string }[],
+  overdrawnWallets?: { assetId: string; name: string; balance: number }[],
 ) {
   const input: ForecastInput = {
     householdId: 'hh-1',
@@ -64,6 +65,7 @@ function derive(
     flexible: computeFlexibleMoney(forecast),
     staleAssets,
     goalsWithoutWallet,
+    overdrawnWallets,
   });
 }
 
@@ -224,6 +226,34 @@ describe('derived ids', () => {
     expect(first[0].id).toBe(
       derivedAttentionId('cashflow_required_due_soon', 'e1'),
     );
+  });
+
+  /**
+   * Editing a back-dated event replays its wallet from the wallet's opening
+   * balance, so correcting one amount downward can leave every event after it
+   * sitting on money the wallet never had. The overdraft is recorded rather than
+   * clamped, and this signal is what tells the household to go look.
+   */
+  it('raises one signal per overdrawn wallet', () => {
+    const items = derive({}, undefined, undefined, [
+      { assetId: 'asset-tcb', name: 'TCB', balance: -4_000_000 },
+    ]);
+    const signal = items.find((item) => item.ruleCode === 'wallet_overdrawn');
+
+    expect(signal).toEqual(
+      expect.objectContaining({
+        level: 'important',
+        relatedObjectType: 'asset',
+        relatedObjectId: 'asset-tcb',
+        amount: -4_000_000,
+      }),
+    );
+  });
+
+  it('raises no overdraft signal while every wallet is in credit', () => {
+    expect(
+      derive().filter((item) => item.ruleCode === 'wallet_overdrawn'),
+    ).toHaveLength(0);
   });
 
   // A goal that lost its last wallet — usually because the asset backing it was

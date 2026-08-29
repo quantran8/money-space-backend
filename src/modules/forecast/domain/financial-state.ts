@@ -77,11 +77,20 @@ export function deriveFinancialState(
   ) {
     reasons.push('flexible_money_low');
   }
-  if (forecast.startingLiquidBalance > 0) {
+  // The ratio test needs a positive balance to be meaningful, but a balance at or
+  // below 0 is not a reason to stay silent — it is the household most exposed to
+  // a large payment. A wallet can now be overdrawn (see [[wallet-replay-on-edit]]),
+  // so the `> 0` guard would have skipped exactly the case that needs saying.
+  // Any required payment is "large" relative to nothing.
+  {
     const largest = forecast.timeline
       .filter((o) => o.direction === 'outgoing' && o.requirement === 'required')
       .reduce((max, o) => Math.max(max, o.amount), 0);
-    if (largest >= forecast.startingLiquidBalance * t.largePaymentRatio) {
+    const isLarge =
+      forecast.startingLiquidBalance > 0
+        ? largest >= forecast.startingLiquidBalance * t.largePaymentRatio
+        : largest > 0;
+    if (isLarge) {
       reasons.push('large_payment_upcoming');
     }
   }

@@ -7,8 +7,10 @@ import {
 import { PrismaService } from '../../database/prisma/prisma.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { AssetsService } from '../assets/assets.service';
+import type { WalletBaseline } from '../assets/assets.service';
 import type { Asset } from '../assets/entities/asset.entity';
 import { MoneyEvent } from './entities/money-event.entity';
+import type { MoneyEventImpact } from './entities/money-event-impact.entity';
 import {
   computeSavingInterestPeriods,
   deriveDirection,
@@ -206,6 +208,18 @@ export class MoneyEventsService {
     // (credit/debit → upsertCurrentValuation), so raise the timeout well above
     // the 5s default to keep the interactive transaction from aborting mid-write
     // ("Transaction not found") and stranding its connection on the pooler.
+    // Wallets this event touches, snapshotted before the write so the replay
+    // below can recover their opening balance (see `updateMoneyEvent`). A
+    // back-dated create shifts every later event on the same wallet, exactly
+    // like an edit does.
+    const touchedWalletIds = await this.collectWalletIds(householdId, [
+      event.fromAssetId,
+      event.toAssetId,
+    ]);
+    const baselines = await this.snapshotWalletBaselines(
+      householdId,
+      touchedWalletIds,
+    );
     await this.prisma.runInTransaction(
       async () => {
         await this.moneyEventsRepository.insertMoneyEvent(event);
@@ -219,6 +233,16 @@ export class MoneyEventsService {
         // any over/under payment. The borrow inflow is a debt_update *inflow* and
         // is excluded — it raises the wallet, it must not pay the debt down.
         await this.applyDebtRepaymentEffects(householdId, event, -1);
+        // Re-derive each touched wallet from its opening balance so a back-dated
+        // event re-bases the events that follow it, and every event-linked
+        // history point records the balance as of its own date.
+        for (const walletId of touchedWalletIds) {
+          await this.assetsService.replayWalletBalance(
+            householdId,
+            walletId,
+            baselines.get(walletId),
+          );
+        }
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -497,6 +521,24 @@ export class MoneyEventsService {
     // Reverse + re-apply is roughly double the wallet-effect round-trips of a
     // create, so raise the timeout above the 5s default to avoid aborting the
     // transaction mid-write and stranding its connection.
+    // Wallets this edit can move — the old event's pair and the new one's, since
+    // an edit can re-point the event at a different wallet. Both ends must be
+    // replayed afterwards: the one it left and the one it joined.
+    const touchedWalletIds = await this.collectWalletIds(householdId, [
+      event.fromAssetId,
+      event.toAssetId,
+      next.fromAssetId,
+      next.toAssetId,
+    ]);
+    // Snapshot each wallet's balance and event set BEFORE the edit. The opening
+    // balance a replay needs is `balance − Σ(events)`, and both sides of that
+    // subtraction have to come from the same pre-edit moment — reading them
+    // after the write would net out the edited amount and shift the opening
+    // balance by the edit. See `AssetsService.replayWalletBalance`.
+    const baselines = await this.snapshotWalletBaselines(
+      householdId,
+      touchedWalletIds,
+    );
     await this.prisma.runInTransaction(
       async () => {
         await this.applyWalletEffects(event, 'reverse');
@@ -516,6 +558,18 @@ export class MoneyEventsService {
         await this.applyWalletEffects(next, 'apply');
         await this.applySaleEffects(next);
         await this.applyDebtRepaymentEffects(householdId, next, -1);
+        // The reverse/apply pair above only nets out correctly on the wallet's
+        // *current* balance. Any event dated after this one still sits on the
+        // pre-edit base, and its history point still records the old running
+        // balance. Replay each touched wallet from its opening balance so the
+        // balance and every event-linked point re-derive from the ledger.
+        for (const walletId of touchedWalletIds) {
+          await this.assetsService.replayWalletBalance(
+            householdId,
+            walletId,
+            baselines.get(walletId),
+          );
+        }
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -534,6 +588,16 @@ export class MoneyEventsService {
     // The wallet/sale reversal fans out into many sequential round-trips, so
     // raise the timeout above the 5s default to avoid aborting the transaction
     // mid-write and stranding its connection.
+    // Snapshot before the delete, like create/update: deleting a back-dated event
+    // re-bases every later event on the same wallet.
+    const touchedWalletIds = await this.collectWalletIds(householdId, [
+      event.fromAssetId,
+      event.toAssetId,
+    ]);
+    const baselines = await this.snapshotWalletBaselines(
+      householdId,
+      touchedWalletIds,
+    );
     await this.prisma.runInTransaction(
       async () => {
         await this.moneyEventsRepository.deleteMoneyEvent(eventId);
@@ -546,6 +610,16 @@ export class MoneyEventsService {
         // (same event id). Removing the event should remove those points from
         // history entirely, so soft-delete them last.
         await this.assetsService.removeValuationsForEvent(eventId);
+        // Re-derive the touched wallets so the events that outlive this one sit
+        // on the corrected base. The deleted event is already soft-deleted, so
+        // the replay's event query no longer sees it.
+        for (const walletId of touchedWalletIds) {
+          await this.assetsService.replayWalletBalance(
+            householdId,
+            walletId,
+            baselines.get(walletId),
+          );
+        }
       },
       { timeout: 30000, maxWait: 10000 },
     );
@@ -788,6 +862,179 @@ export class MoneyEventsService {
         valueSold: event.soldValue,
       },
     );
+  }
+
+  /**
+   * Every event in the household that sits at a point where its wallet's balance
+   * is negative, keyed by event id. Read by the events list to mark the rows
+   * worth a second look.
+   *
+   * Answered per wallet rather than per event: an overdraft is a property of the
+   * wallet's running balance, so it takes one replay of each wallet's ledger and
+   * cannot be derived from a single event row. That also keeps the cost
+   * independent of how the list is paged or filtered.
+   */
+  async listOverdraftEvents(
+    householdId: string,
+  ): Promise<{ householdId: string; overdrafts: Record<string, number> }> {
+    const { items } = await this.assetsService.listAssets(householdId);
+    const overdrafts: Record<string, number> = {};
+    for (const asset of items) {
+      if (!AssetsService.isWalletAssetType(asset.type)) {
+        continue;
+      }
+      const walletOverdrafts = await this.assetsService.findWalletOverdrafts(
+        householdId,
+        asset.id,
+      );
+      for (const item of walletOverdrafts) {
+        // An event can only sit on one wallet's negative balance at a time in
+        // practice, but a transfer touches two — keep the deeper figure, which is
+        // the one worth showing.
+        const current = overdrafts[item.moneyEventId];
+        overdrafts[item.moneyEventId] =
+          current === undefined ? item.balance : Math.min(current, item.balance);
+      }
+    }
+    return { householdId, overdrafts };
+  }
+
+  /**
+   * What editing this event would do to the wallets it touches, WITHOUT writing
+   * anything. Replays each affected wallet over a ledger with the edit applied
+   * in memory and reports the dates where the balance would go below zero.
+   *
+   * A negative balance is allowed (it truthfully says the recorded spending
+   * exceeds the recorded income — see [[wallet-replay-on-edit]]), so this is a
+   * warning the client shows before asking for confirmation, not a rejection.
+   * The edit itself never consults it: the household may knowingly go ahead, and
+   * a stale or skipped preview must not be able to block a legitimate edit.
+   */
+  async previewMoneyEventUpdate(
+    householdId: string,
+    eventId: string,
+    payload: UpdateMoneyEventDto,
+  ): Promise<MoneyEventImpact> {
+    const event = await this.ensureMoneyEvent(householdId, eventId);
+    const nextType = payload.type ?? event.type;
+    // Mirror how `updateMoneyEvent` merges the payload, so the preview replays
+    // exactly the event the write would produce. Only the fields that move a
+    // wallet balance matter here (amount, fee, date and the two links).
+    const next: MoneyEvent = {
+      ...event,
+      ...payload,
+      id: event.id,
+      householdId: event.householdId,
+      type: nextType,
+      direction: deriveDirection(
+        nextType,
+        payload.direction ?? event.direction,
+      ),
+      isoDate: payload.isoDate ?? event.isoDate,
+      amount: payload.amount ?? event.amount,
+      feeAmount: payload.feeAmount ?? event.feeAmount,
+    };
+    return this.previewWalletImpact(
+      householdId,
+      [event.fromAssetId, event.toAssetId, next.fromAssetId, next.toAssetId],
+      (events) =>
+        events.map((stored) => (stored.id === eventId ? next : stored)),
+    );
+  }
+
+  /**
+   * What deleting this event would do to the wallets it touches. Same contract
+   * as {@link previewMoneyEventUpdate}: read-only, advisory.
+   */
+  async previewMoneyEventDelete(
+    householdId: string,
+    eventId: string,
+  ): Promise<MoneyEventImpact> {
+    const event = await this.ensureMoneyEvent(householdId, eventId);
+    return this.previewWalletImpact(
+      householdId,
+      [event.fromAssetId, event.toAssetId],
+      (events) => events.filter((stored) => stored.id !== eventId),
+    );
+  }
+
+  /**
+   * Shared body of the preview endpoints: replay `simulate`'s ledger over every
+   * wallet in `assetIds` and collect the resulting overdrafts, newest wallet
+   * first in the order given. Writes nothing.
+   */
+  private async previewWalletImpact(
+    householdId: string,
+    assetIds: Array<string | undefined>,
+    simulate: (events: MoneyEvent[]) => MoneyEvent[],
+  ): Promise<MoneyEventImpact> {
+    const walletIds = await this.collectWalletIds(householdId, assetIds);
+    const wallets: MoneyEventImpact['wallets'] = [];
+    for (const walletId of walletIds) {
+      const overdrafts = await this.assetsService.findWalletOverdrafts(
+        householdId,
+        walletId,
+        { simulate },
+      );
+      if (overdrafts.length === 0) {
+        continue;
+      }
+      const asset = await this.assetsService.getAssetEntity(
+        householdId,
+        walletId,
+      );
+      wallets.push({
+        assetId: walletId,
+        assetName: asset.name,
+        // The deepest point the balance reaches — what the warning leads with.
+        lowestBalance: Math.min(...overdrafts.map((item) => item.balance)),
+        firstOverdraftDate: overdrafts[0].isoDate,
+        overdrafts,
+      });
+    }
+    return { isClear: wallets.length === 0, wallets };
+  }
+
+  /**
+   * Narrow a set of possibly-undefined asset ids down to the distinct wallet
+   * ones (`cash` / `bank_account`). Only wallets carry a running cash balance,
+   * so only they need replaying after an edit.
+   */
+  private async collectWalletIds(
+    householdId: string,
+    assetIds: Array<string | undefined>,
+  ): Promise<string[]> {
+    const unique = [...new Set(assetIds.filter((id): id is string => !!id))];
+    const walletIds: string[] = [];
+    for (const assetId of unique) {
+      const asset = await this.assetsService.getAssetEntity(
+        householdId,
+        assetId,
+      );
+      if (AssetsService.isWalletAssetType(asset.type)) {
+        walletIds.push(assetId);
+      }
+    }
+    return walletIds;
+  }
+
+  /**
+   * Capture each wallet's balance and its money events as they stand right now,
+   * for `replayWalletBalance` to recover the opening balance from. Must be
+   * called BEFORE the edit is written.
+   */
+  private async snapshotWalletBaselines(
+    householdId: string,
+    walletIds: string[],
+  ): Promise<Map<string, WalletBaseline>> {
+    const baselines = new Map<string, WalletBaseline>();
+    for (const walletId of walletIds) {
+      baselines.set(
+        walletId,
+        await this.assetsService.snapshotWalletBaseline(householdId, walletId),
+      );
+    }
+    return baselines;
   }
 
   private async ensureMoneyEvent(householdId: string, eventId: string) {
