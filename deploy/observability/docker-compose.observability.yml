@@ -2,7 +2,10 @@
 #
 # One container, no volumes to size, nothing stored here. Loki and Grafana are
 # Grafana Cloud's problem, which is what makes this fit next to the app on a
-# 1 GB instance — self-hosting the pair needed more RAM than the app itself.
+# small instance — self-hosting the pair needed more RAM than the app itself.
+# The VM is a VM.Standard.A1.Flex, 1 OCPU / 4 GB / 50 GB, and the E2.1.Micro
+# fallback shape terraform still supports has 1 GB, where the pair does not fit
+# at all.
 #
 # Kept in its own compose file so the app can be deployed, restarted or rolled
 # back without touching log shipping, and so a host can run the app alone by
@@ -42,8 +45,10 @@ services:
     # Reading the Docker socket requires membership in the docker group, which
     # the image's default user is not in. This is why the socket mount is :ro.
     user: root
-    # A small ceiling so a log burst cannot push the app out of memory on a 1 GB
-    # instance — Alloy's steady state here is well under 100 MB.
+    # A small ceiling so a log burst cannot push the app out of memory — Alloy's
+    # steady state here is well under 100 MB. Headroom on the 4 GB A1 makes this
+    # a backstop rather than a necessity; on the 1 GB E2.1.Micro fallback shape
+    # it is the difference between a burst costing logs and costing the app.
     mem_limit: 256m
     restart: unless-stopped
     # Without this Alloy collects its own logs: one warning about a failed push

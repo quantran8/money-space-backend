@@ -2,127 +2,123 @@
 
 Signals worth the household's attention (spec §29). Related:
 [[forecast-and-flexible-money]], [[cashflow-events]], [[data-freshness]],
-[[snapshots-and-networth]].
+[[money-events]], [[assets]].
 
-## Two kinds of signal, and why the split matters
+## Every signal is derived
 
-**Derived** signals describe the situation *right now*: a required payment is
-overdue, the projected balance dips below zero, some asset values are stale.
-They are recomputed on every read from the forecast bundle and **never written**.
+There is one kind of signal now: **derived**. A signal describes the household's
+situation *right now* — a required payment is overdue, the projected balance dips
+below zero, a wallet is overdrawn — and is recomputed on every read from the
+forecast bundle. Nothing is ever written.
 
-**Persisting a derived signal would be a bug.** `attention_items` has no
-`deleted_at` — `status = dismissed` IS the gone state. So once the condition
-clears, a persisted row is indistinguishable from something the user
-deliberately dismissed. The row outlives the fact it described and nothing can
-tell the difference.
+That is what makes them self-correcting: a signal appears the moment its
+condition holds and disappears the moment it stops. There is no write to keep in
+step, no row to go stale, and no code path that can forget to clean up.
 
-**Stored** signals are point-in-time observations that cannot be recomputed
-later: someone flagged a money event, an asset moved sharply between two
-snapshots. Those are facts about a moment, so a row is the right home.
+| Rule code | Level | Related object |
+|---|---|---|
+| `cashflow_required_due_soon` | normal/important | cashflow event |
+| `cashflow_overdue` | important | cashflow event |
+| `low_projected_balance` | **urgent** | — |
+| `goal_without_wallet` | important | financial goal |
+| `wallet_overdrawn` | important | asset |
+| `stale_data` | normal | asset |
 
-| Rule code | Kind |
-|---|---|
-| `cashflow_required_due_soon`, `cashflow_overdue` | derived |
-| `low_projected_balance` | derived |
-| `goal_without_wallet` | derived — **not dismissible** |
-| `stale_data` | derived |
-| `user_flagged`, `money_event_flagged` | stored |
-| `asset_moved_sharply` | stored (needs a comparison base) |
-| `amount_over_threshold` | dormant — see below |
+`GET /attention-items` is the only route. It costs **no extra queries** — the
+signals are computed from the forecast bundle already in memory.
 
-## Reading: `stored ∪ derived`, minus dismissals
+## The `attention_items` table was dropped (2026-08-29)
 
-`GET /attention-items` merges both, tags each `source` + `ruleCode`, and drops
-any derived signal with a matching dismissal tombstone. It costs **no extra
-queries**: the derived half is computed from the forecast bundle already in
-memory.
+It existed for the two things that genuinely cannot be recomputed: a hand-flagged
+item, and a "don't show me this again" tombstone. **Neither was ever used.** The
+table held zero rows in production and no client called the endpoints that wrote
+to it, while every reader still had to merge an always-empty stored set and every
+new signal had to answer "store or derive?" when the answer was always derive.
 
-## Dismissing a derived signal
+Dropped with it: the stored/seen/resolved/dismissed lifecycle, the dismissal
+tombstones, `AttentionItemStatus`, and the `user_flagged` / `money_event_flagged`
+/ `asset_moved_sharply` / `amount_over_threshold` rule codes.
 
-There is no row to update, so the dismissal is stored as a **tombstone**:
-`status = 'dismissed'` carrying `rule_code` and (when the signal is about one)
-`related_object_id`. `POST /attention-items/dismiss-derived` takes those in the
-body rather than an id — a derived id (`derived:<ruleCode>:<scope>`) is a
-synthetic key, not an addressable resource. PATCHing one 404s.
+**Kept**: `AttentionLevel` (still on `cashflow_events.attention_level`),
+`RelatedObjectType` (the derived payload uses it), and
+`snapshots.attention_count` — older snapshots keep the value that was true when
+taken; new ones write 0.
 
-Matching is on **rule code AND related object**, so dismissing "rent is due
-soon" does not also silence "electricity is due soon".
+If a hand-flagging feature is ever wanted, it needs a new home and a deliberate
+design — do not restore this table by reflex.
 
-Derived ids must stay **stable across recomputation** — that is the entire
-contract. If they embedded a date or an index, every dismissal would silently
-stop working on the next read. Pinned by a test.
+## Why a flag on the ledger is the wrong shape
+
+The recurring temptation is a boolean column (`money_events.is_attention_needed`,
+dropped for this reason). It does not work, and the overdraft case shows why.
+
+Whether an event sits on a negative balance is a property of the **wallet's
+running balance at that point**, not of the event row. Editing a back-dated event
+replays the wallet from its opening balance (see [[money-events]] and the
+wallet-replay work), so correcting one amount can flip a dozen *untouched* events
+between "fine" and "overdrawn". A stored flag would have to be rewritten across
+every later event on every create, edit, delete, interest accrual and repayment —
+and a missed branch is silent, permanent corruption with nothing to detect it.
+
+Derived, the same question is `assets.value < 0` at read time. No writes, no
+branches to miss.
 
 ## Rules that need care
 
-- **`goal_without_wallet` is not in `DISMISSIBLE_RULE_CODES`.** The other derived
-  signals describe a *situation* the household may reasonably choose to live
-  with — a bill is close, the balance dips. This one describes a goal that
-  **cannot make progress at all** until a wallet is pointed at it, so there is
-  nothing to acknowledge and move past; silencing it would just hide a goal that
-  is permanently stuck. It clears the moment a contribution share is added, since it is
-  recomputed on every read.
-  - It reads the allocation's **`role`**, not the asset's type — the same field
-    the asset-delete warning checks, so the two can never disagree about whether
-    a goal "has a wallet". See [[goals]] and [[assets]].
-  - A goal with **no allocations at all** raises nothing: that is "nothing chosen
-    yet", a different situation from "the wallet went away".
+- **`wallet_overdrawn` reads the wallet's current value**, off the asset list the
+  forecast already loaded. It relies on the fact that **only a wallet can hold a
+  negative value** — a market position is quantity × price, a property is a
+  valuation — so no asset-type lookup is needed. `important`, not `urgent`:
+  nothing is being lost right now and no date is being missed; the figures are
+  describing money that was never there. It means a receipt is missing or an
+  expense is wrong.
+- **`goal_without_wallet`** reads the allocation's **`role`**, not the asset's
+  type — the same field the asset-delete warning checks, so the two can never
+  disagree about whether a goal "has a wallet". See [[goals]] and [[assets]]. A
+  goal with **no allocations at all** raises nothing: that is "nothing chosen
+  yet", a different situation from "the wallet went away".
 - **Only `required` outgoing money raises a signal.** A `planned` purchase is a
   choice; the household has not failed at anything by not spending money they
-  merely intended to. Treating a plan like an obligation is exactly the nagging
-  §29 forbids.
+  merely intended to. Treating a plan like an obligation is the nagging §29
+  forbids.
 - **Check `wasClampedFromPast` BEFORE the due-soon window.** The forecast clamps
   an overdue occurrence onto today, so its `date` reads as today — without that
   check every overdue bill would report as "due in 0 days".
 - **A recurring series collapses to ONE signal**, keyed on the source event.
-  Monthly rent inside a 90-day horizon must not produce three copies of the same
-  fact.
+  Monthly rent inside a 90-day horizon must not produce three copies of one fact.
 - **`stale_data` is measured against the household's OWN cadence.** A household
   on `manual` never goes stale — see [[data-freshness]].
 
 ## No prose, ever
 
-Derived signals carry `ruleCode` + `params` and leave `title`/`reason` null. The
-client owns all copy (hard i18n mandate), and §29's calm-tone rules are a copy
-concern — a backend-rendered "Khẩn cấp" can be neither translated nor softened.
-`level` is likewise a code (`normal | important | urgent`); `DashboardService`
-used to emit Vietnamese labels here and no longer does.
+Signals carry `ruleCode` + `params` and no text. The client owns all copy (hard
+i18n mandate), and §29's calm-tone rules are a copy concern — a backend-rendered
+"Khẩn cấp" can be neither translated nor softened. `level` is likewise a code
+(`normal | important | urgent`).
 
-## Snapshots freeze STORED items only
+## Derived ids
 
-`snapshots.attention_count` counts stored open items. A derived count is not
-reproducible — it depends on a forecast that will have moved by the time anyone
-reads the snapshot back, so freezing it would put a number in the row that
-nothing can ever recompute or verify.
+`derived:<ruleCode>:<scope>`, where scope is the related object or `household`.
+Synthetic keys, not addressable resources. They no longer gate dismissals (there
+are none), but they stay stable across recomputation so a client can key a list
+on them without rows jumping between reads.
 
-## `amount_over_threshold` stays dormant
+## No cron
 
-It reads `households.config.largeEventThresholdVnd` (the `config` jsonb already
-exists — zero migration). Until a household sets one, the rule does not fire.
-**Do not invent a magic constant**: "large" for one household is a rounding error
-for another, and guessing produces exactly the noisy, judgemental alerts §29 is
-written to prevent.
-
-## No cron in this cut
-
-`@nestjs/schedule` is not a dependency, and a multi-instance deployment would
-need advisory locking to avoid duplicate runs. Everything derived is computed on
-read instead, which needs no scheduler at all.
+Everything is computed on read, so there is no scheduler, no advisory locking,
+and no duplicate-run problem on a multi-instance deployment.
 
 ## Where it lives in code
 
 - **backend**: `src/modules/attention/` — `domain/attention-rules.ts` (pure, the
-  unit-test surface), `attention.service.ts` (the merge), `attention.controller.ts`.
-  Split out of `DashboardModule`, which returned attention as a decorated
-  sub-field of the dashboard payload.
-- **frontend-web**: consumed by `src/features/dashboard/` (pending rework).
+  unit-test surface) and `attention.service.ts` (loads the bundle, derives, sorts
+  by urgency). The repository holds nothing but `assertHousehold`.
+- **frontend**: `packages/core/src/features/dashboard/` reads the list. Neither
+  client renders it yet — only `attentionCount` is consumed, and the dashboard
+  payload reports 0 there because that endpoint deliberately runs no forecast.
 
-## Routes
+## Route
 
 ```
-GET  /households/:hid/attention-items              → { items, storedCount, derivedCount }
-POST /households/:hid/attention-items              (edit)   flag by hand
-POST /households/:hid/attention-items/:id/seen     (any member — acknowledging is not editing)
-POST /households/:hid/attention-items/:id/resolve  (edit)
-POST /households/:hid/attention-items/:id/dismiss  (edit)
-POST /households/:hid/attention-items/dismiss-derived (edit)
+GET /households/:hid/attention-items   → { householdId, items, total }
 ```

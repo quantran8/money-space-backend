@@ -82,7 +82,18 @@ describe('resolveSpendImpact', () => {
     const result = resolveSpendImpact([car], 'tcb', 22 * M, 40 * M);
     expect(result.goals[0].after).toBe(0);
     expect(result.goals[0].reduction).toBe(22 * M);
-    expect(result.assetValueAfter).toBe(0);
+  });
+
+  /**
+   * The wallet figure is NOT floored the way the goal figures are. A goal cannot
+   * hold a negative amount, but a wallet can (see the wallet-replay work), and
+   * this is the screen whose job is to say what a spend costs — reporting 0đ
+   * would hide that 40tr out of a 22tr wallet leaves it 18tr overdrawn.
+   */
+  it('reports the overdraft a spend larger than the wallet would leave', () => {
+    const result = resolveSpendImpact([car], 'tcb', 22 * M, 40 * M);
+    expect(result.assetValueAfter).toBe(-18 * M);
+    expect(result.exceedsWallet).toBe(true);
   });
 
   it('flags a spend the wallet cannot cover', () => {

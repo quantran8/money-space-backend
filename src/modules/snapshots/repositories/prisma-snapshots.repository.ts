@@ -61,12 +61,6 @@ export class PrismaSnapshotsRepository
     return Number(agg._sum.outstandingAmount ?? 0);
   }
 
-  async getOpenAttentionCount(householdId: string): Promise<number> {
-    return this.prisma.attentionItem.count({
-      where: { householdId, status: 'open' },
-    });
-  }
-
   // --- Valuation of active assets (self-contained; no AssetsService dep) -----
 
   private async loadPricing() {

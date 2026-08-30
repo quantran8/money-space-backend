@@ -4,7 +4,7 @@ Single-glance household financial status — answers *"Tài chính gia đình c�
 
 ## Overview
 
-Fans out to every other feature's data (snapshot + assets summary + market prices + FX + attention items + upcoming payments + goals + money events + snapshots) and composes one view.
+Fans out to every other feature's data (snapshot + assets summary + market prices + FX + upcoming payments + goals + money events + snapshots) and composes one view.
 
 ## Composed cards
 

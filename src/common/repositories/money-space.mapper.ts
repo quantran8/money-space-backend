@@ -1,6 +1,5 @@
 import type { Asset } from '../../modules/assets/entities/asset.entity';
 import type { AssetValueHistory } from '../../modules/assets/entities/asset-value-history.entity';
-import type { AttentionItem } from '../../modules/dashboard/entities/attention-item.entity';
 import type { SnapshotPoint } from '../../modules/dashboard/entities/snapshot-point.entity';
 import type {
   Debt,
@@ -314,16 +313,6 @@ export function mapFxRate(row: DbRow): FxRate {
   };
 }
 
-export function mapAttentionItem(row: DbRow): AttentionItem {
-  return {
-    id: row.id,
-    householdId: row.householdId ?? row.household_id,
-    title: row.title,
-    reason: row.reason ?? '',
-    level: row.level,
-  };
-}
-
 export function mapFinancialGoal(row: DbRow): FinancialGoal {
   return {
     id: row.id,
@@ -472,6 +461,14 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     soldValue:
       (row.soldValue ?? row.sold_value) != null
         ? numberFromDb(row.soldValue ?? row.sold_value)
+        : undefined,
+    quantityBefore:
+      (row.quantityBefore ?? row.quantity_before) != null
+        ? numberFromDb(row.quantityBefore ?? row.quantity_before)
+        : undefined,
+    quantityAfter:
+      (row.quantityAfter ?? row.quantity_after) != null
+        ? numberFromDb(row.quantityAfter ?? row.quantity_after)
         : undefined,
     note: row.description ?? '',
     isoDate: dateOnly(row.eventDate ?? row.event_date),

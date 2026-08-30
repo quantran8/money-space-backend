@@ -203,6 +203,13 @@ export function deriveDirection(
     // must not touch a wallet or auto-reduce a debt (both are outflow-gated).
     return 'neutral';
   }
+  if (type === 'asset_quantity_adjustment') {
+    // Same reasoning: a corrected holding is bookkeeping, not cash. Stated
+    // explicitly rather than left to the fallthrough below, because `neutral` is
+    // what keeps it out of thu/chi (`summarizeMonth` groups on direction) and
+    // out of P&L — too load-bearing to rest on a default.
+    return 'neutral';
+  }
   return 'neutral';
 }
 

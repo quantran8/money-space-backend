@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-The backend for Money Space — a Vietnamese-first family/household finance app. NestJS 11 + Prisma 6 (Postgres) + Supabase. Source lives in [src/](src/) (`modules/`, `common/`, `config/`, `database/`); the Prisma schema is in [prisma/](prisma/) and Supabase migrations in [supabase/](supabase/).
+The backend for Oursight — a Vietnamese-first family/household finance app. NestJS 11 + Prisma 6 (Postgres) + Supabase. Source lives in [src/](src/) (`modules/`, `common/`, `config/`, `database/`); the Prisma schema is in [prisma/](prisma/) and Supabase migrations in [supabase/](supabase/).
 
 ## Commands
 
@@ -76,12 +76,12 @@ Redis is configured but unreachable, `CacheService` logs once and reports a miss
   survives invalidation and serves stale money figures.
 - **Invalidation is automatic.** `CacheInvalidationInterceptor` (global) drops
   the household's keys after any successful `POST/PUT/PATCH/DELETE` carrying a
-  `:householdId` route param. This is deliberately *not* wired into the ~25
+  `:householdId` route param. This is deliberately _not_ wired into the ~25
   individual write sites — a new endpoint is covered the moment it is
   registered, and there is no hook to forget. TTL (`cacheTtl.household`) is only
   a backstop.
 - **Never invalidate from inside a transaction.** Dropping keys before commit
-  lets a concurrent read re-cache the *pre-commit* state, leaving a stale entry
+  lets a concurrent read re-cache the _pre-commit_ state, leaving a stale entry
   no later write clears; a rollback would also discard the write while the cache
   stayed dropped. Use `CacheInvalidator.runInTransactionAndInvalidate(...)`,
   which flushes only after the outermost transaction commits (and skips
@@ -103,7 +103,7 @@ Operator setup (Grafana Cloud credentials, importing the dashboard):
 [deploy/observability/README.md](deploy/observability/README.md).
 
 - **One line per request.** `pino-http` logs the completion; `LoggingInterceptor`
-  only *enriches* that line (`handler`, `route`, `userId`, payload shape) via
+  only _enriches_ that line (`handler`, `route`, `userId`, payload shape) via
   `req.log.setBindings`. Do not add a second `logger.log()` per request — three
   lines for one request triples ingest for no extra information.
 - **Never log a response body.** Describe it by shape. A snapshots payload is
@@ -159,7 +159,7 @@ Two cross-cutting rules for any create/update/delete flow:
     already be a transaction client, which has no `$transaction`).
   - **Keep transactions short.** Each statement is a DB round-trip; too many
     sequential round-trips can exceed the interactive-transaction timeout
-    (Prisma default 5s) and abort with *"Transaction not found"*. Prefer a
+    (Prisma default 5s) and abort with _"Transaction not found"_. Prefer a
     single bulk write (`createMany`) over N single-row inserts, and pass a
     larger `{ timeout }` to `runInTransaction` for legitimately heavy units.
   - **`DATABASE_URL` points at the SESSION-mode pooler (:5432), not the
@@ -171,13 +171,13 @@ Two cross-cutting rules for any create/update/delete flow:
     transactions work natively.
     - Session mode is capped project-wide at `pool_size: 15`, so `DATABASE_URL`
       carries an explicit `connection_limit` (8) — exceeding the cap fails with
-      *"(EMAXCONNSESSION) max clients reached in session mode"*. Budget for
+      _"(EMAXCONNSESSION) max clients reached in session mode"_. Budget for
       migrations, psql, and any second app instance.
     - `PrismaService` still opens a second client on `DIRECT_URL` and routes
       every `$transaction` through it **when `DATABASE_URL` addresses a
       different endpoint** — the fallback for environments that must run on a
       transaction-mode pooler, where interactive transactions are unsupported
-      (statements may hop connections → *"Transaction not found"*). The two
+      (statements may hop connections → _"Transaction not found"_). The two
       URLs are compared by host + database, not raw string, so differing query
       params don't open a redundant second pool.
   - **`PrismaService.client()` is a method, not a getter.** Read through a
@@ -204,8 +204,7 @@ Two cross-cutting rules for any create/update/delete flow:
 - **Which tables soft-delete**: most domain tables carry `deletedAt` and every
   read filters `deletedAt: null`. Exceptions by design: `profiles` and
   `audit_logs` (identity / append-only — never soft-deleted);
-  `snapshot_asset_values` (child of an immutable snapshot); `attention_items`
-  (its `status = dismissed` IS the "gone" state — do NOT add `deletedAt`).
+  `snapshot_asset_values` (child of an immutable snapshot).
 - **One disappearance mechanism per row**: use `deletedAt` OR a terminal
   `status`, never both.
 - **Filtering is still manual** (`where: { deletedAt: null }`) — a follow-up is
@@ -252,7 +251,7 @@ exists, trade-offs weighed, alternatives rejected, the measured numbers behind a
 decision — belongs in `memory/`, not inline. A long explanatory comment
 duplicates the doc, drifts out of sync with it, and buries the code.
 
-In code, say *what* a line does, or give a one-line caveat when something is
+In code, say _what_ a line does, or give a one-line caveat when something is
 genuinely surprising, and point at the memory file for the reasoning. When a
 change needs a paragraph of justification, that paragraph is a `memory/` edit.
 
@@ -261,7 +260,7 @@ change needs a paragraph of justification, that paragraph is a `memory/` edit.
 **All business logic (nghiệp vụ) of the app must be documented under `memory/`.** This is the durable source of truth for how the app's domain flows work.
 
 > **Infrastructure has its own folder:** [memory/infrastructure/](memory/infrastructure/README.md)
-> holds how the backend *runs* — [logging](memory/infrastructure/logging.md),
+> holds how the backend _runs_ — [logging](memory/infrastructure/logging.md),
 > [deployment](memory/infrastructure/deployment.md),
 > [database connections](memory/infrastructure/database-connections.md),
 > [caching](memory/infrastructure/caching.md). Unlike the domain files those are

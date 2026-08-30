@@ -37,6 +37,31 @@ export interface AssetsRepository {
     note?: string;
   }): Promise<void>;
   /**
+   * Log a change to a market position's quantity that is neither a purchase nor
+   * a sale — a corrected holding, a recount — as a neutral
+   * `asset_quantity_adjustment` linked to the asset (via `toAssetId`).
+   *
+   * Shaped like {@link insertRevaluationEvent} and neutral for the same reason,
+   * but deliberately a different event type: a revaluation says the PRICE moved,
+   * this says the QUANTITY did. Writing the two as one made a corrected holding
+   * read as a market loss.
+   *
+   * `amount` is the signed value delta the new quantity implies, kept only so
+   * the ledger row shows what the correction was worth. It is NOT cash and no
+   * balance is derived from it — `sumEventContributionsAfter` skips this type.
+   * `quantityBefore`/`quantityAfter` are the real payload.
+   */
+  insertQuantityAdjustmentEvent(event: {
+    id: string;
+    householdId: string;
+    assetId: string;
+    amount: number;
+    quantityBefore: number;
+    quantityAfter: number;
+    isoDate: string;
+    note?: string;
+  }): Promise<void>;
+  /**
    * Record an acquisition, linked to the asset through `toAssetId` so it shows
    * in both the household ledger and the asset activity timeline.
    *

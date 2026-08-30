@@ -49,7 +49,13 @@ export interface SpendImpactResult {
   assetId: string;
   assetValue: number;
   amount: number;
-  /** The wallet's value once the spend is taken out; floored at 0. */
+  /**
+   * The wallet's value once the spend is taken out. NOT floored: a wallet may
+   * hold a negative balance (see [[wallet-replay-on-edit]]), and this is the one
+   * figure whose job is to warn what a spend costs — flooring it at 0 told a
+   * household already 10tr overdrawn that spending 5tr more leaves them at 0đ,
+   * hiding exactly the consequence the screen exists to show.
+   */
   assetValueAfter: number;
   /** Total goal money lost across every goal on this wallet. */
   totalReduction: number;
@@ -74,7 +80,14 @@ export function resolveSpendImpact(
   amount: number,
 ): SpendImpactResult {
   const spend = Math.max(0, amount);
-  const assetValueAfter = Math.max(0, assetValue - spend);
+  // What the household is TOLD the wallet will hold — the true figure, negative
+  // and all.
+  const assetValueAfter = assetValue - spend;
+  // What the goal resolvers are asked to work from. Floored at 0 because a claim
+  // cannot be worth a negative amount: the resolvers already return 0 for a
+  // non-positive wallet, so this only keeps the two sides measuring the same
+  // thing rather than changing any claim.
+  const resolvedValueAfter = Math.max(0, assetValueAfter);
 
   // Every goal resolved TOGETHER, twice — once at each wallet value.
   //
@@ -93,7 +106,7 @@ export function resolveSpendImpact(
   // with 6tr unassigned reported "mục tiêu giảm 2,5tr" before this.
   const after = resolveGoalCommittedPartsByGoal(
     claims,
-    new Map([[assetId, assetValueAfter]]),
+    new Map([[assetId, resolvedValueAfter]]),
     basis,
   );
 

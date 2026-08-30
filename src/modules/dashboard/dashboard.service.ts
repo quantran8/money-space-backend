@@ -53,7 +53,6 @@ export class DashboardService {
       householdAssets,
       marketPrices,
       fxRates,
-      attentionItems,
       cashflowEvents,
       financialGoals,
       moneyEvents,
@@ -67,7 +66,6 @@ export class DashboardService {
       this.dashboardRepository.findAssetsByHousehold(householdId),
       this.marketData.getMarketPrices(),
       this.dashboardRepository.getFxRates(),
-      this.dashboardRepository.getAttentionItems(householdId),
       this.dashboardRepository.findCashflowEventsByHousehold(householdId),
       this.dashboardRepository.findFinancialGoalsByHousehold(householdId),
       this.dashboardRepository.findMoneyEventsByHousehold(householdId),
@@ -150,8 +148,18 @@ export class DashboardService {
         // reduced by these — they say where the money is pointed, not that it
         // is gone.
         earmarkedForGoals,
-        unassigned: Math.max(0, totals.totalAssets - earmarkedForGoals),
-        attentionCount: attentionItems.length,
+        // NOT floored, unlike the goal-side figures: `totalAssets` can now be
+        // dragged down by an overdrawn wallet (see [[wallet-replay-on-edit]]),
+        // and clamping here made the payload contradict itself — `netWorth`
+        // showed the overdraft while "chưa dành cho mục tiêu nào" reported 0đ,
+        // quietly swallowing it. `earmarkedForGoals` is always >= 0, so a
+        // negative here means the household owes more than it holds, which is
+        // worth showing rather than hiding.
+        unassigned: totals.totalAssets - earmarkedForGoals,
+        // Always 0: attention signals are DERIVED off the forecast, which this
+        // endpoint deliberately does not run. Clients read the real list from
+        // `GET /attention-items`; the field stays so the payload shape holds.
+        attentionCount: 0,
       },
       // Raw cashflow events; the client renders them. The forecast
       // endpoints (Phase 3) are what turn these into a timeline.
@@ -176,15 +184,6 @@ export class DashboardService {
           note: 'Vang, crypto, dau tu',
         },
       ],
-      // Levels are emitted as CODES (`normal | important | urgent`), never as
-      // Vietnamese labels. The client owns all copy — it has a hard i18n
-      // mandate, and a backend-rendered "Khẩn cấp" cannot be translated,
-      // restyled, or softened per §29's tone rules.
-      attentionItems: attentionItems.map((item) => ({
-        title: item.title,
-        reason: item.reason,
-        level: item.level,
-      })),
       recentEvents: moneyEvents.map((event) => toMoneyEventCard(event)),
       assetTrend: snapshots.map((snapshot) => ({
         date: snapshot.date,

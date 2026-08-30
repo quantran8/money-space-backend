@@ -91,14 +91,9 @@ function setup(
     ),
   } as never;
 
-  const attention = {
-    countOpenStoredItems: jest.fn(async () => 3),
-  } as never;
-
   return {
-    service: new SnapshotsService(snapshotsRepository, forecast, attention),
+    service: new SnapshotsService(snapshotsRepository, forecast),
     snapshotsRepository: snapshotsRepository as Record<string, jest.Mock>,
-    attention: attention as Record<string, jest.Mock>,
     created,
   };
 }
@@ -157,14 +152,19 @@ describe('SnapshotsService.createSnapshot', () => {
     expect(created[0].totalSavings).toBe(0);
   });
 
-  /** §29: a derived count isn't reproducible, so only stored items are frozen. */
-  it('freezes the STORED attention count only', async () => {
-    const { service, created, attention } = setup();
+  /**
+   * §29: a derived count isn't reproducible — it depends on a forecast that will
+   * have moved by the time anyone reads the snapshot back — so only STORED items
+   * were ever frozen. With the stored items dropped (2026-08-29) there are none
+   * left to count, and 0 is the honest value. The column stays so older
+   * snapshots keep their shape.
+   */
+  it('freezes a zero attention count', async () => {
+    const { service, created } = setup();
 
     await service.createSnapshot('hh-1');
 
-    expect(attention.countOpenStoredItems).toHaveBeenCalledWith('hh-1');
-    expect(created[0].attentionCount).toBe(3);
+    expect(created[0].attentionCount).toBe(0);
   });
 
   it('rejects a second snapshot within the rate-limit window', async () => {

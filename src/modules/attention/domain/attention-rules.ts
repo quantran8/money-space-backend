@@ -42,6 +42,21 @@ export type DerivedAttentionRuleCode =
    * means the signal disappears the moment the goal has a wallet again.
    */
   | 'goal_without_wallet'
+  /**
+   * A wallet holding a negative balance — the ledger says more was spent from it
+   * than ever went in.
+   *
+   * Editing a back-dated event replays its wallet from the wallet's opening
+   * balance, so correcting one amount downward can leave every event after it
+   * overdrawn — a consequence the household never sees at the moment it acts.
+   * The overdraft is recorded rather than clamped (see wallet-replay-on-edit),
+   * which is exactly why it needs surfacing.
+   *
+   * Derived for the same reason as `goal_without_wallet`: the household fixes it
+   * by correcting an event, and recomputing on every read means the signal goes
+   * away by itself the moment the ledger balances again.
+   */
+  | 'wallet_overdrawn'
   | 'stale_data';
 
 /** Signals that are genuine point-in-time records, so they ARE persisted. */
@@ -94,6 +109,11 @@ export interface DeriveAttentionInput {
    * allocations and asset types can be read together.
    */
   goalsWithoutWallet?: { goalId: string; name: string }[];
+  /**
+   * Wallets currently holding a negative balance. Resolved by the caller from
+   * the same asset list the forecast already loaded, so this costs no query.
+   */
+  overdrawnWallets?: { assetId: string; name: string; balance: number }[];
 }
 
 /**
@@ -228,6 +248,23 @@ export function deriveAttentionItems(
       relatedObjectType: 'financial_goal',
       relatedObjectId: goal.goalId,
       params: { goalName: goal.name },
+    });
+  }
+
+  // An overdrawn wallet means the ledger says more was spent from it than ever
+  // went in — so either a receipt is missing or an expense is wrong. `important`,
+  // not `urgent`: nothing is being lost right now and no date is being missed;
+  // the figures are simply describing money that was never there.
+  for (const wallet of input.overdrawnWallets ?? []) {
+    items.push({
+      id: derivedAttentionId('wallet_overdrawn', wallet.assetId),
+      source: 'derived',
+      ruleCode: 'wallet_overdrawn',
+      level: 'important',
+      amount: wallet.balance,
+      relatedObjectType: 'asset',
+      relatedObjectId: wallet.assetId,
+      params: { walletName: wallet.name, balance: wallet.balance },
     });
   }
 

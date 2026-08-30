@@ -2,8 +2,9 @@
 //
 // It reads every container's stdout off the Docker socket and pushes the lines
 // to Grafana Cloud's managed Loki. Nothing is stored here: no Loki, no Grafana,
-// no volumes to size or back up, which is what makes this fit on a 1 GB
-// instance next to the app.
+// no volumes to size or back up, which is what makes this fit next to the app
+// on a 1 OCPU / 4 GB A1.Flex — and on the 1 GB E2.1.Micro fallback shape, where
+// self-hosting the pair is not an option at all.
 //
 // Retention and the query UI are Grafana Cloud's side of the deal; this file
 // only decides what gets sent and how it is labelled.

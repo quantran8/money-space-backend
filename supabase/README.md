@@ -1,6 +1,6 @@
 # Supabase Schema Source
 
-The canonical SQL schema for Money Space currently lives in:
+The canonical SQL schema for Oursight currently lives in:
 
 - `frontend-web/supabase/migrations/20260705223000_init_money_space.sql`
 

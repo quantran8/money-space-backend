@@ -23,7 +23,7 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
 - **Which bucket an asset lands in** = `liquidityForAsset(type, countsAsFlexible)`:
   - `assets.counts_as_flexible` is the household's explicit answer to "does this count towards flexible money", `NULL` = "no answer, follow the type". It is the ONE liquidity input a client may send (`CreateAssetDto.countsAsFlexible`); the bucket itself is still never posted.
   - `true` → `usable_now` for any type (gold they would genuinely sell this month). `false` on a `cash` / `bank_account` → `not_immediately_usable` (money held for someone else) — never `long_term`. `false` on a type that was never flexible changes nothing.
-  - A flag that merely restates the type's default is stored as `NULL` (`normalizeCountsAsFlexible`), so an asset nobody decided about keeps following its type, including after a type change.
+  - A flag that merely restates the type's default is stored as `NULL` (`normalizeCountsAsFlexible`), so an asset nobody decided about keeps following its type.
   - **The override is materialized into the `liquidity` column, not consulted separately.** Forecast starting balance, dashboard, assets summary and snapshot lines all read that one column, so they cannot disagree — see the warning in CLAUDE.md and `shared-figures.spec.ts`. The `assets_liquidity_matches_type` CHECK now encodes `liquidity = f(type, counts_as_flexible)` and still makes any other combination unstorable (migration `20260816120000_asset_counts_as_flexible`).
 - **Already owned vs. just bought** (`CreateAssetDto.fundingAssetId`) — two
   different acts that the create form must tell apart, because they move net
@@ -62,6 +62,21 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
   - Entry points: the asset form, and the **"Mua tài sản"** quick action on the
     events page — which opens that form already set to "vừa mua", mirroring
     "Bán tài sản". See [[money-events]].
+- **Identity is fixed once the asset exists** — `type`, and for a market-priced
+  holding its `marketPosition.symbol` / `assetClass`, cannot be edited.
+  `AssetsService.assertIdentityUnchanged` refuses a differing value with a 400;
+  the forms POST the whole record back, so an unchanged value still passes.
+  - **Why:** the row carries its own history — valuations, `money_events`, goal
+    allocations, price points. Re-typing cash into a stock, or repointing FPT at
+    HPG, would hang all of that off something the household never owned, and
+    every past figure would then describe an asset that no longer exists.
+  - The remedy is the act that actually happened: a wrong entry is deleted and
+    entered again; a position that changed hands is **sold** and the new one
+    **bought**. Same reasoning as the read-only quantity on edit — see the
+    buy-more / adjust-quantity routes.
+  - Both forms render `type` (and `symbol`) as a **locked field** on edit — the
+    disabled-input recipe, not a hidden field: the user still has to see what
+    they are editing.
 - **Delete** = soft-delete (`deletedAt`), and — because a soft delete fires no
   database cascade — the app must clear everything pointing at the asset itself.
   - **Refused by default.** While a live goal claim, cashflow event or debt still

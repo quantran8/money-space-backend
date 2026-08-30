@@ -1,4 +1,4 @@
-# Snapshots, net-worth history & attention items
+# Snapshots & net-worth history
 
 The periodic net-worth snapshot model that backs the dashboard trend and the "is the household OK?" question. Related: [[dashboard]], [[assets]], [[asset-valuation]].
 
@@ -180,25 +180,27 @@ This is also why `snapshot_asset_values` freezes `holder_member_id` and
 would silently change what every past snapshot said. The freeze concept survives
 the privacy removal; it simply freezes less. See [[sharing-levels]].
 
-## AttentionItem
+## Attention signals
 
-An alert/notification, kept calm and non-judgmental (see [[domain-overview]] tone rule):
-- **level**: `normal | important | urgent`.
-- **status state machine**: open → seen → resolved / dismissed. This IS the
-  lifecycle — there is **no `deletedAt`** (dismissed = gone; a second delete flag
-  would conflict). Queries exclude `dismissed` (or filter to `open`) instead of a
-  soft-delete filter.
-- **polymorphic link**: `relatedObjectType` ∈ asset / cashflow_event / financial_goal / snapshot / money_event / debt, plus `relatedObjectId`.
-- **Attention is centralized here.** The old denormalized `is_attention_needed` /
-  `is_large_event` flags on `money_events` and `is_attention_needed` on
-  `upcoming_payments` were dropped — they were unread or pure-derived mirrors, and
-  three sources of truth disagree. `cashflow_events.attention_level` stays (it
-  carries the "important" flag that the status enum can't express).
+The `attention_items` table was **dropped (2026-08-29)** — it never held a row.
+Every signal is now DERIVED from the forecast at read time, so there is nothing
+to store, dismiss or soft-delete. See [[attention-items]], which is the source of
+truth.
 
-**v3.1 rewrote how attention works.** Most signals are now DERIVED from the
-forecast at read time and never stored; dismissals of derived signals are stored
-as tombstones. See [[attention-items]] — that file is the source of truth, and
-this section covers only the table.
+Two things this leaves behind here:
+
+- **`snapshots.attention_count` stays**, but new snapshots write 0. It only ever
+  froze STORED items, since a derived count is not reproducible — it depends on a
+  forecast that will have moved by the time anyone reads the snapshot back. Older
+  snapshots keep the value that was true when taken.
+- **A flag on the ledger is still the wrong shape.** The old
+  `is_attention_needed` / `is_large_event` columns on `money_events` and
+  `upcoming_payments` were dropped for this reason and must not come back:
+  whether a row deserves attention depends on the wallet's running balance around
+  it, not on the row, so a stored flag needs rewriting across every later event on
+  every edit. `cashflow_events.attention_level` stays — it carries the
+  "important" flag the status enum can't express, and it is the household's own
+  answer rather than a derived mirror.
 
 ## AuditLog
 

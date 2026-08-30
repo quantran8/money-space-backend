@@ -1,5 +1,4 @@
 import type { Asset } from '../../assets/entities/asset.entity';
-import type { AttentionItem } from '../entities/attention-item.entity';
 import type { SnapshotPoint } from '../entities/snapshot-point.entity';
 import type {
   FinancialGoal,
@@ -16,7 +15,6 @@ export interface DashboardRepository {
   assertHousehold(householdId: string): Promise<Household>;
   findAssetsByHousehold(householdId: string): Promise<Asset[]>;
   getFxRates(): Promise<FxRate[]>;
-  getAttentionItems(householdId?: string): Promise<AttentionItem[]>;
   findCashflowEventsByHousehold(householdId: string): Promise<CashflowEvent[]>;
   findFinancialGoalsByHousehold(householdId: string): Promise<FinancialGoal[]>;
   /**

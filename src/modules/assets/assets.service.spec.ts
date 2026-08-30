@@ -1,11 +1,52 @@
+import { BadRequestException } from '@nestjs/common';
+
 import { AssetsService } from './assets.service';
 import type { Asset } from './entities/asset.entity';
 import type { AssetValueHistory } from './entities/asset-value-history.entity';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
+import type { MoneyEvent } from '../money-events/entities/money-event.entity';
 import type { PrismaService } from '../../database/prisma/prisma.service';
 import type { MarketDataService } from '../market-data/market-data.service';
 
 describe('AssetsService', () => {
+  /** Minimal repo/prisma scaffolding for the update + create paths. */
+  function harness(current?: Asset) {
+    const insertAsset = jest.fn().mockResolvedValue(undefined);
+    const updateAsset = jest.fn().mockResolvedValue(undefined);
+    const repository = {
+      assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+      findAssetById: jest.fn().mockResolvedValue(current),
+      createId: jest.fn(() => 'asset-new'),
+      insertAsset,
+      updateAsset,
+      insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
+      insertRevaluationEvent: jest.fn().mockResolvedValue(undefined),
+      updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+      getFxRates: jest.fn().mockResolvedValue([]),
+    } as unknown as AssetsRepository;
+    const prisma = {
+      runInTransaction: jest.fn(async (work: () => Promise<unknown>) => work()),
+    } as unknown as PrismaService;
+    const marketData = {
+      getMarketPrices: jest.fn().mockResolvedValue([]),
+    } as unknown as MarketDataService;
+    const audit = { record: jest.fn() } as never;
+    return {
+      insertAsset,
+      updateAsset,
+      service: new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        audit,
+        // Delete-only collaborators; untouched by these cases.
+        {} as never,
+        {} as never,
+        {} as never,
+      ),
+    };
+  }
+
   it('records an asset_purchase when a same-symbol position is increased', async () => {
     const existing: Asset = {
       id: 'asset-btc',
@@ -121,6 +162,250 @@ describe('AssetsService', () => {
     expect(recordedValuation?.moneyEventId).toBe('event-purchase');
   });
 
+  describe('buying more of a position already held', () => {
+    function harness() {
+      const existing: Asset = {
+        id: 'asset-gold',
+        householdId: 'household-1',
+        name: 'Vàng SJC',
+        type: 'gold',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'gold',
+          symbol: 'SJC',
+          quantity: 2,
+          unit: 'chỉ',
+          quoteCurrency: 'VND',
+          purchasePrice: 8_000_000,
+        },
+      };
+      const wallet: Asset = {
+        id: 'wallet-1',
+        householdId: 'household-1',
+        name: 'TCB',
+        type: 'bank_account',
+        valuationMode: 'manual',
+        liquidity: 'usable_now',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        manualValue: 500_000_000,
+      };
+      const updateAsset = jest.fn().mockResolvedValue(undefined);
+      const insertAssetPurchaseEvent = jest.fn().mockResolvedValue(undefined);
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetById: jest.fn((_hid: string, id: string) =>
+          Promise.resolve(id === wallet.id ? wallet : existing),
+        ),
+        updateAsset,
+        getFxRates: jest.fn().mockResolvedValue([]),
+        createId: jest.fn().mockReturnValue('event-purchase'),
+        insertAssetPurchaseEvent,
+        insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
+        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+      } as unknown as AssetsRepository;
+      const prisma = {
+        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+          work(),
+        ),
+      } as unknown as PrismaService;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([]),
+      } as unknown as MarketDataService;
+      const service = new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      return { service, existing, updateAsset, insertAssetPurchaseEvent };
+    }
+
+    it('re-averages the cost basis instead of pricing the whole holding at the old one', async () => {
+      const { service, existing, updateAsset } = harness();
+
+      // 2 chỉ at 8tr, then 2 more at 10tr → average 9tr, not 8tr.
+      await service.purchaseIntoPosition('household-1', existing.id, {
+        quantity: 2,
+        purchasePrice: 10_000_000,
+        fundingAssetId: 'wallet-1',
+      });
+
+      expect(updateAsset).toHaveBeenCalledWith(
+        existing.id,
+        expect.objectContaining({
+          marketPosition: expect.objectContaining({
+            quantity: 4,
+            purchasePrice: 9_000_000,
+          }),
+        }),
+      );
+    });
+
+    it('logs the purchase so the added quantity is not conjured', async () => {
+      const { service, existing, insertAssetPurchaseEvent } = harness();
+
+      await service.purchaseIntoPosition('household-1', existing.id, {
+        quantity: 2,
+        purchasePrice: 10_000_000,
+        fundingAssetId: 'wallet-1',
+      });
+
+      expect(insertAssetPurchaseEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assetId: existing.id,
+          amount: 20_000_000,
+          fundingAssetId: 'wallet-1',
+        }),
+      );
+    });
+
+    it('rejects a purchase into an asset that has no position', async () => {
+      const { service } = harness();
+      const cash = {
+        id: 'wallet-1',
+        householdId: 'household-1',
+        name: 'TCB',
+        type: 'bank_account',
+        valuationMode: 'manual',
+        liquidity: 'usable_now',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        manualValue: 1_000,
+      } as Asset;
+      void cash;
+
+      await expect(
+        service.purchaseIntoPosition('household-1', 'wallet-1', {
+          quantity: 1,
+          purchasePrice: 1,
+        }),
+      ).rejects.toThrow();
+    });
+  });
+
+  describe('a corrected holding is not a price movement', () => {
+    // The bug this covers: changing `quantity` fell through to `logRevaluation`
+    // and was written as `asset_update` — the type that means "the price moved".
+    // Correcting 10 chỉ of gold to 1 chỉ therefore reported a ~720tr market loss
+    // the household never took.
+    function goldHarness() {
+      const current: Asset = {
+        id: 'asset-gold',
+        householdId: 'household-1',
+        name: 'Vàng SJC',
+        type: 'gold',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'gold',
+          symbol: 'SJC',
+          quantity: 10,
+          unit: 'chỉ',
+          quoteCurrency: 'VND',
+          purchasePrice: 8_000_000,
+          lastPrice: 8_000_000,
+        },
+      };
+      const insertRevaluationEvent = jest.fn().mockResolvedValue(undefined);
+      const insertQuantityAdjustmentEvent = jest
+        .fn()
+        .mockResolvedValue(undefined);
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetById: jest.fn().mockResolvedValue(current),
+        updateAsset: jest.fn().mockResolvedValue(undefined),
+        getFxRates: jest.fn().mockResolvedValue([]),
+        createId: jest
+          .fn()
+          .mockReturnValueOnce('event-adjustment')
+          .mockReturnValueOnce('valuation-adjustment'),
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+        insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
+        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+      } as unknown as AssetsRepository;
+      const prisma = {
+        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+          work(),
+        ),
+      } as unknown as PrismaService;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([]),
+      } as unknown as MarketDataService;
+      const service = new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      return {
+        service,
+        current,
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+      };
+    }
+
+    it('logs a quantity adjustment, not a revaluation, when only quantity changes', async () => {
+      const {
+        service,
+        current,
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+      } = goldHarness();
+
+      await service.updateAsset('household-1', current.id, {
+        marketPosition: { quantity: 1 },
+      } as never);
+
+      expect(insertRevaluationEvent).not.toHaveBeenCalled();
+      expect(insertQuantityAdjustmentEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assetId: current.id,
+          quantityBefore: 10,
+          quantityAfter: 1,
+          // Both sides recorded, so the series stays replayable; the value delta
+          // rides along only to make the ledger row readable.
+          amount: -72_000_000,
+        }),
+      );
+    });
+
+    it('still logs a revaluation when the price moves and quantity holds', async () => {
+      const {
+        service,
+        current,
+        insertRevaluationEvent,
+        insertQuantityAdjustmentEvent,
+      } = goldHarness();
+
+      // A pure price refresh is a quote update, not a ledger event, so it writes
+      // an unlinked history point and neither event type fires.
+      await service.updateAsset('household-1', current.id, {
+        marketPosition: { lastPrice: 9_000_000 },
+      } as never);
+
+      expect(insertQuantityAdjustmentEvent).not.toHaveBeenCalled();
+      expect(insertRevaluationEvent).not.toHaveBeenCalled();
+    });
+  });
+
   it('records a negative signed delta when an asset is revalued downward', async () => {
     const current: Asset = {
       id: 'asset-tcb',
@@ -179,45 +464,6 @@ describe('AssetsService', () => {
   });
 
   describe('counts towards flexible money', () => {
-    function harness(current?: Asset) {
-      const insertAsset = jest.fn().mockResolvedValue(undefined);
-      const updateAsset = jest.fn().mockResolvedValue(undefined);
-      const repository = {
-        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
-        findAssetById: jest.fn().mockResolvedValue(current),
-        createId: jest.fn(() => 'asset-new'),
-        insertAsset,
-        updateAsset,
-        insertAssetValueHistory: jest.fn().mockResolvedValue(undefined),
-        insertRevaluationEvent: jest.fn().mockResolvedValue(undefined),
-        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
-        getFxRates: jest.fn().mockResolvedValue([]),
-      } as unknown as AssetsRepository;
-      const prisma = {
-        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
-          work(),
-        ),
-      } as unknown as PrismaService;
-      const marketData = {
-        getMarketPrices: jest.fn().mockResolvedValue([]),
-      } as unknown as MarketDataService;
-      const audit = { record: jest.fn() } as never;
-      return {
-        insertAsset,
-        updateAsset,
-        service: new AssetsService(
-          repository,
-          prisma,
-          marketData,
-          audit,
-          // Delete-only collaborators; untouched by these cases.
-          {} as never,
-          {} as never,
-          {} as never,
-        ),
-      };
-    }
-
     it('lifts a long-term asset into usable_now when the household says so', async () => {
       const { service, insertAsset } = harness();
 
@@ -307,23 +553,25 @@ describe('AssetsService', () => {
       );
     });
 
-    it('drops an override that the new type already implies', async () => {
+    it('drops an override that merely restates the type default', async () => {
       const stored: Asset = {
-        id: 'asset-gold',
+        id: 'asset-cash',
         householdId: 'household-1',
-        name: 'Vàng',
-        type: 'gold',
+        name: 'Tiền mặt',
+        type: 'cash',
         valuationMode: 'manual',
-        liquidity: 'usable_now',
-        countsAsFlexible: true,
+        liquidity: 'not_immediately_usable',
+        countsAsFlexible: false,
         currency: 'VND',
         note: '',
         status: 'active',
-        manualValue: 80_000_000,
+        manualValue: 20_000_000,
       };
       const { service, updateAsset } = harness(stored);
 
-      await service.updateAsset('household-1', stored.id, { type: 'cash' });
+      await service.updateAsset('household-1', stored.id, {
+        countsAsFlexible: true,
+      });
 
       expect(updateAsset).toHaveBeenCalledWith(
         stored.id,
@@ -331,6 +579,77 @@ describe('AssetsService', () => {
           liquidity: 'usable_now',
           countsAsFlexible: null,
         }),
+      );
+    });
+  });
+
+  /** What an asset IS cannot be edited — only what it is worth. */
+  describe('identity is fixed once the asset exists', () => {
+    const cash: Asset = {
+      id: 'asset-cash',
+      householdId: 'household-1',
+      name: 'Tiền mặt',
+      type: 'cash',
+      valuationMode: 'manual',
+      liquidity: 'usable_now',
+      countsAsFlexible: null,
+      currency: 'VND',
+      note: '',
+      status: 'active',
+      manualValue: 20_000_000,
+    };
+
+    const stock: Asset = {
+      id: 'asset-stock',
+      householdId: 'household-1',
+      name: 'FPT',
+      type: 'stock',
+      valuationMode: 'market_priced',
+      liquidity: 'not_immediately_usable',
+      countsAsFlexible: null,
+      currency: 'VND',
+      note: '',
+      status: 'active',
+      marketPosition: {
+        assetClass: 'stock',
+        symbol: 'FPT',
+        quantity: 100,
+        unit: 'cổ',
+        quoteCurrency: 'VND',
+        purchasePrice: 120_000,
+      },
+    };
+
+    it('refuses to change the type', async () => {
+      const { service } = harness(cash);
+
+      await expect(
+        service.updateAsset('household-1', cash.id, { type: 'gold' }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses to repoint a holding at another symbol', async () => {
+      const { service } = harness(stock);
+
+      await expect(
+        service.updateAsset('household-1', stock.id, {
+          marketPosition: { ...stock.marketPosition!, symbol: 'HPG' },
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('accepts the unchanged type and symbol the form sends back', async () => {
+      const { service, updateAsset } = harness(stock);
+
+      await service.updateAsset('household-1', stock.id, {
+        type: 'stock',
+        note: 'Giữ dài hạn',
+        marketPosition: { ...stock.marketPosition! },
+      });
+
+      expect(updateAsset).toHaveBeenCalledWith(
+        stock.id,
+        expect.objectContaining({ note: 'Giữ dài hạn' }),
       );
     });
   });
@@ -558,6 +877,252 @@ describe('AssetsService', () => {
           fundingAssetId: gold.id,
         }),
       ).rejects.toThrow(/not a cash or bank account/);
+    });
+  });
+
+  describe('editing a back-dated event re-bases the events after it', () => {
+    /** Wallet harness: a TCB wallet plus a mutable ledger of money events. */
+    function walletHarness(manualValue: number, events: MoneyEvent[]) {
+      const wallet: Asset = {
+        id: 'asset-tcb',
+        householdId: 'household-1',
+        name: 'TCB',
+        type: 'bank_account',
+        valuationMode: 'manual',
+        liquidity: 'usable_now',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        manualValue,
+      };
+      const points: AssetValueHistory[] = [];
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetById: jest.fn(() => Promise.resolve(wallet)),
+        createId: jest.fn(() => `valuation-${points.length}`),
+        findMoneyEventsByAsset: jest.fn(() =>
+          Promise.resolve(
+            [...events].sort((a, b) => a.isoDate.localeCompare(b.isoDate)),
+          ),
+        ),
+        updateAsset: jest.fn((_id: string, next: Asset) => {
+          wallet.manualValue = next.manualValue;
+          return Promise.resolve();
+        }),
+        insertAssetValueHistory: jest.fn((point: AssetValueHistory) => {
+          points.push(point);
+          return Promise.resolve();
+        }),
+        updateAssetCurrentValue: jest.fn().mockResolvedValue(undefined),
+        getFxRates: jest.fn().mockResolvedValue([]),
+      } as unknown as AssetsRepository;
+      const prisma = {
+        runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+          work(),
+        ),
+      } as unknown as PrismaService;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([]),
+      } as unknown as MarketDataService;
+      const service = new AssetsService(
+        repository,
+        prisma,
+        marketData,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+      return { service, wallet, points };
+    }
+
+    /** An income/expense money event against the TCB wallet. */
+    function move(
+      id: string,
+      isoDate: string,
+      amount: number,
+      direction: 'in' | 'out',
+    ): MoneyEvent {
+      return {
+        id,
+        householdId: 'household-1',
+        amount,
+        feeAmount: 0,
+        note: '',
+        isoDate,
+        type: direction === 'in' ? 'income' : 'expense',
+        category: 'other',
+        direction: direction === 'in' ? 'inflow' : 'outflow',
+        toAssetId: direction === 'in' ? 'asset-tcb' : undefined,
+        fromAssetId: direction === 'in' ? undefined : 'asset-tcb',
+      };
+    }
+
+    it('re-derives the balance from the opening balance, not the current one', async () => {
+      // Wallet opened with 5tr, then: 1/8 +5tr, 2/8 −2tr, 3/8 −3tr → 5tr.
+      const events = [
+        move('event-1', '2026-08-01', 5_000_000, 'in'),
+        move('event-2', '2026-08-02', 2_000_000, 'out'),
+        move('event-3', '2026-08-03', 3_000_000, 'out'),
+      ];
+      const { service, wallet, points } = walletHarness(5_000_000, events);
+      const baseline = await service.snapshotWalletBaseline(
+        'household-1',
+        'asset-tcb',
+      );
+
+      // 4/8: the user corrects the 1/8 inflow from 5tr down to 1tr.
+      events[0].amount = 1_000_000;
+      const balance = await service.replayWalletBalance(
+        'household-1',
+        'asset-tcb',
+        baseline,
+      );
+
+      // Opening 5tr + 1 − 2 − 3 = 1tr. The two later expenses keep their own
+      // amounts; only the balance they sit on moved.
+      expect(balance).toBe(1_000_000);
+      expect(wallet.manualValue).toBe(1_000_000);
+      // Every event's history point records the balance AS OF its date, so the
+      // value chart follows the ledger instead of the "now" balance.
+      expect(points.map((point) => [point.valuationDate, point.value])).toEqual(
+        [
+          ['2026-08-01', 6_000_000],
+          ['2026-08-02', 4_000_000],
+          ['2026-08-03', 1_000_000],
+        ],
+      );
+    });
+
+    it('lets an overdrawn wallet go negative instead of silently clamping', async () => {
+      // Same ledger, but the wallet opened at 0 — so the corrected inflow no
+      // longer covers the 5tr of spending recorded against it.
+      const events = [
+        move('event-1', '2026-08-01', 5_000_000, 'in'),
+        move('event-2', '2026-08-02', 2_000_000, 'out'),
+        move('event-3', '2026-08-03', 3_000_000, 'out'),
+      ];
+      const { service } = walletHarness(0, events);
+      const baseline = await service.snapshotWalletBaseline(
+        'household-1',
+        'asset-tcb',
+      );
+      events[0].amount = 1_000_000;
+
+      const overdrafts = await service.findWalletOverdrafts(
+        'household-1',
+        'asset-tcb',
+        { baseline },
+      );
+      const balance = await service.replayWalletBalance(
+        'household-1',
+        'asset-tcb',
+        baseline,
+      );
+
+      // 0 + 1 − 2 − 3 = −4tr. Clamping at 0 here is what used to make the edit
+      // lossy — the balance must stay truthful so the UI can flag it.
+      expect(balance).toBe(-4_000_000);
+      expect(overdrafts.map((item) => [item.isoDate, item.balance])).toEqual([
+        ['2026-08-02', -1_000_000],
+        ['2026-08-03', -4_000_000],
+      ]);
+    });
+
+    it('previews an overdraft from a ledger the database does not hold yet', async () => {
+      // Wallet opened at 0: 1/8 +5tr, 2/8 −2tr, 3/8 −3tr → exactly 0, no overdraft.
+      const events = [
+        move('event-1', '2026-08-01', 5_000_000, 'in'),
+        move('event-2', '2026-08-02', 2_000_000, 'out'),
+        move('event-3', '2026-08-03', 3_000_000, 'out'),
+      ];
+      const { service, wallet } = walletHarness(0, events);
+
+      expect(
+        await service.findWalletOverdrafts('household-1', 'asset-tcb'),
+      ).toEqual([]);
+
+      // Dry-run the 1/8 correction to 1tr WITHOUT touching the stored ledger.
+      const preview = await service.findWalletOverdrafts(
+        'household-1',
+        'asset-tcb',
+        {
+          simulate: (stored) =>
+            stored.map((event) =>
+              event.id === 'event-1'
+                ? { ...event, amount: 1_000_000 }
+                : event,
+            ),
+        },
+      );
+
+      expect(preview.map((item) => [item.isoDate, item.balance])).toEqual([
+        ['2026-08-02', -1_000_000],
+        ['2026-08-03', -4_000_000],
+      ]);
+      // The preview is read-only: nothing about the wallet moved.
+      expect(wallet.manualValue).toBe(0);
+    });
+
+    it('re-sorts a simulated event that moved to a new date', async () => {
+      // Moving the inflow to AFTER both expenses overdraws the wallet in between,
+      // even though the same three amounts still net to 0.
+      const events = [
+        move('event-1', '2026-08-01', 5_000_000, 'in'),
+        move('event-2', '2026-08-02', 2_000_000, 'out'),
+        move('event-3', '2026-08-03', 3_000_000, 'out'),
+      ];
+      const { service } = walletHarness(0, events);
+
+      const preview = await service.findWalletOverdrafts(
+        'household-1',
+        'asset-tcb',
+        {
+          simulate: (stored) =>
+            stored.map((event) =>
+              event.id === 'event-1'
+                ? { ...event, isoDate: '2026-08-04' }
+                : event,
+            ),
+        },
+      );
+
+      expect(preview.map((item) => [item.isoDate, item.balance])).toEqual([
+        ['2026-08-02', -2_000_000],
+        ['2026-08-03', -5_000_000],
+      ]);
+    });
+
+    it('returns to the original balance when the edit is undone', async () => {
+      // Invertibility is the property the zero floor destroyed: editing 5tr → 1tr
+      // → 5tr must land back where it started, even after the balance went
+      // negative in between.
+      const events = [
+        move('event-1', '2026-08-01', 5_000_000, 'in'),
+        move('event-2', '2026-08-02', 2_000_000, 'out'),
+        move('event-3', '2026-08-03', 3_000_000, 'out'),
+      ];
+      const { service } = walletHarness(0, events);
+
+      const first = await service.snapshotWalletBaseline(
+        'household-1',
+        'asset-tcb',
+      );
+      events[0].amount = 1_000_000;
+      await service.replayWalletBalance('household-1', 'asset-tcb', first);
+
+      const second = await service.snapshotWalletBaseline(
+        'household-1',
+        'asset-tcb',
+      );
+      events[0].amount = 5_000_000;
+      const restored = await service.replayWalletBalance(
+        'household-1',
+        'asset-tcb',
+        second,
+      );
+
+      expect(restored).toBe(0);
     });
   });
 });

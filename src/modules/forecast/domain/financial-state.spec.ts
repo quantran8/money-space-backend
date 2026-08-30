@@ -93,6 +93,21 @@ describe('deriveFinancialState — watch', () => {
     expect(result.state).toBe('watch');
   });
 
+  /**
+   * A wallet may now hold a negative balance (see the wallet-replay work). The
+   * ratio test needs a positive balance to mean anything, but a household at or
+   * below zero is the one MOST exposed to a required payment — the old `> 0`
+   * guard skipped the reason for exactly that case.
+   */
+  it('still flags a large payment when the wallet is overdrawn', () => {
+    const result = derive({
+      assets: [asset({ value: -10 * M })],
+      cashflowEvents: [event({ amount: 5 * M })],
+    });
+
+    expect(result.reasons).toContain('large_payment_upcoming');
+  });
+
   it('is watch when critical data is unconfirmed', () => {
     const result = derive({
       cashflowEvents: [

@@ -9,7 +9,6 @@ import { todayInTimeZone } from '../../common/utils/clock';
 import { computeFlexibleMoney } from '../forecast/domain/flexible-money';
 import { runForecast } from '../forecast/domain/forecast';
 import { ForecastService } from '../forecast/forecast.service';
-import { AttentionService } from '../attention/attention.service';
 import {
   SNAPSHOTS_REPOSITORY,
   type SnapshotsRepository,
@@ -34,7 +33,6 @@ export class SnapshotsService {
     @Inject(SNAPSHOTS_REPOSITORY)
     private readonly snapshotsRepository: SnapshotsRepository,
     private readonly forecast: ForecastService,
-    private readonly attention: AttentionService,
   ) {}
 
   async listSnapshots(householdId: string) {
@@ -68,7 +66,7 @@ export class SnapshotsService {
    * an unrelated debt edit could rewrite yesterday's picture.
    *
    * The shape of this method is load-bearing. Steps 1–6 (valuing assets,
-   * running the forecast, totalling debt, counting attention) all run OUTSIDE
+   * running the forecast, totalling debt) all run OUTSIDE
    * the transaction; the transaction is three statements. An interactive
    * transaction holds one connection open on the direct client, and doing the
    * reads inside it is how the old path used to die with "Transaction not
@@ -102,20 +100,14 @@ export class SnapshotsService {
     );
 
     // 2–5. Everything expensive, concurrently, and all outside the transaction.
-    const [lines, goalLines, totalDebt, forecastInput, attentionCount] =
-      await Promise.all([
-        this.snapshotsRepository.getClassifiedAssetLines(householdId, asOfDate),
-        // Frozen alongside the assets: a goal's progress cannot be recomputed
-        // later, because its allocations carry no history.
-        this.snapshotsRepository.getGoalLines(householdId),
-        this.snapshotsRepository.getOutstandingDebtTotal(householdId),
-        this.forecast.loadInput(householdId, horizonDays, asOfDate),
-        // Stored items ONLY. A derived count isn't reproducible — it depends on a
-        // forecast that will have moved by the time anyone reads this back, so
-        // freezing it would put a number in the row that nothing can ever
-        // recompute or verify.
-        this.attention.countOpenStoredItems(householdId),
-      ]);
+    const [lines, goalLines, totalDebt, forecastInput] = await Promise.all([
+      this.snapshotsRepository.getClassifiedAssetLines(householdId, asOfDate),
+      // Frozen alongside the assets: a goal's progress cannot be recomputed
+      // later, because its allocations carry no history.
+      this.snapshotsRepository.getGoalLines(householdId),
+      this.snapshotsRepository.getOutstandingDebtTotal(householdId),
+      this.forecast.loadInput(householdId, horizonDays, asOfDate),
+    ]);
 
     const forecast = runForecast(forecastInput);
     const flexible = computeFlexibleMoney(forecast);
@@ -141,7 +133,13 @@ export class SnapshotsService {
       totalLongTermAssets: totals.long_term,
       totalDebt,
       upcomingDueAmount: forecast.totals.requiredOutgoingAmount,
-      attentionCount,
+      // Always 0 since the stored attention items were dropped (2026-08-29).
+      // Every signal is now DERIVED from the forecast, and a derived count is
+      // not reproducible — it depends on a forecast that will have moved by the
+      // time anyone reads this snapshot back — which is the same reason the
+      // count only ever froze STORED items. With none left to count, freezing 0
+      // is the honest value; the column stays so old snapshots keep their shape.
+      attentionCount: 0,
       forecastHorizonDays: horizonDays,
       upcomingIncomeAmount: forecast.totals.upcomingIncomeAmount,
       upcomingOutgoingAmount: forecast.totals.upcomingOutgoingAmount,

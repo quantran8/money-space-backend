@@ -39,6 +39,15 @@ export class MoneyEventsController {
     return this.moneyEventsService.getMoneyEventsSummary(householdId, month);
   }
 
+  /**
+   * Events sitting where their wallet's balance is negative, so the list can mark
+   * them. Declared before `:eventId` so "overdrafts" isn't read as an event id.
+   */
+  @Get('overdrafts')
+  listOverdraftEvents(@Param('householdId') householdId: string) {
+    return this.moneyEventsService.listOverdraftEvents(householdId);
+  }
+
   @Get(':eventId')
   getMoneyEvent(
     @Param('householdId') householdId: string,
@@ -78,6 +87,37 @@ export class MoneyEventsController {
     return this.moneyEventsService.accrueSavingInterestForAsset(
       householdId,
       assetId,
+    );
+  }
+
+  /**
+   * Advisory: what this edit would do to the wallets it touches, without writing
+   * it. The client shows the warning and asks for confirmation; the edit itself
+   * does not consult this, so a skipped preview never blocks a legitimate change.
+   * POST because the candidate payload is the input, not an addressable resource.
+   */
+  @Post(':eventId/preview')
+  previewMoneyEventUpdate(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+    @Body() payload: UpdateMoneyEventDto,
+  ) {
+    return this.moneyEventsService.previewMoneyEventUpdate(
+      householdId,
+      eventId,
+      payload,
+    );
+  }
+
+  /** Advisory: what deleting this event would do to its wallets. */
+  @Get(':eventId/delete-impact')
+  previewMoneyEventDelete(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.moneyEventsService.previewMoneyEventDelete(
+      householdId,
+      eventId,
     );
   }
 
