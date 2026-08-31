@@ -39,10 +39,12 @@
  *    not be subtracted. A completed one already moved the balance, so counting
  *    it here would charge it twice; `postponed` is excluded for the same reason
  *    the forecast excludes it, its date is no longer trusted.
- *  - **due within the month being reported** — a bill due in three months has
- *    not taken anything away from THIS month's saving. `through` is the
+ *  - **due within the window being reported** — a bill due in three months has
+ *    not taken anything away from what is being saved now. `through` is the
  *    boundary, so the caller decides the window rather than this file assuming
- *    one.
+ *    one. (It currently passes a rolling 30 days rather than the end of the
+ *    calendar month: standing on the 31st, a month boundary hid a bill due
+ *    tomorrow.)
  *  - **settling from a known wallet** — an outflow with no wallet, or one
  *    naming an asset absent from the map, cannot lower a value that was never
  *    counted.
@@ -51,9 +53,11 @@
  * has not arrived cannot already be behind a goal, and crediting it would let a
  * future salary inflate the month's contribution.
  *
- * Recurrence is NOT expanded. `expectedDate` is the current occurrence, and
- * within a single month a recurring series contributes at most that one — the
- * next occurrence lands after `through` by definition of the cadence.
+ * Recurrence is NOT expanded. `expectedDate` is the current occurrence, so a
+ * monthly series contributes at most one hit to a ~30-day window. A weekly or
+ * daily cadence would genuinely land more than once in that span and is
+ * therefore under-counted here; expanding occurrences is the fix, and it
+ * belongs with the forecast's expander rather than in this file.
  *
  * Pure: no clock, no database.
  */

@@ -353,6 +353,62 @@ describe('ForecastService.whatIf', () => {
     const result = await service.whatIf('hh-1', spend);
     expect(result.assumptions.map((a) => a.code)).toContain('horizon_days');
   });
+
+  /**
+   * The invariant the funding block is only readable under: the three semantic
+   * parts have to account for exactly the money that left the wallets. If they
+   * drift, the screen tells the household their spend came from somewhere it
+   * did not — which is worse than showing no breakdown at all.
+   */
+  it('splits the covered spend into free + pace + set-aside, with nothing lost', async () => {
+    const { service } = setup();
+
+    const result = await service.whatIf('hh-1', spend);
+    const { free, fromPace, fromSetAside } = result.fundingSource;
+
+    expect(free + fromPace + fromSetAside).toBe(
+      spend.amount - result.goalImpact.uncovered,
+    );
+    // The goal-facing halves are the SAME figures the goal block reports —
+    // one spend must not be costed two different ways.
+    expect(fromPace).toBe(result.goalImpact.totalPaceReduction);
+    expect(fromSetAside).toBe(result.goalImpact.totalSetAsideReduction);
+  });
+
+  it('names the wallets the money came out of, and never a wallet that gave nothing', async () => {
+    const { service } = setup();
+
+    const result = await service.whatIf('hh-1', spend);
+
+    // Untouched wallets are noise, not evidence.
+    expect(result.fundingSource.wallets.every((w) => w.taken > 0)).toBe(true);
+    // What the wallets gave up IS the covered spend — the literal and semantic
+    // splits describe one spend, not two.
+    expect(
+      result.fundingSource.wallets.reduce((sum, w) => sum + w.taken, 0),
+    ).toBe(spend.amount - result.goalImpact.uncovered);
+    // Named, not just identified: an asset id is not something a household can
+    // recognise as one of their own accounts.
+    expect(result.fundingSource.wallets[0]?.name).toBeTruthy();
+  });
+
+  it('reports the shortfall as uncovered rather than inventing money to spend', async () => {
+    const { service } = setup();
+
+    // Far beyond every wallet combined.
+    const result = await service.whatIf('hh-1', { ...spend, amount: 900 * M });
+    const { free, fromPace, fromSetAside, wallets } = result.fundingSource;
+
+    expect(result.goalImpact.uncovered).toBeGreaterThan(0);
+    // Still exact: the parts cover what actually left, and the rest is named
+    // as missing instead of being padded into `free`.
+    expect(free + fromPace + fromSetAside).toBe(
+      900 * M - result.goalImpact.uncovered,
+    );
+    expect(wallets.reduce((sum, w) => sum + w.taken, 0)).toBe(
+      900 * M - result.goalImpact.uncovered,
+    );
+  });
 });
 
 describe('ForecastService caching', () => {

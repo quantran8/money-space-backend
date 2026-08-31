@@ -58,6 +58,8 @@ function setup(
     goals?: FinancialGoal[];
     allocations?: GoalAssetAllocation[];
     assets?: Array<{ id: string; type: string; currentValue: number }>;
+    /** Scheduled money movements, for the outflow-impact cases. */
+    cashflowEvents?: unknown[];
   } = {},
 ) {
   const allocations = options.allocations ?? [];
@@ -104,11 +106,18 @@ function setup(
     findGoalProgressPoints: jest.fn(async () => []),
   } as never;
 
+  const cashflowEventsRepository = {
+    findCashflowEventsByHousehold: jest.fn(
+      async () => options.cashflowEvents ?? [],
+    ),
+  } as never;
+
   const service = new GoalsService(
     repository,
     prisma,
     assetsService,
     snapshotsRepository,
+    cashflowEventsRepository,
   );
   return {
     service,
@@ -953,5 +962,520 @@ describe('GoalsService — what an asset is backing', () => {
 
     expect(usage.items[0]).toMatchObject({ currentValue: 25 * M });
     expect(usage.freeAmount).toBe(75 * M);
+  });
+});
+
+/**
+ * What a scheduled spend costs a goal, and how far ahead the question reaches.
+ *
+ * The window used to be the end of the calendar month. Standing on the 31st,
+ * that made the section report a bill due TOMORROW as costing the goal nothing
+ * — true to the letter (the money has not moved) and useless in practice, since
+ * the closer a spend got, the less likely it was to be counted. A rolling
+ * horizon looks the same distance ahead on every day of the month.
+ */
+describe('GoalsService — scheduled outflow impact', () => {
+  const TCB = { id: 'tcb', type: 'bank_account', currentValue: 30 * M };
+
+  function wallet(over: Record<string, unknown> = {}) {
+    return {
+      id: 'evt-1',
+      householdId: 'hh-1',
+      name: 'Tiền nhà',
+      amount: 4 * M,
+      direction: 'outgoing',
+      expectedDate: '2026-08-31',
+      recurrence: 'once',
+      requirement: 'required',
+      certainty: 'confirmed',
+      status: 'expected',
+      attentionLevel: 'normal',
+      settlementAssetId: 'tcb',
+      ...over,
+    };
+  }
+
+  function withGoalOnTcb(cashflowEvents: unknown[]) {
+    return setup({
+      goal: goal({ id: 'goal-car', targetAmount: 100 * M }),
+      assets: [TCB],
+      allocations: [
+        allocation({
+          id: 'alloc-tcb',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          kind: 'fixed',
+          role: 'contribution',
+          allocatedAmount: 30 * M,
+        }),
+      ],
+      cashflowEvents,
+    });
+  }
+
+  beforeAll(() => {
+    // The last day of the month — the exact spot the month-boundary window went
+    // blind. Midday UTC so the household timezone lands on the same date.
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-31T05:00:00Z'));
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it('counts a spend due tomorrow, in the next calendar month', async () => {
+    const { service } = withGoalOnTcb([wallet({ expectedDate: '2026-09-01' })]);
+
+    const impact = await service.scheduledOutflowImpact('hh-1', 'goal-car');
+
+    // The reported bug returned null here: 1/9 fell outside a window that
+    // ended 31/8, so the goal claimed a 4tr spend one day away did not exist.
+    expect(impact).not.toBeNull();
+    expect(impact?.events).toHaveLength(1);
+    expect(impact?.outflowAmount).toBe(4 * M);
+    expect(impact?.projectedAmount).toBe(26 * M);
+  });
+
+  it('still counts a spend due today', async () => {
+    const { service } = withGoalOnTcb([wallet({ expectedDate: '2026-08-31' })]);
+
+    const impact = await service.scheduledOutflowImpact('hh-1', 'goal-car');
+
+    expect(impact?.projectedAmount).toBe(26 * M);
+  });
+
+  it('adds up spends on both sides of the month boundary', async () => {
+    const { service } = withGoalOnTcb([
+      wallet({ id: 'a', expectedDate: '2026-08-31' }),
+      wallet({ id: 'b', expectedDate: '2026-09-01', amount: 3 * M }),
+    ]);
+
+    const impact = await service.scheduledOutflowImpact('hh-1', 'goal-car');
+
+    expect(impact?.outflowAmount).toBe(7 * M);
+    expect(impact?.projectedAmount).toBe(23 * M);
+  });
+
+  // The horizon has to end somewhere, or the section would fold in spending the
+  // household has months to re-plan around.
+  it('ignores a spend beyond the horizon', async () => {
+    const { service } = withGoalOnTcb([wallet({ expectedDate: '2026-11-15' })]);
+
+    expect(await service.scheduledOutflowImpact('hh-1', 'goal-car')).toBeNull();
+  });
+});
+
+/**
+ * What the cashflow form tells a household a new spend will cost.
+ *
+ * The spend being entered is the SECOND claim on the wallet whenever a bill is
+ * already booked against it, and measuring it against the raw balance spends
+ * the same money twice. The reported case: a 30tr wallet with 27tr set aside, a
+ * 3tr/month pace, and a 4tr bill already scheduled. Typing another 30tr showed
+ * "đã dành 27,0tr → 0" — a loss the wallet cannot actually deliver, because 4tr
+ * of it is already going to the bill.
+ */
+describe('GoalsService — spend impact against a wallet with bills booked', () => {
+  const TCB = { id: 'tcb', type: 'bank_account', currentValue: 30 * M };
+
+  function bill(over: Record<string, unknown> = {}) {
+    return {
+      id: 'evt-bill',
+      householdId: 'hh-1',
+      name: 'Tiền nhà',
+      amount: 4 * M,
+      direction: 'outgoing',
+      expectedDate: '2026-08-31',
+      recurrence: 'once',
+      requirement: 'required',
+      certainty: 'confirmed',
+      status: 'expected',
+      attentionLevel: 'normal',
+      settlementAssetId: 'tcb',
+      ...over,
+    };
+  }
+
+  function withWallet(cashflowEvents: unknown[]) {
+    return setup({
+      goal: goal({
+        id: 'goal-car',
+        targetAmount: 100 * M,
+        plannedMonthlyContribution: 3 * M,
+      }),
+      assets: [TCB],
+      allocations: [
+        allocation({
+          id: 'alloc-tcb',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          kind: 'fixed',
+          role: 'contribution',
+          allocatedAmount: 27 * M,
+          monthlyContribution: 3 * M,
+        }),
+      ],
+      cashflowEvents,
+    });
+  }
+
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-31T05:00:00Z'));
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it('does not spend the booked bill twice', async () => {
+    const { service } = withWallet([bill()]);
+
+    const impact = await service.spendImpact('hh-1', 'tcb', 30 * M);
+
+    // 4tr of the wallet is already going to the bill, so only 26tr of goal
+    // money is there to lose — not the 27tr set aside plus a 3tr pace.
+    expect(impact.totalReduction).toBe(26 * M);
+    expect(impact.goals[0].after).toBe(0);
+  });
+
+  // With nothing booked the old answer was right, and must stay right.
+  it('uses the whole wallet when no bill is booked', async () => {
+    const { service } = withWallet([]);
+
+    const impact = await service.spendImpact('hh-1', 'tcb', 30 * M);
+
+    expect(impact.totalReduction).toBe(30 * M);
+  });
+
+  // A bill beyond the horizon has not claimed anything yet.
+  it('ignores a bill past the horizon', async () => {
+    const { service } = withWallet([bill({ expectedDate: '2026-12-01' })]);
+
+    const impact = await service.spendImpact('hh-1', 'tcb', 30 * M);
+
+    expect(impact.totalReduction).toBe(30 * M);
+  });
+
+  // The asset page needs the real balance: an unpaid bill has not left yet.
+  it('reports the true balance and the pending one side by side', async () => {
+    const { service } = withWallet([bill()]);
+
+    const usage = await service.assetGoalUsage('hh-1', 'tcb');
+
+    expect(usage.assetValue).toBe(30 * M);
+    expect(usage.pendingValue).toBe(26 * M);
+  });
+});
+
+/**
+ * Editing an event already booked against the wallet.
+ *
+ * `pendingValue` exists so a NEW spend is not costed against money a scheduled
+ * bill will already take. Editing that same bill is the mirror case: the amount
+ * being typed REPLACES it rather than adding to it, so leaving it in the
+ * subtraction charges it twice and reports a loss twice the real one.
+ */
+describe('GoalsService — spend impact while editing a booked event', () => {
+  const TCB = { id: 'tcb', type: 'bank_account', currentValue: 30 * M };
+
+  function bill(over: Record<string, unknown> = {}) {
+    return {
+      id: 'evt-bill',
+      householdId: 'hh-1',
+      name: 'Tiền nhà',
+      amount: 4 * M,
+      direction: 'outgoing',
+      expectedDate: '2026-08-31',
+      recurrence: 'once',
+      requirement: 'required',
+      certainty: 'confirmed',
+      status: 'expected',
+      attentionLevel: 'normal',
+      settlementAssetId: 'tcb',
+      ...over,
+    };
+  }
+
+  function withWallet() {
+    return setup({
+      goal: goal({ id: 'goal-car', targetAmount: 100 * M }),
+      assets: [TCB],
+      allocations: [
+        allocation({
+          id: 'alloc-tcb',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          kind: 'fixed',
+          role: 'contribution',
+          allocatedAmount: 27 * M,
+          monthlyContribution: 3 * M,
+        }),
+      ],
+      cashflowEvents: [bill()],
+    });
+  }
+
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-31T05:00:00Z'));
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it('does not subtract the event being edited', async () => {
+    const { service } = withWallet();
+
+    const editing = await service.spendImpact('hh-1', 'tcb', 10 * M, 'evt-bill');
+    const creating = await service.spendImpact('hh-1', 'tcb', 10 * M);
+
+    // Editing sees the whole 30tr — the bill's own 4tr is not taken out twice.
+    expect(editing.assetValue).toBe(30 * M);
+    // Creating a second spend still sees the wallet net of that bill.
+    expect(creating.assetValue).toBe(26 * M);
+  });
+
+  it('leaves pendingValue whole for the event under edit', async () => {
+    const { service } = withWallet();
+
+    const editing = await service.assetGoalUsage('hh-1', 'tcb', 'evt-bill');
+    const creating = await service.assetGoalUsage('hh-1', 'tcb');
+
+    expect(editing.pendingValue).toBe(30 * M);
+    expect(creating.pendingValue).toBe(26 * M);
+    // The real balance is unchanged either way — an unpaid bill has not left.
+    expect(editing.assetValue).toBe(30 * M);
+    expect(creating.assetValue).toBe(30 * M);
+  });
+
+  // An unrelated id must not disable the subtraction.
+  it('still subtracts when the excluded id matches nothing', async () => {
+    const { service } = withWallet();
+
+    const impact = await service.spendImpact('hh-1', 'tcb', 10 * M, 'evt-other');
+
+    expect(impact.assetValue).toBe(26 * M);
+  });
+});
+
+/**
+ * A PERCENT claim against a wallet with a bill already booked.
+ *
+ * The reported shape: tcb holds 30tr, the goal claims 90% of it (which is how
+ * the form records "27tr set aside on the day the goal was created"), the goal
+ * declares a 20tr/month pace, and a 4tr bill is already scheduled.
+ *
+ * A percent claim is a decision made ONCE, not a ratio that re-derives itself
+ * whenever the wallet moves. Lowering the wallet to 26tr and re-reading 90%
+ * against it reported 23,4tr set aside and a 2,6tr pace — shaving 3,6tr nobody
+ * spent, and showing a pace that should have been zero. The basis has to stay
+ * the wallet BEFORE the scheduled outflows while the cap carries them.
+ */
+describe('GoalsService — percent claim against a booked wallet', () => {
+  const TCB = { id: 'tcb', type: 'bank_account', currentValue: 30 * M };
+
+  function withPercentGoal(cashflowEvents: unknown[]) {
+    return setup({
+      goal: goal({
+        id: 'goal-car',
+        targetAmount: 100 * M,
+        plannedMonthlyContribution: 20 * M,
+      }),
+      assets: [TCB],
+      allocations: [
+        allocation({
+          id: 'alloc-tcb',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          kind: 'percent',
+          role: 'contribution',
+          allocatedAmount: null,
+          percent: 90,
+          monthlyContribution: 20 * M,
+        }),
+      ],
+      cashflowEvents,
+    });
+  }
+
+  function bill() {
+    return {
+      id: 'evt-bill',
+      householdId: 'hh-1',
+      name: 'thi lx',
+      amount: 4 * M,
+      direction: 'outgoing',
+      expectedDate: '2026-08-31',
+      recurrence: 'once',
+      requirement: 'required',
+      certainty: 'confirmed',
+      status: 'expected',
+      attentionLevel: 'normal',
+      settlementAssetId: 'tcb',
+    };
+  }
+
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-31T05:00:00Z'));
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it('keeps the set-aside figure whole and takes the bill out of the pace', async () => {
+    const { service } = withPercentGoal([bill()]);
+
+    const impact = await service.spendImpact('hh-1', 'tcb', 30 * M);
+    const [line] = impact.goals;
+
+    // 90% of the ORIGINAL 30tr, not of the lowered 26tr — never 23,4tr.
+    expect(line.setAsideReduction).toBe(26 * M);
+    // The 4tr bill already ate the 3tr of free room the pace could draw on, so
+    // there is no pace left for this spend to take — never 2,6tr.
+    expect(line.paceReduction).toBe(0);
+    expect(impact.totalReduction).toBe(26 * M);
+    // The wallet cannot cover a 30tr spend once the bill is accounted for.
+    expect(impact.exceedsWallet).toBe(true);
+  });
+
+  // Without the bill the pace has its 3tr of room, and the split shows it.
+  it('splits pace and set-aside when nothing is booked', async () => {
+    const { service } = withPercentGoal([]);
+
+    const impact = await service.spendImpact('hh-1', 'tcb', 30 * M);
+    const [line] = impact.goals;
+
+    expect(line.setAsideReduction).toBe(27 * M);
+    expect(line.paceReduction).toBe(3 * M);
+    expect(impact.totalReduction).toBe(30 * M);
+  });
+});
+
+/**
+ * A spend can only be squeezed by outflows that happen BEFORE it.
+ *
+ * The reported case: one bill of 4tr on 01/09, and the household types a spend
+ * dated 31/08. A rolling 30-day window counted the September bill against the
+ * August spend — an event in the future reaching back to take money from one in
+ * the past. The household reads the dates and sees the contradiction.
+ */
+describe('GoalsService — spend impact respects event ordering', () => {
+  const TCB = { id: 'tcb', type: 'bank_account', currentValue: 30 * M };
+
+  function withGoal() {
+    return setup({
+      goal: goal({
+        id: 'goal-car',
+        targetAmount: 400 * M,
+        plannedMonthlyContribution: 20 * M,
+      }),
+      assets: [TCB],
+      allocations: [
+        allocation({
+          id: 'alloc-tcb',
+          financialGoalId: 'goal-car',
+          assetId: 'tcb',
+          kind: 'percent',
+          role: 'contribution',
+          allocatedAmount: null,
+          percent: 90,
+          monthlyContribution: 20 * M,
+        }),
+      ],
+      // The one live event in the reported household: 4tr on 01/09.
+      cashflowEvents: [
+        {
+          id: 'evt-sep',
+          householdId: 'hh-1',
+          name: 'thi lx',
+          amount: 4 * M,
+          direction: 'outgoing',
+          expectedDate: '2026-09-01',
+          recurrence: 'once',
+          requirement: 'required',
+          certainty: 'confirmed',
+          status: 'expected',
+          attentionLevel: 'normal',
+          settlementAssetId: 'tcb',
+        },
+      ],
+    });
+  }
+
+  beforeAll(() => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-31T05:00:00Z'));
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
+  it('ignores a later bill when the spend is dated earlier', async () => {
+    const { service } = withGoal();
+
+    const usage = await service.assetGoalUsage(
+      'hh-1',
+      'tcb',
+      undefined,
+      '2026-08-31',
+    );
+
+    // The September bill has not happened yet on 31/08.
+    expect(usage.pendingValue).toBe(30 * M);
+  });
+
+  it('counts a bill dated on the same day as the spend', async () => {
+    const { service } = withGoal();
+
+    const usage = await service.assetGoalUsage(
+      'hh-1',
+      'tcb',
+      undefined,
+      '2026-09-01',
+    );
+
+    expect(usage.pendingValue).toBe(26 * M);
+  });
+
+  it('keeps the pace intact for the earlier spend', async () => {
+    const { service } = withGoal();
+
+    const impact = await service.spendImpact(
+      'hh-1',
+      'tcb',
+      30 * M,
+      undefined,
+      '2026-08-31',
+    );
+    const [line] = impact.goals;
+
+    // 90% of 30tr set aside, with 3tr of free room the pace can still draw on.
+    expect(line.setAsideReduction).toBe(27 * M);
+    expect(line.paceReduction).toBe(3 * M);
+  });
+
+  // With no date the 30-day horizon still applies — the form before a date is
+  // picked, and every other caller.
+  it('falls back to the horizon when no date is given', async () => {
+    const { service } = withGoal();
+
+    const usage = await service.assetGoalUsage('hh-1', 'tcb');
+
+    expect(usage.pendingValue).toBe(26 * M);
+  });
+
+  // A spend dated far out must not drag in bills beyond the horizon.
+  it('never looks past the 30-day horizon', async () => {
+    const { service } = withGoal();
+
+    const usage = await service.assetGoalUsage(
+      'hh-1',
+      'tcb',
+      undefined,
+      '2027-06-01',
+    );
+
+    expect(usage.pendingValue).toBe(26 * M);
   });
 });

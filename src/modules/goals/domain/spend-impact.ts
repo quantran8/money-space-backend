@@ -78,6 +78,24 @@ export function resolveSpendImpact(
   assetId: string,
   assetValue: number,
   amount: number,
+  /**
+   * What percent claims are a percentage OF, when `assetValue` has already been
+   * lowered by outflows the household has scheduled but not yet paid.
+   *
+   * A percent claim records a decision made once — "90% of this wallet is the
+   * car's" is how the form writes down 27tr on the day the goal was created. It
+   * is NOT a ratio that re-derives itself every time the wallet moves. Passing
+   * the lowered wallet as both value and basis re-read 90% against 26tr and
+   * reported 23,4tr set aside, shaving the goal by 3,6tr that nobody spent.
+   *
+   * So the basis stays the wallet BEFORE the scheduled outflows, while
+   * `assetValue` (the cap) carries them. The set-aside figure then holds and the
+   * outflow comes out of free room first — this month's contribution — which is
+   * the order the product wants and the household expects.
+   *
+   * Defaults to `assetValue`, which is right whenever nothing is scheduled.
+   */
+  percentBasisValue: number = assetValue,
 ): SpendImpactResult {
   const spend = Math.max(0, amount);
   // What the household is TOLD the wallet will hold — the true figure, negative
@@ -98,8 +116,12 @@ export function resolveSpendImpact(
   // not exist. The competition between goals for the same free room IS the rule
   // (`resolveWalletShareByGoal` orders by priority and splits by the declared
   // shares), and it only exists when they are resolved as a group.
-  const basis = new Map([[assetId, assetValue]]);
-  const before = resolveGoalCommittedPartsByGoal(claims, basis, basis);
+  const basis = new Map([[assetId, percentBasisValue]]);
+  const before = resolveGoalCommittedPartsByGoal(
+    claims,
+    new Map([[assetId, assetValue]]),
+    basis,
+  );
   // The percent basis stays the UNSPENT wallet on both sides: a spend must take
   // unassigned money first, not shave every percent claim proportionally while
   // free money is still sitting in the wallet. Paying 5tr out of a 52tr wallet
