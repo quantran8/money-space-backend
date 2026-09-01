@@ -8,6 +8,10 @@ import type { CalculationTerm } from '../../modules/assets/entities/calculation-
 import type { FinancialGoal } from '../../modules/goals/entities/financial-goal.entity';
 import type { FxRate } from '../../modules/market-data/entities/fx-rate.entity';
 import type { MarketPrice } from '../../modules/market-data/entities/market-price.entity';
+import {
+  GOLD_QUOTE_UNIT,
+  convertGoldPricePerUnit,
+} from '../../modules/market-data/gold-units';
 
 import type {
   MoneyDirection,
@@ -260,6 +264,24 @@ export function fxRateToVnd(
   return match?.rate ?? null;
 }
 
+/**
+ * A market quote restated into the unit a position is counted in.
+ *
+ * Only gold needs this: dealers publish one figure per lượng while holdings are
+ * kept in chỉ, lượng or gram. Every other class quotes in the same unit it is
+ * held in, and a quote already carrying the position's unit is returned as-is.
+ */
+function priceInPositionUnit(quote: MarketPrice, positionUnit: string): number {
+  if (quote.assetClass !== 'gold') return quote.price;
+  if (quote.unit.trim().toLowerCase() === positionUnit.trim().toLowerCase()) {
+    return quote.price;
+  }
+  // A quote in some other unit has no known ratio; the dealer's own figure
+  // beats a guessed divisor.
+  if (quote.unit.trim().toLowerCase() !== GOLD_QUOTE_UNIT) return quote.price;
+  return convertGoldPricePerUnit(quote.price, positionUnit);
+}
+
 export function computeCurrentValue(
   asset: Asset,
   marketPrices: MarketPrice[],
@@ -289,7 +311,12 @@ export function computeCurrentValue(
     );
     if (quote) {
       const fx = fxRateToVnd(fxRates, quote.quoteCurrency);
-      return fx === null ? 0 : quantity * quote.price * fx;
+      // The feed quotes gold per lượng whatever the holding counts in, so the
+      // price is restated into the position's unit before it meets `quantity`
+      // — a holding in chỉ was otherwise valued at ten times the figure the
+      // form showed. `purchasePrice`/`lastPrice` are already per-unit.
+      const price = priceInPositionUnit(quote, asset.marketPosition.unit);
+      return fx === null ? 0 : quantity * price * fx;
     }
 
     if (typeof purchasePrice === 'number' && Number.isFinite(purchasePrice)) {

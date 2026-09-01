@@ -39,6 +39,8 @@ describe('CashflowEventsService — completion (§18)', () => {
     const repository = {
       findCashflowEventById: jest.fn(async () => stored),
       updateCashflowEvent,
+      deleteCashflowEvent: jest.fn(async () => undefined),
+      unlinkCashflowEventFromMoneyEvents: jest.fn(async () => undefined),
       createId: () => 'new-id',
       assertHousehold: jest.fn(async () => ({}) as never),
     } as never;
@@ -61,7 +63,13 @@ describe('CashflowEventsService — completion (§18)', () => {
       moneyEvents,
       assets,
     );
-    return { service, updateCashflowEvent, createMoneyEvent, getAssetDetail };
+    return {
+      service,
+      repository,
+      updateCashflowEvent,
+      createMoneyEvent,
+      getAssetDetail,
+    };
   }
 
   it('closes a one-off and leaves its date alone', async () => {
@@ -278,6 +286,48 @@ describe('CashflowEventsService — completion (§18)', () => {
       }),
     ).rejects.toThrow(BadRequestException);
   });
+
+  describe('debt-derived events are read-only', () => {
+    it('refuses to edit an event that belongs to a debt', async () => {
+      const { service, updateCashflowEvent } = setup({ debtId: 'debt-1' });
+
+      await expect(
+        service.updateCashflowEvent('hh-1', 'cf-1', { amount: 999 }),
+      ).rejects.toThrow(ConflictException);
+      expect(updateCashflowEvent).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete an event that belongs to a debt', async () => {
+      const { service, repository } = setup({ debtId: 'debt-1' });
+
+      await expect(
+        service.deleteCashflowEvent('hh-1', 'cf-1'),
+      ).rejects.toThrow(ConflictException);
+      expect(
+        (repository as { deleteCashflowEvent: jest.Mock }).deleteCashflowEvent,
+      ).not.toHaveBeenCalled();
+    });
+
+    // Recording that a payment happened is not an edit of the plan — the whole
+    // point of the reminder is that it can be completed.
+    it('still allows completing a debt repayment', async () => {
+      const { service } = setup({ debtId: 'debt-1', recurrence: 'once' });
+
+      const result = await service.completeCashflowEvent('hh-1', 'cf-1', {
+        assetId: 'asset-vcb',
+      });
+
+      expect(result.event.status).toBe('completed');
+    });
+
+    it('leaves a normal event editable', async () => {
+      const { service, updateCashflowEvent } = setup({ debtId: null });
+
+      await service.updateCashflowEvent('hh-1', 'cf-1', { amount: 999 });
+
+      expect(updateCashflowEvent).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe('CashflowEventsService — validation (§18, §30)', () => {
@@ -408,4 +458,10 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
       service.createCashflowEvent('hh-1', { ...valid, ...patch }),
     ).rejects.toThrow(BadRequestException);
   });
+
+  /**
+   * A repayment reminder is generated FROM its debt and regenerated whenever the
+   * debt's schedule changes, so a hand edit would be silently reverted and a
+   * hand delete would reappear. The debt is the only place to change them.
+   */
 });

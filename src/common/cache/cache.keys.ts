@@ -47,7 +47,9 @@ export const cacheKeys = {
     symbol: string,
     market: string,
     quoteCurrency: string,
-  ) => `market:quote:${assetClass}:${symbol}:${market}:${quoteCurrency}`,
+    unit: string,
+  ) =>
+    `market:quote:${assetClass}:${symbol}:${market}:${quoteCurrency}:${unit}`,
 } as const;
 
 /** Entry lifetimes, in seconds. */

@@ -124,6 +124,34 @@ the combination that makes a contractual repayment count toward obligation
 coverage. Bulk-inserted in one round-trip to keep the debt-create transaction
 short. See [[debts]].
 
+### They are read-only outside the debt
+
+A repayment reminder is **derived**, not authored: any change to the debt's
+cadence, anchor, term or instalment amount deletes the still-open reminders
+(`deleteOpenCashflowEventsByDebt`) and regenerates them. A hand edit would
+therefore be silently reverted by the next debt edit, and a hand delete would
+reappear.
+
+So `assertNotDebtDerived` rejects (**409**) `updateCashflowEvent`,
+`deleteCashflowEvent`, `postponeCashflowEvent` and `cancelCashflowEvent` for any
+event carrying a `debtId` — **every** lender type, not just
+`bank_institution`. Change the debt instead.
+
+Two things are deliberately NOT blocked:
+
+- **Completing** one. Recording that a payment happened is not an edit of the
+  plan, and is the whole point of the reminder.
+- The **debt-driven** paths (`updateOpenCashflowEventAmounts`,
+  `deleteOpenCashflowEventsByDebt`), which reach the repository directly and are
+  how the regeneration itself runs.
+
+Do not confuse this with the money-events rule in [[debts]]: that one governs
+*recorded* repayments (history, where `relative`/`other` stay editable and
+rebalance the next instalment). This governs the *future reminders*.
+
+The UI hides the actions rather than letting them fail — the forecast row and
+the overdue row carry a `debt` marker saying why, on both web and mobile.
+
 ## Migration notes (from `upcoming_payments`)
 
 Renames: `due_date` → `expected_date`, `frequency` → `recurrence`, `paid_*` →

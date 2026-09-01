@@ -12,6 +12,12 @@ import type { MarketDataRepository } from './repositories/market-data.repository
 import type { MarketPrice } from './entities/market-price.entity';
 import type { FxCounterRate } from './entities/fx-rate.entity';
 import type { GoldPrice } from './entities/gold-price.entity';
+import {
+  GOLD_QUOTE_UNIT,
+  convertGoldPricePerUnit,
+  goldPricesByUnit,
+  normalizeGoldUnit,
+} from './gold-units';
 import { COMMODITY_PROVIDER } from './providers/commodity-provider.interface';
 import type { CommodityProvider } from './providers/commodity-provider.interface';
 import { PRICE_PROVIDER } from './providers/price-provider.interface';
@@ -177,13 +183,26 @@ export class MarketDataService {
       query.quoteCurrency?.trim() || (isVnd ? 'VND' : 'USD')
     ).toUpperCase();
 
+    // Gold is quoted per lượng but held in chỉ/lượng/gram. A gold quote carries
+    // every unit's price in `unitPrices`, so a caller that switches units needs
+    // no second request; `unit` only picks which one `price` states, and stays
+    // in the cache key because `price` varies with it. See
+    // memory/asset-valuation.md.
+    const unit = normalizeGoldUnit(query.unit);
+
     return this.cache.wrap(
-      cacheKeys.quote(assetClass, symbol.toUpperCase(), market, quoteCurrency),
+      cacheKeys.quote(
+        assetClass,
+        symbol.toUpperCase(),
+        market,
+        quoteCurrency,
+        unit,
+      ),
       async () => {
         // Gold and foreign currency are priced by the commodity feed, not the
         // instrument providers — they have no ticker to look up.
         if (assetClass === 'gold' || assetClass === 'foreign_currency') {
-          return this.commodityQuote(assetClass, symbol);
+          return this.commodityQuote(assetClass, symbol, unit);
         }
         const quotes = await this.priceProvider.getLatestPrices([
           {
@@ -211,6 +230,7 @@ export class MarketDataService {
   private async commodityQuote(
     assetClass: 'gold' | 'foreign_currency',
     symbol: string,
+    unit: string = GOLD_QUOTE_UNIT,
   ): Promise<MarketPrice | null> {
     const priceTime = new Date().toISOString();
 
@@ -230,9 +250,13 @@ export class MarketDataService {
       return {
         assetClass: 'gold',
         symbol: match.name,
-        price,
-        // Dealers quote per lượng; the form converts for chỉ/gram holdings.
-        unit: 'lượng',
+        // Dealers quote per lượng; restated here into the unit asked for, so
+        // the price and the `unit` beside it always agree.
+        price: convertGoldPricePerUnit(price, unit),
+        unit,
+        // Every unit rides along, so switching chỉ → gram in the form is a
+        // lookup rather than another request.
+        unitPrices: goldPricesByUnit(price),
         quoteCurrency: 'VND',
         priceTime: match.priceTime || priceTime,
         source: match.source,

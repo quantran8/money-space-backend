@@ -367,6 +367,54 @@ describe('MarketDataService.getQuote (asset-create)', () => {
     return { service, getLatestPrices };
   }
 
+  /**
+   * The dealer feed quotes one figure per lượng. A gold quote carries the whole
+   * set, so switching the form's unit costs no second request — and the price
+   * for the unit asked for is the backend's own, never rescaled by the caller.
+   */
+  it('ships every unit price with a gold quote', async () => {
+    const cache = fakeCache();
+    const service = new MarketDataService(
+      {
+        getFxRates: jest.fn().mockResolvedValue([]),
+        getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+      },
+      { getLatestPrices: jest.fn().mockResolvedValue([]) },
+      { listSymbols: jest.fn().mockResolvedValue([]) },
+      {
+        getGoldPrices: jest.fn().mockResolvedValue([
+          {
+            name: 'VÀNG MIẾNG SJC',
+            brand: 'Vàng SJC',
+            karat: '',
+            fineness: '',
+            buyPrice: 11_000_000,
+            sellPrice: 12_000_000,
+            priceTime: '2026-08-31T00:00:00.000Z',
+            source: 'giavangnet',
+          },
+        ]),
+        getFxCounterRates: jest.fn().mockResolvedValue([]),
+      },
+      cache,
+    );
+
+    const quote = await service.getQuote({
+      assetClass: 'gold',
+      symbol: 'VÀNG MIẾNG SJC',
+      unit: 'chỉ',
+    });
+
+    // `price`/`unit` state the one asked for; `unitPrices` carries them all.
+    expect(quote?.price).toBe(1_200_000);
+    expect(quote?.unit).toBe('chỉ');
+    expect(quote?.unitPrices).toEqual({
+      chỉ: 1_200_000,
+      lượng: 12_000_000,
+      gram: 320_000,
+    });
+  });
+
   it('prices a symbol the household does not hold yet', async () => {
     const cache = fakeCache();
     const { service, getLatestPrices } = buildQuoteService(cache);
@@ -424,7 +472,7 @@ describe('MarketDataService.getQuote (asset-create)', () => {
 
     expect(getLatestPrices).toHaveBeenCalledTimes(1);
     expect(
-      cache.store.has(cacheKeys.quote('stock', 'VNM', 'HOSE', 'VND')),
+      cache.store.has(cacheKeys.quote('stock', 'VNM', 'HOSE', 'VND', 'lượng')),
     ).toBe(true);
   });
 
