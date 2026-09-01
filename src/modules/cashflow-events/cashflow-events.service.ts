@@ -100,6 +100,7 @@ export class CashflowEventsService {
     payload: UpdateCashflowEventDto,
   ) {
     const event = await this.ensureCashflowEvent(householdId, eventId);
+    this.assertNotDebtDerived(event, 'edited');
     const direction = payload.direction ?? event.direction;
     const next: CashflowEvent = {
       ...event,
@@ -146,7 +147,8 @@ export class CashflowEventsService {
   }
 
   async deleteCashflowEvent(householdId: string, eventId: string) {
-    await this.ensureCashflowEvent(householdId, eventId);
+    const event = await this.ensureCashflowEvent(householdId, eventId);
+    this.assertNotDebtDerived(event, 'deleted');
     // The soft-delete and the money-event unlink must land together.
     await this.prisma.runInTransaction(async () => {
       await this.cashflowEventsRepository.deleteCashflowEvent(eventId);
@@ -285,6 +287,7 @@ export class CashflowEventsService {
     payload: { newExpectedDate: string; note?: string },
   ) {
     const event = await this.ensureCashflowEvent(householdId, eventId);
+    this.assertNotDebtDerived(event, 'postponed');
     if (!payload.newExpectedDate) {
       throw new BadRequestException('newExpectedDate is required');
     }
@@ -307,6 +310,7 @@ export class CashflowEventsService {
     payload: { note?: string } = {},
   ) {
     const event = await this.ensureCashflowEvent(householdId, eventId);
+    this.assertNotDebtDerived(event, 'cancelled');
     const next: CashflowEvent = {
       ...event,
       status: 'cancelled',
@@ -434,6 +438,30 @@ export class CashflowEventsService {
     // event.settlementAssetId` and rejects a completion that names neither. So
     // nothing settles into a silent no-op; the question is asked at the moment
     // the household can actually answer it.
+  }
+
+  /**
+   * A repayment reminder is DERIVED from its debt, not authored by the
+   * household: `createRepaymentSchedule` generates the series, and any change
+   * to the cadence, anchor, term or instalment amount deletes the still-open
+   * reminders and regenerates them. Editing one by hand would therefore be
+   * silently reverted by the next debt edit, and deleting one would reappear —
+   * so the debt is the only place these can be changed.
+   *
+   * This guards the two entry points a user reaches. The debt-driven paths
+   * (`updateOpenCashflowEventAmounts`, `deleteOpenCashflowEventsByDebt`) go
+   * straight to the repository and are deliberately not blocked, and neither is
+   * completion: recording that a payment happened is not an edit of the plan.
+   */
+  private assertNotDebtDerived(
+    event: CashflowEvent,
+    verb: 'edited' | 'deleted' | 'postponed' | 'cancelled',
+  ) {
+    if (event.debtId) {
+      throw new ConflictException(
+        `Cashflow event "${event.id}" belongs to a debt and cannot be ${verb} directly. Change the debt instead.`,
+      );
+    }
   }
 
   private async ensureCashflowEvent(householdId: string, eventId: string) {

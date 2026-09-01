@@ -56,6 +56,49 @@ export interface WhatIfSideResult {
   goal: GoalProjection | null;
 }
 
+/**
+ * One wallet's part in paying for the spend.
+ *
+ * The drain map is already computed to cost the goals; without naming the
+ * wallets it stays an internal step, and the household is left to trust a
+ * figure they cannot check. Naming them turns "mục tiêu giảm 2tr" into
+ * something they can verify against the accounts they actually hold.
+ */
+export interface WhatIfWalletDraw {
+  assetId: string;
+  name: string;
+  /** What the wallet held before the spend — the after-outflows value. */
+  before: number;
+  /** Taken from this wallet. Always > 0: untouched wallets are not listed. */
+  taken: number;
+}
+
+/**
+ * Where the money comes from, in the two vocabularies that answer different
+ * questions.
+ *
+ * `free` / `fromPace` / `fromSetAside` is the SEMANTIC split: what kind of
+ * money gave way. It is the answer to "did this cost me anything that was
+ * promised", and it is the one that decides whether a purchase feels
+ * affordable.
+ *
+ * `wallets` is the LITERAL split: which accounts it came out of. Secondary,
+ * because the household did not name a wallet — the simulation chose — so it
+ * belongs behind a disclosure rather than in the headline.
+ *
+ * The two always describe one spend: both are derived from the same `drain`.
+ */
+export interface WhatIfFundingSource {
+  /** Money no goal had claimed. Spent first, everywhere, before any goal. */
+  free: number;
+  /** Mirrors `goalImpact.totalPaceReduction` — this month's contribution. */
+  fromPace: number;
+  /** Mirrors `goalImpact.totalSetAsideReduction` — money already set aside. */
+  fromSetAside: number;
+  /** Wallets that actually gave money up, most-drained first. */
+  wallets: WhatIfWalletDraw[];
+}
+
 export interface WhatIfResult {
   householdId: string;
   asOfDate: IsoDate;
@@ -77,6 +120,13 @@ export interface WhatIfResult {
      */
     uncovered: number;
   };
+  /**
+   * Where the spend actually comes from — semantic split plus the wallets.
+   *
+   * Derived from the same `drain` as `goalImpact`, so the two can never
+   * disagree about what this one spend costs.
+   */
+  fundingSource: WhatIfFundingSource;
   /**
    * Upcoming obligations this spend would leave uncovered, named.
    *
@@ -451,6 +501,53 @@ export class ForecastService {
       drain.values,
     );
 
+    /**
+     * The literal half of "where did this come from": which wallets gave money
+     * up, and how much each one lost.
+     *
+     * Read off the same `drain` the goal cost came from rather than recomputed,
+     * so the wallets on screen always add up to the spend the goals were
+     * charged for. Untouched wallets are dropped — a list of accounts that gave
+     * nothing is noise, not evidence.
+     */
+    const walletNames = new Map(
+      beforeForecast.liquidSources.map((source) => [source.assetId, source.name]),
+    );
+    const wallets: WhatIfWalletDraw[] = [...walletsBefore]
+      .map(([assetId, before]) => ({
+        assetId,
+        name: walletNames.get(assetId) ?? assetId,
+        before,
+        taken: before - (drain.values.get(assetId) ?? before),
+      }))
+      .filter((wallet) => wallet.taken > 0)
+      .sort((left, right) => right.taken - left.taken);
+
+    /**
+     * Free money is what is left of the spend once the goals' share is named.
+     *
+     * Subtracted rather than measured: `goalImpact` already resolved exactly
+     * what the goals gave up, and re-deriving the free part from claims would
+     * let the two figures drift apart on rounding — the block would then say
+     * the money came from somewhere it did not.
+     *
+     * Only the COVERED part is split, so the three parts sum to what actually
+     * left the wallets; the shortfall stays in `uncovered`, which is a
+     * different fact and already has its own line.
+     */
+    const covered = Math.max(0, amount - drain.uncovered);
+    const fundingSource: WhatIfFundingSource = {
+      free: Math.max(
+        0,
+        covered -
+          goalImpact.totalPaceReduction -
+          goalImpact.totalSetAsideReduction,
+      ),
+      fromPace: goalImpact.totalPaceReduction,
+      fromSetAside: goalImpact.totalSetAsideReduction,
+      wallets,
+    };
+
     return {
       householdId,
       asOfDate,
@@ -460,6 +557,7 @@ export class ForecastService {
       before,
       after,
       goalImpact: { ...goalImpact, uncovered: drain.uncovered },
+      fundingSource,
       /**
        * WHICH bills stop being payable — not just that something does.
        *

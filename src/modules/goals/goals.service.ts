@@ -10,7 +10,7 @@ import {
   NO_TARGET_DATE,
 } from './entities/financial-goal.entity';
 import { toGoalCard } from '../../common/utils/money-space.utils';
-import { endOfMonthIso, todayInTimeZone } from '../../common/utils/clock';
+import { addDaysIso, minIso, todayInTimeZone } from '../../common/utils/clock';
 import {
   projectGoal,
   projectGoalDelayFromSpend,
@@ -56,7 +56,36 @@ import type { GoalsRepository } from './repositories/goals.repository.interface'
 import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
 import type { CashflowEventsRepository } from '../cashflow-events/repositories/cashflow-events.repository.interface';
 import { walletValuesAfterPendingOutflows } from './domain/wallet-values-after-pending';
+import { resolveSpendAftermath } from './domain/spend-aftermath';
 import { LIVE_CASHFLOW_STATUSES } from '../cashflow-events/entities/cashflow-event.entity';
+
+/**
+ * How far ahead `scheduledOutflowImpact` looks. Roughly a month, so the section
+ * still answers "what is coming for this goal" without stretching into spends
+ * the household has time to re-plan around.
+ */
+const SCHEDULED_OUTFLOW_HORIZON_DAYS = 30;
+
+/**
+ * The last date whose scheduled outflows count against a spend being entered.
+ *
+ * Bounded by the spend's OWN date, because only what happens before it can take
+ * money from it. Entering a spend on the 31st while a bill sits on the 1st of
+ * next month used to report the bill as already having eaten this month's
+ * contribution — an event in the future reaching back to squeeze one in the
+ * past, which reads as simply wrong.
+ *
+ * Still capped at the 30-day horizon: a spend dated a year out must not drag in
+ * a year of bills, or the warning stops describing anything the household can
+ * act on. With no date (the form before one is picked) the horizon stands.
+ */
+function spendImpactWindowEnd(asOfDate: string | undefined): string {
+  const horizon = addDaysIso(
+    todayInTimeZone(),
+    SCHEDULED_OUTFLOW_HORIZON_DAYS,
+  );
+  return asOfDate ? minIso(asOfDate, horizon) : horizon;
+}
 
 @Injectable()
 export class GoalsService {
@@ -162,15 +191,49 @@ export class GoalsService {
    * (`sumAllocatedAgainstAsset`), so what this page reports as free is exactly
    * what a new claim would be allowed to take.
    */
-  async assetGoalUsage(householdId: string, assetId: string) {
+  async assetGoalUsage(
+    householdId: string,
+    assetId: string,
+    /**
+     * A scheduled event to leave OUT of `pendingValue`.
+     *
+     * The cashflow form passes the event it is editing. That event is already
+     * booked against the wallet, so without excluding it the form would cost
+     * the edit against a balance its own amount has already been taken out of
+     * — charging it twice, the mirror of the bug `pendingValue` exists to fix.
+     */
+    excludeEventId?: string,
+    /**
+     * The date of the spend being entered, bounding which scheduled outflows
+     * count against it.
+     *
+     * A spend on the 31st cannot be squeezed by a bill due on the 1st of next
+     * month — that bill has not happened yet when this one lands. Costing it
+     * against a rolling 30-day window read as plainly wrong to the household:
+     * the later event was quietly taking money from the earlier one.
+     *
+     * Falls back to the 30-day horizon when no date is given, which is what the
+     * form shows before a date is chosen.
+     */
+    asOfDate?: string,
+  ) {
     await this.goalsRepository.assertHousehold(householdId);
-    const [goals, allocations, assetValues] = await Promise.all([
-      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
-      this.goalsRepository.findAllocationsByHousehold(householdId),
-      this.assetValueMap(householdId),
-    ]);
+    const [goals, allocations, assetValues, cashflowEvents] = await Promise.all(
+      [
+        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+        this.goalsRepository.findAllocationsByHousehold(householdId),
+        this.assetValueMap(householdId),
+        this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+      ],
+    );
 
     const assetValue = assetValues.get(assetId) ?? 0;
+    const pendingValue =
+      walletValuesAfterPendingOutflows(
+        assetValues,
+        cashflowEvents.filter((event) => event.id !== excludeEventId),
+        spendImpactWindowEnd(asOfDate),
+      ).get(assetId) ?? 0;
     const byGoal = new Map(goals.map((goal) => [goal.id, goal]));
     const onAsset = allocations.filter(
       (allocation) => allocation.assetId === assetId,
@@ -252,6 +315,18 @@ export class GoalsService {
       householdId,
       assetId,
       assetValue,
+      /**
+       * The wallet once money already scheduled to leave it is out.
+       *
+       * Beside `assetValue`, never instead of it, because the two consumers of
+       * this endpoint ask different questions. The asset page asks "what is in
+       * this wallet", and the answer is the real balance — a bill that has not
+       * been paid has not left. The cashflow form asks "what can a NEW spend
+       * draw on", and there the scheduled bill is already spoken for: costing a
+       * second spend against money the first one will take reports a goal
+       * losing set-aside twice over.
+       */
+      pendingValue,
       claimedAmount: claimed,
       freeAmount: Math.max(0, assetValue - claimed),
       // Floored at 0: a wallet can now hold a NEGATIVE balance (an overdrawn
@@ -460,13 +535,41 @@ export class GoalsService {
    * Goal names are resolved here so the caller can render a sentence without a
    * second round trip.
    */
-  async spendImpact(householdId: string, assetId: string, amount: number) {
+  async spendImpact(
+    householdId: string,
+    assetId: string,
+    amount: number,
+    /** The event being edited, left out of the pending subtraction. */
+    excludeEventId?: string,
+    /** The spend's own date — see `assetGoalUsage`. */
+    asOfDate?: string,
+  ) {
     await this.goalsRepository.assertHousehold(householdId);
-    const [goals, allocations, assetValues] = await Promise.all([
-      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
-      this.goalsRepository.findAllocationsByHousehold(householdId),
-      this.assetValueMap(householdId),
-    ]);
+    const [goals, allocations, assetValues, cashflowEvents] = await Promise.all(
+      [
+        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+        this.goalsRepository.findAllocationsByHousehold(householdId),
+        this.assetValueMap(householdId),
+        this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+      ],
+    );
+
+    /**
+     * Measured against the wallet with money already scheduled to leave it
+     * taken out — NOT the raw balance.
+     *
+     * A spend being entered is the second claim on this wallet, not the first.
+     * Against the raw balance the form told a household with a 30tr wallet and
+     * a 4tr bill already booked that a further 30tr would cost the goal its
+     * whole 27tr of set-aside — spending the same 4tr twice, and reporting a
+     * loss larger than the wallet can actually deliver. The same horizon the
+     * goal screen uses, so the two cannot disagree about one wallet.
+     */
+    const pendingValues = walletValuesAfterPendingOutflows(
+      assetValues,
+      cashflowEvents.filter((event) => event.id !== excludeEventId),
+      spendImpactWindowEnd(asOfDate),
+    );
 
     const impact = resolveSpendImpact(
       goals.map((goal) => ({
@@ -477,16 +580,37 @@ export class GoalsService {
           .map(toAllocationInput),
       })),
       assetId,
-      assetValues.get(assetId) ?? 0,
+      pendingValues.get(assetId) ?? 0,
       amount,
+      // The percent basis stays the wallet BEFORE the scheduled outflows: a
+      // percent claim records what was set aside when the goal was created, not
+      // a ratio to re-read each time a bill is booked.
+      assetValues.get(assetId) ?? 0,
     );
 
     const byId = new Map(goals.map((goal) => [goal.id, goal]));
     const today = todayInTimeZone();
 
+    /**
+     * What this spend leaves for the outflows scheduled after it.
+     *
+     * The impact figures above stop at the spend's own date, so nothing there
+     * can say that emptying the wallet today leaves next week's bill unpayable.
+     * This walks forward from the balance the spend leaves behind.
+     */
+    const aftermath = resolveSpendAftermath(
+      cashflowEvents,
+      assetId,
+      impact.assetValueAfter,
+      asOfDate ?? today,
+      addDaysIso(today, SCHEDULED_OUTFLOW_HORIZON_DAYS),
+      excludeEventId,
+    );
+
     return {
       householdId,
       ...impact,
+      aftermath,
       goals: impact.goals.map((goal) => {
         const record = byId.get(goal.goalId);
 
@@ -1142,7 +1266,15 @@ export class GoalsService {
       this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
     ]);
 
-    const through = endOfMonthIso(todayInTimeZone());
+    // A rolling 30-day window, not the end of the calendar month. The month
+    // boundary is an accounting line, not one the household lives on: standing
+    // on the 31st it reported a bill due tomorrow as costing the goal nothing,
+    // so the section went blind exactly when the spend was most imminent. A
+    // fixed horizon looks the same distance ahead every day.
+    const through = addDaysIso(
+      todayInTimeZone(),
+      SCHEDULED_OUTFLOW_HORIZON_DAYS,
+    );
     const projectedValues = walletValuesAfterPendingOutflows(
       assetValues,
       cashflowEvents,
@@ -1208,7 +1340,7 @@ export class GoalsService {
     return {
       householdId,
       goalId,
-      /** Last day covered — the end of the current month. */
+      /** Last day covered — 30 days out, so the client can name the window. */
       throughDate: through,
       events,
       outflowAmount: events.reduce((sum, event) => sum + event.amount, 0),
@@ -1216,11 +1348,11 @@ export class GoalsService {
       currentAmount,
       projectedAmount,
       /**
-       * This month's contribution, now and after. The DECLARED pace is left
-       * alone: it is what the household committed to, and the projection here
-       * describes this month only — the wallet refills next month, so carrying
-       * a squeezed month into the long-range chart would report a pessimistic
-       * finish date the household never chose.
+       * The contribution these wallets can carry, now and after. The DECLARED
+       * pace is left alone: it is what the household committed to, and the
+       * projection here covers one horizon only — the wallets refill, so
+       * carrying a squeezed stretch into the long-range chart would report a
+       * pessimistic finish date the household never chose.
        */
       plannedMonthlyContribution: goal.plannedMonthlyContribution,
       currentPace: currentPace?.amount ?? 0,

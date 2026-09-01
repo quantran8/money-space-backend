@@ -227,10 +227,47 @@ Repo methods: `findAssetValueHistory` (by date, the AS_OF point),
 `insertAssetValueHistory`, `deleteAssetValueHistory`,
 `deleteAssetValueHistoryByMoneyEvent`.
 
+## Gold is quoted per lượng but held in chỉ, lượng or gram
+
+Vietnamese dealers publish **one** figure per product, per **lượng** (1 lượng =
+10 chỉ = 37.5g). Households count their holdings in whichever unit they bought
+in, so most positions have no quote of their own — the other units are derived
+from the quoted one.
+
+**The backend owns that derivation.** `GET /market-data/quote` returns a gold
+quote carrying **every** unit's price in `unitPrices` (`chỉ`, `lượng`, `gram`),
+while `price`/`unit` state the one asked for via the optional `unit` param. The
+feed publishes a single number, so all three are the same fact — a form
+switching units reads across the map instead of firing another request per unit.
+`market-data/gold-units.ts` holds the only ratio table; `computeCurrentValue`
+restates a per-lượng quote into the position's unit before multiplying by
+`quantity`.
+
+Why it is centralized: the frontend used to keep its **own** copy of the table
+and divide the quote itself, while the backend valued the position at the raw
+per-lượng figure. The two disagreed by exactly the unit's ratio — a holding in
+chỉ was prefilled at the right price in the form and then valued at **ten times**
+it (37.5x for gram) everywhere else: the asset list, the dashboard, net worth.
+The form's copy is gone; a second table anywhere reintroduces the divergence.
+
+Rules that follow from this:
+
+- A unit outside the table returns the dealer's figure **unchanged**. Records
+  saved before the unit picker existed carry free-text units, and a guessed
+  divisor is worse than the quoted number.
+- The quote **cache key includes the unit** — `price` still varies with it, so
+  otherwise a chỉ quote is served to a lượng request, the same bug through a
+  different door. `unitPrices` is identical across those entries.
+- The form keys its prefill on the **chosen** unit, not the quote's: one
+  response now covers all three, so keying on `quote.unit` would stop
+  re-prefilling when the user switches.
+- `purchasePrice` and `lastPrice` are already stored **per the position's own
+  unit**; only the shared market-cache quote needs restating.
+
 ## Where it lives in code
 
 - **frontend-web**: `src/features/assets/model/assets.ts` (`valuationModeForType`, `defaultLiquidityForType`, `computeCurrentValue`, `computeMaturityValue`). Market pricing stubbed in `src/features/assets/api/assets.repository.ts` (`latestPrice→null`, `fxToVnd→1`). Asset detail page + value-history chart: `src/features/assets/ui/asset-detail-page.tsx`, `use-asset-detail.ts` (reads the `value-history` endpoint), `asset-value-chart.tsx`.
-- **backend**: `src/common/utils/money-space.utils.ts` (`VALUATION_MODE_BY_TYPE`, `computeCurrentValue`, `fxRateToVnd`, `computeLiquidityTotals`); `src/modules/assets/` (`normalizeAsset`, `upsertCurrentValuation`).
+- **backend**: `src/common/utils/money-space.utils.ts` (`VALUATION_MODE_BY_TYPE`, `computeCurrentValue`, `priceInPositionUnit`, `fxRateToVnd`, `computeLiquidityTotals`); `src/modules/assets/` (`normalizeAsset`, `upsertCurrentValuation`); `src/modules/market-data/gold-units.ts` (the lượng/chỉ/gram ratios — the single copy).
 - **mobile-app**: to be ported — must mirror the same tables and formulas.
 
 ## Enums

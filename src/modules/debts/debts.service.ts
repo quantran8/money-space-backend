@@ -264,7 +264,7 @@ export class DebtsService {
         continue;
       }
       events.push({
-        name: `Tra no: ${debt.name}`,
+        name: `Trả nợ: ${debt.name}`,
         amount,
         // A scheduled repayment is money LEAVING on a known date under a
         // contract: outgoing, required, and confirmed. That combination is what

@@ -78,7 +78,7 @@ describe('MarketDataController caching', () => {
     ],
     [
       'quote',
-      cacheKeys.quote('stock', 'VNM', 'HOSE', 'VND'),
+      cacheKeys.quote('stock', 'VNM', 'HOSE', 'VND', 'lượng'),
       (c: MarketDataController) =>
         c.getQuote({ assetClass: 'stock', symbol: 'VNM', market: 'HOSE' }),
     ],

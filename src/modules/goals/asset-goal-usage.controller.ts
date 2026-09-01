@@ -24,8 +24,17 @@ export class AssetGoalUsageController {
   assetGoalUsage(
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
+    /** The event being edited, excluded from `pendingValue`. */
+    @Query('excludeEventId') excludeEventId?: string,
+    /** The spend's own date, bounding which scheduled outflows count. */
+    @Query('asOfDate') asOfDate?: string,
   ) {
-    return this.goalsService.assetGoalUsage(householdId, assetId);
+    return this.goalsService.assetGoalUsage(
+      householdId,
+      assetId,
+      excludeEventId,
+      asOfDate,
+    );
   }
 
   /**
@@ -41,11 +50,19 @@ export class AssetGoalUsageController {
     @Param('householdId') householdId: string,
     @Param('assetId') assetId: string,
     @Query('amount') amount?: string,
+    @Query('excludeEventId') excludeEventId?: string,
+    @Query('asOfDate') asOfDate?: string,
   ) {
     const parsed = Number(amount);
     if (!amount || !Number.isFinite(parsed) || parsed < 0) {
       throw new BadRequestException('amount must be a non-negative number');
     }
-    return this.goalsService.spendImpact(householdId, assetId, parsed);
+    return this.goalsService.spendImpact(
+      householdId,
+      assetId,
+      parsed,
+      excludeEventId,
+      asOfDate,
+    );
   }
 }
