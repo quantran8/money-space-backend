@@ -43,6 +43,7 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        {} as never,
       ),
     };
   }
@@ -125,6 +126,7 @@ describe('AssetsService', () => {
       marketData,
       audit,
       // Delete-only collaborators; untouched by these cases.
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -222,6 +224,7 @@ describe('AssetsService', () => {
         prisma,
         marketData,
         { record: jest.fn() } as never,
+        {} as never,
         {} as never,
         {} as never,
         {} as never,
@@ -353,6 +356,7 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        {} as never,
       );
       return {
         service,
@@ -446,6 +450,7 @@ describe('AssetsService', () => {
       marketData,
       audit,
       // Delete-only collaborators; untouched by these cases.
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -723,6 +728,7 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        {} as never,
       );
       return {
         service,
@@ -929,6 +935,7 @@ describe('AssetsService', () => {
         prisma,
         marketData,
         { record: jest.fn() } as never,
+        {} as never,
         {} as never,
         {} as never,
         {} as never,

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { AssetsModule } from '../assets/assets.module';
 import { MoneyEventsController } from './money-events.controller';
@@ -7,7 +7,7 @@ import { MONEY_EVENTS_REPOSITORY } from './repositories/money-events.repository.
 import { PrismaMoneyEventsRepository } from './repositories/prisma-money-events.repository';
 
 @Module({
-  imports: [CommonModule, AssetsModule],
+  imports: [CommonModule, forwardRef(() => AssetsModule)],
   controllers: [MoneyEventsController],
   providers: [
     MoneyEventsService,
