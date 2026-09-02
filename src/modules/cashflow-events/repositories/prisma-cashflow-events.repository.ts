@@ -286,8 +286,7 @@ export class PrismaCashflowEventsRepository
     assetId: string,
   ): Promise<void> {
     // Runs inside the asset delete transaction (shared connection), so these
-    // run sequentially rather than concurrently on the same client — the same
-    // reason `unlinkAssetFromMoneyEvents` avoids `Promise.all`.
+    // run sequentially rather than concurrently on the same client.
     await this.prisma.cashflowEvent.updateMany({
       where: { householdId, plannedAssetId: assetId },
       data: { plannedAssetId: null },

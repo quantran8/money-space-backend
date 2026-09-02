@@ -158,7 +158,6 @@ export interface AssetsRepository {
    * event is deleted, so the value points it created disappear from history.
    */
   deleteAssetValueHistoryByMoneyEvent(moneyEventId: string): Promise<void>;
-  unlinkAssetFromMoneyEvents(assetId: string): Promise<void>;
   /**
    * Money events that moved value in or out of this asset — i.e. it is the
    * `fromAsset` or `toAsset` of the event. Ordered oldest → newest so the

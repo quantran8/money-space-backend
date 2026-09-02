@@ -45,6 +45,8 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
       goals?: Array<{ id: string; name: string; priority: string }>;
       cashflowEvents?: Array<Record<string, unknown>>;
       debts?: Array<Record<string, unknown>>;
+      /** Movements recorded through this asset, which the delete destroys. */
+      moneyEvents?: Array<Record<string, unknown>>;
     } = {},
   ) {
     const allocations = options.allocations ?? [];
@@ -52,7 +54,7 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
       deleteAsset: jest.fn(async () => undefined),
       deleteAssetValueHistory: jest.fn(async () => undefined),
       deleteAssetDetails: jest.fn(async () => undefined),
-      unlinkAssetFromMoneyEvents: jest.fn(async () => undefined),
+      deleteMoneyEventsByAsset: jest.fn(async () => undefined),
       unlinkAssetFromCashflowEvents: jest.fn(async () => undefined),
       unlinkAssetFromDebts: jest.fn(async () => undefined),
       deleteAllocationsByAsset: jest.fn(async () => undefined),
@@ -65,8 +67,12 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
       deleteAsset: calls.deleteAsset,
       deleteAssetValueHistory: calls.deleteAssetValueHistory,
       deleteAssetDetails: calls.deleteAssetDetails,
-      unlinkAssetFromMoneyEvents: calls.unlinkAssetFromMoneyEvents,
+      findMoneyEventsByAsset: jest.fn(async () => options.moneyEvents ?? []),
     } as unknown as AssetsRepository;
+
+    const moneyEventsService = {
+      deleteMoneyEventsByAsset: calls.deleteMoneyEventsByAsset,
+    } as never;
 
     const goalsRepository = {
       findAllocationsByAsset: jest.fn(async () => allocations),
@@ -113,6 +119,7 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
         goalsRepository,
         cashflowEventsRepository,
         debtsRepository,
+        moneyEventsService,
       ),
       calls,
       audit: audit as unknown as { record: jest.Mock },
@@ -253,6 +260,71 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
     expect(calls.deleteAssetDetails).toHaveBeenCalledWith('asset-vcb');
     expect(result.detached.goals).toBe(1);
     expect(result.detached.goalsLeftWithoutWallet).toBe(1);
+  });
+
+  // The bug this fixes: deleting a wallet used to merely null out its events'
+  // asset links, so the rows lived on — still counted by the monthly thu/chi
+  // aggregate, still listed on Home, now naming no wallet at all.
+  it('destroys the movements recorded through the asset', async () => {
+    const { service, calls } = setup({
+      moneyEvents: [
+        { id: 'ev-1', fromAssetId: 'asset-vcb', amount: 5_000_000 },
+        { id: 'ev-2', toAssetId: 'asset-vcb', amount: 12_000_000 },
+      ],
+    });
+
+    const result = await service.deleteAsset(
+      'hh-1',
+      'asset-vcb',
+      'user-1',
+      true,
+    );
+
+    expect(calls.deleteMoneyEventsByAsset).toHaveBeenCalledWith(
+      'hh-1',
+      'asset-vcb',
+    );
+    expect(result.deletedMoneyEvents).toBe(2);
+  });
+
+  // The events are DESTROYED, not detached, and past months' totals move with
+  // them — so this delete has to be confirmed like any other, even when no goal,
+  // debt or scheduled event points at the asset.
+  it('refuses an asset that only has recorded movements', async () => {
+    const { service, calls } = setup({
+      moneyEvents: [
+        { id: 'ev-1', fromAssetId: 'asset-vcb', amount: 5_000_000 },
+      ],
+    });
+
+    const impact = await service.getAssetDeleteImpact('hh-1', 'asset-vcb');
+    expect(impact.isClear).toBe(false);
+    expect(impact.moneyEventCount).toBe(1);
+
+    await expect(
+      service.deleteAsset('hh-1', 'asset-vcb'),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(calls.deleteMoneyEventsByAsset).not.toHaveBeenCalled();
+    expect(calls.deleteAsset).not.toHaveBeenCalled();
+  });
+
+  // Order is load-bearing: the cascade resolves the asset and its partner
+  // wallets by id, which stops working the moment the asset row is soft-deleted.
+  it('deletes the events before the asset row', async () => {
+    const order: string[] = [];
+    const { service, calls } = setup({
+      moneyEvents: [{ id: 'ev-1', fromAssetId: 'asset-vcb', amount: 1 }],
+    });
+    calls.deleteMoneyEventsByAsset.mockImplementation(async () => {
+      order.push('events');
+    });
+    calls.deleteAsset.mockImplementation(async () => {
+      order.push('asset');
+    });
+
+    await service.deleteAsset('hh-1', 'asset-vcb', 'user-1', true);
+
+    expect(order).toEqual(['events', 'asset']);
   });
 
   // `planned_monthly_contribution` is a MIRROR of the surviving claims. Left

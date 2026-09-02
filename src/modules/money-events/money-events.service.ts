@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
 import { todayInTimeZone } from '../../common/utils/clock';
@@ -28,6 +29,7 @@ export class MoneyEventsService {
     @Inject(MONEY_EVENTS_REPOSITORY)
     private readonly moneyEventsRepository: MoneyEventsRepository,
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => AssetsService))
     private readonly assetsService: AssetsService,
   ) {}
 
@@ -756,6 +758,71 @@ export class MoneyEventsService {
     );
     for (const event of events) {
       await this.applyWalletEffects(event, 'reverse');
+    }
+  }
+
+  /**
+   * Delete every money event that names an asset on either side, reversing each
+   * one's effects. Used by `AssetsService.deleteAsset`: removing a wallet
+   * removes the movements recorded through it, so nothing survives to inflate
+   * "chi tiêu tháng này" or to sit in the recent-events list naming a wallet the
+   * household no longer has.
+   *
+   * Must run BEFORE the asset row is soft-deleted, inside the caller's
+   * `runInTransaction` — the wallet reads below resolve the asset by id and stop
+   * finding it once it is gone.
+   *
+   * Only the PARTNER wallets are replayed, never the doomed asset: a transfer
+   * out of the deleted wallet still credited a wallet that survives, and that
+   * balance has to be re-derived without the removed events.
+   */
+  async deleteMoneyEventsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<void> {
+    const events = await this.moneyEventsRepository.findMoneyEventsByAsset(
+      householdId,
+      assetId,
+    );
+    if (events.length === 0) {
+      return;
+    }
+    // Every wallet these events touch EXCEPT the one being deleted, whose
+    // balance is about to stop existing.
+    const partnerWalletIds = (
+      await this.collectWalletIds(
+        householdId,
+        events.flatMap((event) => [event.fromAssetId, event.toAssetId]),
+      )
+    ).filter((walletId) => walletId !== assetId);
+    // Read the opening balances while the events are still live — the replay
+    // recovers them by unwinding the events that follow.
+    const baselines = await this.snapshotWalletBaselines(
+      householdId,
+      partnerWalletIds,
+    );
+
+    await this.moneyEventsRepository.deleteMoneyEventsByAsset(
+      householdId,
+      assetId,
+    );
+    for (const event of events) {
+      await this.applyWalletEffects(event, 'reverse');
+      await this.reverseSaleEffects(event);
+      // A repayment recorded through this wallet still owes its money once the
+      // wallet is gone: restore the debt's outstanding and un-rebalance the
+      // installment this payment had shifted.
+      await this.applyDebtRepaymentEffects(householdId, event, 1);
+      // The reversal re-touched each event's linked valuation points; the events
+      // are going, so their history points go with them.
+      await this.assetsService.removeValuationsForEvent(event.id);
+    }
+    for (const walletId of partnerWalletIds) {
+      await this.assetsService.replayWalletBalance(
+        householdId,
+        walletId,
+        baselines.get(walletId),
+      );
     }
   }
 

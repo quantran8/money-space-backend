@@ -261,6 +261,40 @@ export class PrismaMoneyEventsRepository
     });
   }
 
+  async findMoneyEventsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<MoneyEvent[]> {
+    const rows = await this.prisma.moneyEvent.findMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        OR: [{ fromAssetId: assetId }, { toAssetId: assetId }],
+      },
+      orderBy: { eventDate: 'asc' },
+    });
+    return rows.map((row) => mapMoneyEvent(row));
+  }
+
+  /**
+   * Soft-delete every non-deleted money event linked to an asset on either side,
+   * in one bulk statement. The caller still reverses each event's wallet effects
+   * separately — only the row deletes are bulked here.
+   */
+  async deleteMoneyEventsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<void> {
+    await this.prisma.moneyEvent.updateMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        OR: [{ fromAssetId: assetId }, { toAssetId: assetId }],
+      },
+      data: { deletedAt: new Date() },
+    });
+  }
+
   async adjustDebtOutstanding(
     householdId: string,
     debtId: string,

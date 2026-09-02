@@ -601,19 +601,6 @@ export class PrismaAssetsRepository
     });
   }
 
-  async unlinkAssetFromMoneyEvents(assetId: string): Promise<void> {
-    // Runs inside the asset delete transaction (shared connection), so the two
-    // updates run sequentially rather than concurrently on the same client.
-    await this.prisma.moneyEvent.updateMany({
-      where: { fromAssetId: assetId },
-      data: { fromAssetId: null },
-    });
-    await this.prisma.moneyEvent.updateMany({
-      where: { toAssetId: assetId },
-      data: { toAssetId: null },
-    });
-  }
-
   async findMoneyEventsByAsset(
     householdId: string,
     assetId: string,

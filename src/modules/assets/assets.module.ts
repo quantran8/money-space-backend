@@ -1,6 +1,7 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { MarketDataModule } from '../market-data/market-data.module';
+import { MoneyEventsModule } from '../money-events/money-events.module';
 import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interface';
 import { PrismaGoalsRepository } from '../goals/repositories/prisma-goals.repository';
 import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
@@ -14,7 +15,15 @@ import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import { PrismaAssetsRepository } from './repositories/prisma-assets.repository';
 
 @Module({
-  imports: [CommonModule, MarketDataModule],
+  // `forwardRef` on MoneyEventsModule: deleting an asset deletes the money
+  // events recorded through it, while MoneyEventsModule already imports this one
+  // to validate and settle wallets — a genuine cycle, broken the way
+  // CashflowEvents breaks its own.
+  imports: [
+    CommonModule,
+    MarketDataModule,
+    forwardRef(() => MoneyEventsModule),
+  ],
   controllers: [AssetsController],
   providers: [
     AssetsService,

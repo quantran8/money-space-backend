@@ -46,6 +46,14 @@ export interface MoneyEventsRepository {
     householdId: string,
     debtId: string,
   ): Promise<MoneyEvent[]>;
+  /**
+   * Every non-deleted money event naming an asset on either side, oldest first.
+   * Read before an asset delete so each event's effects can be reversed.
+   */
+  findMoneyEventsByAsset(
+    householdId: string,
+    assetId: string,
+  ): Promise<MoneyEvent[]>;
   findMoneyEventById(
     householdId: string,
     eventId: string,
@@ -58,6 +66,12 @@ export interface MoneyEventsRepository {
    * statement. The caller still reverses each event's wallet effects separately.
    */
   deleteMoneyEventsByDebt(householdId: string, debtId: string): Promise<void>;
+  /**
+   * Bulk soft-delete every non-deleted money event linked to an asset on either
+   * side, in one statement. The caller still reverses each event's wallet
+   * effects separately.
+   */
+  deleteMoneyEventsByAsset(householdId: string, assetId: string): Promise<void>;
   /**
    * Adjust a debt's `outstandingAmount` by `delta` (may be negative to reduce or
    * positive to raise), floored at 0, scoped to the household. A repayment

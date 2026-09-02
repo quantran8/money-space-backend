@@ -5,9 +5,11 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { MoneyEventsService } from '../money-events/money-events.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { freshnessOf, staleAfterDaysFor } from '../../common/utils/freshness';
 import { Asset, AssetType } from './entities/asset.entity';
@@ -105,6 +107,10 @@ export class AssetsService {
     private readonly cashflowEventsRepository: CashflowEventsRepository,
     @Inject(DEBTS_REPOSITORY)
     private readonly debtsRepository: DebtsRepository,
+    // Circular by nature (MoneyEvents settles wallets through this service), so
+    // it arrives lazily — see the module's `forwardRef` note.
+    @Inject(forwardRef(() => MoneyEventsService))
+    private readonly moneyEventsService: MoneyEventsService,
   ) {}
 
   private readonly logger = new Logger(AssetsService.name);
@@ -1548,12 +1554,16 @@ export class AssetsService {
    */
   async getAssetDeleteImpact(householdId: string, assetId: string) {
     const asset = await this.ensureAsset(householdId, assetId);
-    const [allocations, goals, cashflowEvents, debts] = await Promise.all([
-      this.goalsRepository.findAllocationsByAsset(householdId, assetId),
-      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
-      this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
-      this.debtsRepository.findDebtsByHousehold(householdId),
-    ]);
+    const [allocations, goals, cashflowEvents, debts, moneyEvents] =
+      await Promise.all([
+        this.goalsRepository.findAllocationsByAsset(householdId, assetId),
+        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+        this.cashflowEventsRepository.findCashflowEventsByHousehold(
+          householdId,
+        ),
+        this.debtsRepository.findDebtsByHousehold(householdId),
+        this.assetsRepository.findMoneyEventsByAsset(householdId, assetId),
+      ]);
 
     const goalsById = new Map(goals.map((goal) => [goal.id, goal]));
     const allocationsByGoal = new Map<string, typeof allocations>();
@@ -1635,11 +1645,19 @@ export class AssetsService {
       goalsLosingLastWallet,
       cashflowEvents: affectedCashflowEvents,
       debts: affectedDebts,
+      /**
+       * How many recorded movements the delete will take with it. Unlike the
+       * lists above these are not detached but DESTROYED, so the count has to
+       * reach the confirmation dialog — the household is trading away history,
+       * and past months' totals will change accordingly.
+       */
+      moneyEventCount: moneyEvents.length,
       /** Nothing points here; the delete needs no confirmation. */
       isClear:
         affectedGoals.length === 0 &&
         affectedCashflowEvents.length === 0 &&
-        affectedDebts.length === 0,
+        affectedDebts.length === 0 &&
+        moneyEvents.length === 0,
     };
   }
 
@@ -1679,61 +1697,82 @@ export class AssetsService {
     // sequentially (they share the transaction's single connection). The
     // journal entry joins the same transaction, so it can never describe a
     // deletion that was rolled back.
-    await this.prisma.runInTransaction(async () => {
-      await this.assetsRepository.deleteAsset(assetId);
-      await this.assetsRepository.deleteAssetValueHistory(assetId);
-      await this.assetsRepository.deleteAssetDetails(assetId);
-      await this.assetsRepository.unlinkAssetFromMoneyEvents(assetId);
-      await this.cashflowEventsRepository.unlinkAssetFromCashflowEvents(
-        householdId,
-        assetId,
-      );
-      await this.debtsRepository.unlinkAssetFromDebts(householdId, assetId);
-      await this.goalsRepository.deleteAllocationsByAsset(householdId, assetId);
-
-      // `financial_goals.planned_monthly_contribution` is a MIRROR of the
-      // surviving claims, kept so the goals list and the forecast can show a
-      // pace without reading allocations. Dropping this asset's claims without
-      // rewriting it would leave every affected goal advertising a monthly pace
-      // partly funded by a wallet that no longer exists — a number nobody could
-      // trace back to anything. Recomputed from the claims that REMAIN, using
-      // the same resolver every other allocation write ends in.
-      for (const goal of impact.goals) {
-        const remaining = await this.goalsRepository.findAllocationsByGoal(
+    //
+    // Cascading the money events fans out into many sequential round-trips (a
+    // reversal and a valuation sweep per event, then a replay per partner
+    // wallet), so raise the timeout above the 5s default — the same reason
+    // `deleteMoneyEvent` raises its own.
+    await this.prisma.runInTransaction(
+      async () => {
+        // FIRST, while the asset row is still readable: the money events recorded
+        // through it go with it, each one's wallet/debt/valuation effects reversed
+        // and every surviving partner wallet replayed. Deleting a wallet used to
+        // merely null out these events' asset links, leaving orphan rows that went
+        // on counting toward "chi tiêu tháng này" and listing themselves under a
+        // wallet the household could no longer see.
+        await this.moneyEventsService.deleteMoneyEventsByAsset(
           householdId,
-          goal.id,
+          assetId,
         );
-        await this.goalsRepository.updatePlannedMonthlyContribution(
+        await this.assetsRepository.deleteAsset(assetId);
+        await this.assetsRepository.deleteAssetValueHistory(assetId);
+        await this.assetsRepository.deleteAssetDetails(assetId);
+        await this.cashflowEventsRepository.unlinkAssetFromCashflowEvents(
           householdId,
-          goal.id,
-          resolvePlannedMonthlyContribution(
-            remaining.map((allocation) => toAllocationInput(allocation)),
-          ),
+          assetId,
         );
-      }
+        await this.debtsRepository.unlinkAssetFromDebts(householdId, assetId);
+        await this.goalsRepository.deleteAllocationsByAsset(
+          householdId,
+          assetId,
+        );
 
-      await this.audit.record(householdId, {
-        actorId,
-        action: 'asset.deleted',
-        entityType: 'asset',
-        entityId: assetId,
-        impact: {
-          metric: 'net_worth',
-          delta: -(current.manualValue ?? 0),
-        },
-        details: {
-          objectName: current.name,
-          // What the delete took with it, so the journal can answer "why did
-          // this goal's pace change?" without anyone re-deriving it.
-          detachedGoals: impact.goals.map((goal) => goal.name),
-          goalsLeftWithoutWallet: impact.goalsLosingLastWallet.map(
-            (goal) => goal.name,
-          ),
-          detachedCashflowEventCount: impact.cashflowEvents.length,
-          detachedDebtCount: impact.debts.length,
-        },
-      });
-    });
+        // `financial_goals.planned_monthly_contribution` is a MIRROR of the
+        // surviving claims, kept so the goals list and the forecast can show a
+        // pace without reading allocations. Dropping this asset's claims without
+        // rewriting it would leave every affected goal advertising a monthly pace
+        // partly funded by a wallet that no longer exists — a number nobody could
+        // trace back to anything. Recomputed from the claims that REMAIN, using
+        // the same resolver every other allocation write ends in.
+        for (const goal of impact.goals) {
+          const remaining = await this.goalsRepository.findAllocationsByGoal(
+            householdId,
+            goal.id,
+          );
+          await this.goalsRepository.updatePlannedMonthlyContribution(
+            householdId,
+            goal.id,
+            resolvePlannedMonthlyContribution(
+              remaining.map((allocation) => toAllocationInput(allocation)),
+            ),
+          );
+        }
+
+        await this.audit.record(householdId, {
+          actorId,
+          action: 'asset.deleted',
+          entityType: 'asset',
+          entityId: assetId,
+          impact: {
+            metric: 'net_worth',
+            delta: -(current.manualValue ?? 0),
+          },
+          details: {
+            objectName: current.name,
+            // What the delete took with it, so the journal can answer "why did
+            // this goal's pace change?" without anyone re-deriving it.
+            detachedGoals: impact.goals.map((goal) => goal.name),
+            goalsLeftWithoutWallet: impact.goalsLosingLastWallet.map(
+              (goal) => goal.name,
+            ),
+            detachedCashflowEventCount: impact.cashflowEvents.length,
+            detachedDebtCount: impact.debts.length,
+            deletedMoneyEventCount: impact.moneyEventCount,
+          },
+        });
+      },
+      { timeout: 30000, maxWait: 10000 },
+    );
     return {
       deleted: true,
       assetId,
@@ -1743,6 +1782,7 @@ export class AssetsService {
         cashflowEvents: impact.cashflowEvents.length,
         debts: impact.debts.length,
       },
+      deletedMoneyEvents: impact.moneyEventCount,
     };
   }
 
