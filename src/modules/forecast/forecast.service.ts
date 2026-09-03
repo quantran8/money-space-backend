@@ -22,10 +22,14 @@ import { spreadAcrossWallets } from './domain/spread-across-wallets';
 import { deriveFinancialState } from './domain/financial-state';
 import {
   amountBucket,
+  applyAssetSale,
   buildSyntheticEvent,
   classifyResult,
+  isSellableForecastAsset,
+  type AppliedAssetSale,
   type WhatIfResultType,
 } from './domain/what-if';
+import type { AssetType } from '../assets/entities/asset.entity';
 import {
   projectGoal,
   projectGoalAfterSpend,
@@ -67,10 +71,16 @@ export interface WhatIfSideResult {
 export interface WhatIfWalletDraw {
   assetId: string;
   name: string;
-  /** What the wallet held before the spend — the after-outflows value. */
+  /**
+   * What the wallet held on its OWN before the spend — the after-outflows
+   * value, with any sale proceeds excluded. Those are reported as `fromSale`,
+   * or a wallet holding 13tr would read as having paid 100tr.
+   */
   before: number;
   /** Taken from this wallet. Always > 0: untouched wallets are not listed. */
   taken: number;
+  /** How much of `taken` was money the simulated sale put here. */
+  fromSale: number;
 }
 
 /**
@@ -89,6 +99,12 @@ export interface WhatIfWalletDraw {
  * The two always describe one spend: both are derived from the same `drain`.
  */
 export interface WhatIfFundingSource {
+  /**
+   * Proceeds of the simulated sale. Its own category because it is not money
+   * the household already had — folding it into `free` would report a wallet
+   * as having covered a spend it could not have.
+   */
+  fromSale: number;
   /** Money no goal had claimed. Spent first, everywhere, before any goal. */
   free: number;
   /** Mirrors `goalImpact.totalPaceReduction` — this month's contribution. */
@@ -99,6 +115,47 @@ export interface WhatIfFundingSource {
   wallets: WhatIfWalletDraw[];
 }
 
+/**
+ * The liquid picture the shortfall is measured from.
+ *
+ * `shortfall` is what the household cannot pay from money usable TODAY. It is
+ * not `obligationsCovered` (the spend is `planned`, so that can never flip) and
+ * not a negative low point (a horizon fact). It is the one signal that means
+ * "the money is not there yet", so it is what the funding step keys on.
+ */
+export interface WhatIfLiquidity {
+  /** Immediately-usable money after the horizon's counted outflows. */
+  liquidAvailable: number;
+  /** `max(0, amount − liquidAvailable)`. 0 when the spend fits. */
+  shortfall: number;
+}
+
+/** An asset the household could sell to fund the spend. Never a suggestion. */
+export interface WhatIfFundingOption {
+  assetId: string;
+  name: string;
+  type: AssetType;
+  value: number;
+  liquidity: 'not_immediately_usable' | 'long_term';
+  /** What the goals hold of it — the cost of selling, before committing. */
+  goalClaimedAmount: number;
+}
+
+/** The sale as applied, echoing the choices the engine made. */
+export interface WhatIfAppliedSale {
+  assetId: string;
+  name: string;
+  /** Gross proceeds asked for. */
+  amount: number;
+  /** What lands in the wallet. Equal to `amount` — a hypothetical has no fee. */
+  netProceeds: number;
+  assetValueBefore: number;
+  assetValueAfter: number;
+  /** The wallet the household chose to receive the proceeds. */
+  receivingAssetId: string;
+  receivingName: string;
+}
+
 export interface WhatIfResult {
   householdId: string;
   asOfDate: IsoDate;
@@ -107,6 +164,18 @@ export interface WhatIfResult {
   obligationsCovered: boolean;
   before: WhatIfSideResult;
   after: WhatIfSideResult;
+  /** What the spend needs versus what is usable today. */
+  liquidity: WhatIfLiquidity;
+  /** What could be sold to close a shortfall. Empty when the spend fits. */
+  fundingOptions: WhatIfFundingOption[];
+  /** Set only when `input.assetSale` was supplied and applied. */
+  assetSale: WhatIfAppliedSale | null;
+  /** The third side: after the sale AND the spend. `null` without a sale. */
+  afterSale: WhatIfSideResult | null;
+  deltaWithSale: {
+    flexibleMoneyToday: number;
+    lowestProjectedBalance: number;
+  } | null;
   /**
    * What every goal gives up, in money AND in time. Measured across all
    * flexible wallets — what-if names no single wallet.
@@ -370,6 +439,66 @@ export class ForecastService {
       );
     }
 
+    // Step 2, when asked for: the asset being sold, and the wallet the money
+    // lands in. Both named by the caller — see memory/what-if.md.
+    const saleRequest = payload.assetSale;
+    let soldAsset: (typeof input.assets)[number] | undefined;
+    let receivingAsset: (typeof input.assets)[number] | undefined;
+    if (saleRequest) {
+      const saleAmount = Number(saleRequest.amount);
+      if (!Number.isFinite(saleAmount) || saleAmount <= 0) {
+        throw new BadRequestException(
+          'assetSale.amount must be a positive number',
+        );
+      }
+      if (!saleRequest.assetId) {
+        throw new BadRequestException('assetSale.assetId is required');
+      }
+      soldAsset = input.assets.find(
+        (asset) => asset.assetId === saleRequest.assetId,
+      );
+      if (!soldAsset) {
+        throw new BadRequestException(
+          `Asset "${saleRequest.assetId}" was not found`,
+        );
+      }
+      if (!isSellableForecastAsset(soldAsset)) {
+        throw new BadRequestException(
+          `Asset "${saleRequest.assetId}" cannot be sold to fund a spend`,
+        );
+      }
+      // An input bound, not a clamped figure: you cannot sell more than you
+      // hold, and the real sale enforces the same rule.
+      if (saleAmount > soldAsset.value) {
+        throw new BadRequestException(
+          `assetSale.amount exceeds the value of asset "${saleRequest.assetId}"`,
+        );
+      }
+
+      if (!saleRequest.toAssetId) {
+        throw new BadRequestException('assetSale.toAssetId is required');
+      }
+      receivingAsset = input.assets.find(
+        (asset) => asset.assetId === saleRequest.toAssetId,
+      );
+      if (!receivingAsset) {
+        throw new BadRequestException(
+          `Asset "${saleRequest.toAssetId}" was not found`,
+        );
+      }
+      // Proceeds have to land somewhere spendable, or the sale funds nothing.
+      if (receivingAsset.liquidity !== 'usable_now') {
+        throw new BadRequestException(
+          `Asset "${saleRequest.toAssetId}" cannot receive sale proceeds`,
+        );
+      }
+      if (receivingAsset.assetId === soldAsset.assetId) {
+        throw new BadRequestException(
+          'assetSale.toAssetId must differ from the asset being sold',
+        );
+      }
+    }
+
     const goalInput = goal
       ? {
           goalId: goal.id,
@@ -404,6 +533,40 @@ export class ForecastService {
     });
 
     /**
+     * The wallets the spend draws on, and what the goals claim of each.
+     *
+     * Resolved here because the funding sale needs them to pick a receiving
+     * wallet before the third run.
+     */
+    const walletsBefore = walletValuesAfterOutflows(beforeForecast);
+    const claimsBefore = await this.goalsService.goalClaimsByWallet(
+      householdId,
+      walletsBefore,
+    );
+
+    /**
+     * The sale, as a t0 conversion: value leaves the sold asset and lands in a
+     * wallet, before anything is spent. Modelled as a rebalance rather than a
+     * synthetic inflow — see memory/forecast-and-flexible-money.md.
+     */
+    const appliedSale: AppliedAssetSale | null =
+      saleRequest && soldAsset && receivingAsset
+        ? {
+            assetId: soldAsset.assetId,
+            amount: Number(saleRequest.amount),
+            receivingAssetId: receivingAsset.assetId,
+          }
+        : null;
+
+    const afterSaleForecast = appliedSale
+      ? runForecast({
+          ...input,
+          assets: applyAssetSale(input.assets, appliedSale),
+          options: { ...input.options, syntheticEvents: [synthetic] },
+        })
+      : null;
+
+    /**
      * Both sides carry goal money, and each side measures it against ITS OWN
      * wallet values.
      *
@@ -427,6 +590,12 @@ export class ForecastService {
         await this.goalCommitments(householdId, afterForecast),
       ),
     ];
+    const afterSaleFlexible = afterSaleForecast
+      ? computeFlexibleMoney(
+          afterSaleForecast,
+          await this.goalCommitments(householdId, afterSaleForecast),
+        )
+      : null;
 
     const afterGoalResult = goalInput
       ? projectGoalAfterSpend(goalInput, amount, {
@@ -442,6 +611,7 @@ export class ForecastService {
       `what_if_run ${JSON.stringify({
         householdId,
         hasGoal: Boolean(goal),
+        hasAssetSale: Boolean(appliedSale),
         amountBucket: amountBucket(amount),
         resultType,
       })}`,
@@ -472,15 +642,13 @@ export class ForecastService {
      *
      * Measured across every wallet the forecast counts as flexible, because
      * what-if asks a household-level question — "what if we spent this" — and
-     * has no wallet to name. The two maps are the same before/after values the
+     * has no wallet to name. The maps are the same before/after values the
      * balances came from, so the goal cost and the cash-flow picture describe
      * one spend rather than two.
      *
      * The same resolver the cashflow form uses, so a what-if and the event it
      * becomes cannot report different costs for the same spend.
-     */
-    const walletsBefore = walletValuesAfterOutflows(beforeForecast);
-    /**
+     *
      * Where a nameless spend comes from: one wallet at a time, least-promised
      * money first.
      *
@@ -489,16 +657,48 @@ export class ForecastService {
      * and draining a wallet fully before moving to the next is what actually
      * happens when people pay for things. Least-promised first keeps the answer
      * from overstating the cost to the goals (see `spreadAcrossWallets`).
+     *
+     * With a sale, the spend draws on the wallets the proceeds already landed
+     * in, so the money raised is the money spent.
      */
+    const walletsToSpendFrom = afterSaleForecast
+      ? walletValuesAfterOutflows(afterSaleForecast)
+      : walletsBefore;
     const drain = spreadAcrossWallets(
-      walletsBefore,
-      await this.goalsService.goalClaimsByWallet(householdId, walletsBefore),
+      walletsToSpendFrom,
+      afterSaleForecast
+        ? await this.goalsService.goalClaimsByWallet(
+            householdId,
+            walletsToSpendFrom,
+          )
+        : claimsBefore,
       amount,
     );
+
+    /**
+     * Goal cost is measured against a DIFFERENT pair of maps than the spend:
+     * the wallets PLUS the sold asset, so a goal backed by that asset is
+     * counted at what it actually holds.
+     *
+     * The sold asset must never reach `spreadAcrossWallets` above — an illiquid
+     * asset would then pay for the spend with no sale at all. Wallet-only maps
+     * for spending, wallet-plus-sold-asset maps for attribution.
+     */
+    const goalValuesBefore = new Map(walletsBefore);
+    const goalValuesAfter = new Map(drain.values);
+    if (appliedSale && soldAsset) {
+      goalValuesBefore.set(soldAsset.assetId, soldAsset.value);
+      goalValuesAfter.set(
+        soldAsset.assetId,
+        soldAsset.value - appliedSale.amount,
+      );
+      // The receiving wallet's credit is already inside `drain.values` via
+      // `walletsToSpendFrom`; adding it here would count the proceeds twice.
+    }
     const goalImpact = await this.goalsService.spendImpactAcrossWallets(
       householdId,
-      walletsBefore,
-      drain.values,
+      goalValuesBefore,
+      goalValuesAfter,
     );
 
     /**
@@ -511,15 +711,31 @@ export class ForecastService {
      * nothing is noise, not evidence.
      */
     const walletNames = new Map(
-      beforeForecast.liquidSources.map((source) => [source.assetId, source.name]),
+      beforeForecast.liquidSources.map((source) => [
+        source.assetId,
+        source.name,
+      ]),
     );
-    const wallets: WhatIfWalletDraw[] = [...walletsBefore]
-      .map(([assetId, before]) => ({
-        assetId,
-        name: walletNames.get(assetId) ?? assetId,
-        before,
-        taken: before - (drain.values.get(assetId) ?? before),
-      }))
+    const wallets: WhatIfWalletDraw[] = [...walletsToSpendFrom]
+      .map(([assetId, after]) => {
+        const taken = after - (drain.values.get(assetId) ?? after);
+        /**
+         * The wallet's OWN money, before the sale topped it up. Reporting the
+         * topped-up figure would say a 13tr wallet paid 100tr, when 86tr of
+         * that arrived from the asset that was sold.
+         */
+        const proceeds =
+          appliedSale && assetId === appliedSale.receivingAssetId
+            ? appliedSale.amount
+            : 0;
+        return {
+          assetId,
+          name: walletNames.get(assetId) ?? assetId,
+          before: after - proceeds,
+          taken,
+          fromSale: Math.min(taken, proceeds),
+        };
+      })
       .filter((wallet) => wallet.taken > 0)
       .sort((left, right) => right.taken - left.taken);
 
@@ -536,10 +752,14 @@ export class ForecastService {
      * different fact and already has its own line.
      */
     const covered = Math.max(0, amount - drain.uncovered);
+    // Proceeds only count as a source up to what the spend actually took.
+    const fromSale = wallets.reduce((sum, wallet) => sum + wallet.fromSale, 0);
     const fundingSource: WhatIfFundingSource = {
+      fromSale,
       free: Math.max(
         0,
         covered -
+          fromSale -
           goalImpact.totalPaceReduction -
           goalImpact.totalSetAsideReduction,
       ),
@@ -547,6 +767,48 @@ export class ForecastService {
       fromSetAside: goalImpact.totalSetAsideReduction,
       wallets,
     };
+
+    /**
+     * What the spend needs versus what is usable today. Measured from the same
+     * map the spend is drained from, so this and `uncovered` cannot disagree.
+     */
+    // Wallets on their own, before any sale — `shortfall` adds the proceeds
+    // back in, so the two together say "had this much, raised this much more".
+    const liquidAvailable = [...walletsBefore.values()].reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    /**
+     * Measured against the money available AFTER the sale: once the household
+     * has raised the cash, saying they are still short of it is simply wrong,
+     * and it is what keeps the funding CTA on screen after it has been used.
+     */
+    const liquidity: WhatIfLiquidity = {
+      liquidAvailable,
+      shortfall: Math.max(
+        0,
+        amount - liquidAvailable - (appliedSale?.amount ?? 0),
+      ),
+    };
+
+    /**
+     * What could be sold to close a shortfall — offered, never recommended.
+     * Each option carries what the goals hold of it, so the cost of selling is
+     * visible before the household commits to it.
+     */
+    const fundingOptions: WhatIfFundingOption[] =
+      liquidity.shortfall > 0
+        ? await this.fundingOptions(householdId, input)
+        : [];
+
+    const afterSale =
+      afterSaleForecast && afterSaleFlexible
+        ? side(
+            afterSaleForecast,
+            afterSaleFlexible,
+            afterGoalResult?.projection ?? null,
+          )
+        : null;
 
     return {
       householdId,
@@ -556,6 +818,34 @@ export class ForecastService {
       obligationsCovered: after.obligationsCovered,
       before,
       after,
+      liquidity,
+      fundingOptions,
+      assetSale:
+        appliedSale && soldAsset
+          ? {
+              assetId: soldAsset.assetId,
+              name: soldAsset.name,
+              amount: appliedSale.amount,
+              // No fee on a hypothetical; kept distinct so adding one later
+              // does not change what `amount` means.
+              netProceeds: appliedSale.amount,
+              assetValueBefore: soldAsset.value,
+              assetValueAfter: soldAsset.value - appliedSale.amount,
+              receivingAssetId: appliedSale.receivingAssetId,
+              receivingName:
+                walletNames.get(appliedSale.receivingAssetId) ??
+                appliedSale.receivingAssetId,
+            }
+          : null,
+      afterSale,
+      deltaWithSale: afterSale
+        ? {
+            flexibleMoneyToday:
+              afterSale.flexibleMoneyToday - after.flexibleMoneyToday,
+            lowestProjectedBalance:
+              afterSale.lowestProjectedBalance - after.lowestProjectedBalance,
+          }
+        : null,
       goalImpact: { ...goalImpact, uncovered: drain.uncovered },
       fundingSource,
       /**
@@ -578,6 +868,40 @@ export class ForecastService {
       resultType,
       assumptions: afterForecast.assumptions,
     };
+  }
+
+  /**
+   * Assets the household could sell to fund a spend, biggest first.
+   *
+   * Read off the bundle the forecast already loaded — it carries every active
+   * asset, not just the liquid ones — so this costs no extra query.
+   */
+  private async fundingOptions(
+    householdId: string,
+    input: ForecastInput,
+  ): Promise<WhatIfFundingOption[]> {
+    const sellable = input.assets.filter(
+      (asset) => isSellableForecastAsset(asset) && asset.value > 0,
+    );
+    if (sellable.length === 0) {
+      return [];
+    }
+
+    const claims = await this.goalsService.goalClaimsByWallet(
+      householdId,
+      new Map(sellable.map((asset) => [asset.assetId, asset.value])),
+    );
+
+    return sellable
+      .map((asset) => ({
+        assetId: asset.assetId,
+        name: asset.name,
+        type: asset.type,
+        value: asset.value,
+        liquidity: asset.liquidity as 'not_immediately_usable' | 'long_term',
+        goalClaimedAmount: claims.get(asset.assetId)?.amount ?? 0,
+      }))
+      .sort((left, right) => right.value - left.value);
   }
 
   /** The projection for one goal (§26C). */

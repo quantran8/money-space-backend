@@ -352,9 +352,75 @@ exactly; money that merely displaces future contributions uses
 (`comfortable | watch | tight | not_covered`) is a calm classification for
 styling, not advice. The product never says whether to buy.
 
-**Analytics carry only a bucket** — `{householdId, hasGoal, amountBucket,
-resultType}`. Never the amount, never the balances: a couple's figures stay
-theirs.
+**Analytics carry only a bucket** — `{householdId, hasGoal, hasAssetSale,
+amountBucket, resultType}`. Never the amount, never the balances: a couple's
+figures stay theirs.
+
+### Funding a spend by selling an asset
+
+The forecast starts from `usable_now` money only, so a household with 500tr
+liquid and 600tr of stock who asks about an 800tr car gets an answer built on
+500tr. `liquidity.shortfall` names that gap, and an optional
+`assetSale: {assetId, amount}` lets them ask the second question: "…and if we
+sold 300tr of the stock to pay for it?"
+
+**`shortfall` is the trigger, not `resultType` and not a negative low point.**
+The synthetic spend is `requirement: 'planned'`, and the obligation pass counts
+only `required` outgoing — so `obligationsCovered` can never flip from the spend
+itself. And a negative low point is a *horizon* fact: a spend can be perfectly
+fundable today and still bottom out on day 22 because of a later bill, where
+"sell your stock" is the wrong suggestion. `shortfall` means precisely "the
+money is not there yet", which is the only case this step answers.
+`liquidity.shortfall` and `goalImpact.uncovered` carry the same figure and are
+asserted equal in the spec so they cannot drift.
+
+**The sale is a t0 rebalance of `input.assets`, NOT a synthetic incoming
+event.** This is the decision most likely to be "simplified" later. A synthetic
+inflow is wrong twice over:
+
+- `startingLiquidBalance` never sees it, so `flexibleMoneyToday` would not move
+  at all despite money landing today — and worse, the event would become
+  `nextSufficientlyCertainInflow`, shrinking the flexible-money window and
+  pushing the figure *up* for a reason unrelated to the sale.
+- `walletValuesAfterOutflows` deliberately never credits incoming money, so the
+  receiving wallet would not be credited in the goal math: the goals would pay
+  for the spend *and* for the sale. Carving a hole in that rule for synthetic
+  events puts the one function two callers depend on into two minds.
+
+A rebalance is also correct on *every* day of the horizon rather than only from
+a sale date onward, which is what a conversion actually means. Hence no
+`saleDate` field: there is no timeline position for a date to occupy.
+
+**Wallet-only maps for spending, wallet-plus-sold-asset maps for attribution.**
+The sold asset must never reach `goalClaimsByWallet` → `spreadAcrossWallets`, or
+an illiquid asset would pay for the purchase with no sale at all. It reaches
+only the two maps handed to `spendImpactAcrossWallets`, where it makes a goal
+backed by that asset show the loss. The receiving wallet's credit is already
+inside `drain.values`; adding it to the attribution maps too would count the
+proceeds twice.
+
+Three engine runs over one bundle, and the third only when a sale was asked for
+— a what-if without one behaves exactly as before. `before`/`after` keep their
+meanings and `afterSale` is added, so the client can show what the sale bought.
+
+**No fee.** A sale's only net-worth effect is `−fee`, and what-if reports no
+net-worth figure; at exploration time nobody knows the brokerage fee anyway. A
+field left at 0 would imply the simulation accounted for something it did not.
+`netProceeds` stays a distinct field so adding a fee later does not change what
+`amount` means. The client renders a `noFee` assumption line.
+
+**The receiving wallet is named by the caller** (`assetSale.toAssetId`),
+validated `usable_now` and different from the asset being sold — the same two
+rules a real `asset_sale` enforces. The engine used to pick the least-promised
+wallet; it cannot, because which account holds the cash decides which goals it
+is sitting in front of, and that is the household's call. This is a narrow
+exception to the no-wallet-picker rule, which is about the SPEND's routing and
+still holds; see `frontend/memory/what-if.md`.
+
+Sellability is `SELLABLE_ASSET_TYPES`, which lives on `asset.entity.ts` so the
+pure engine can read it without importing a Nest provider —
+`AssetsService.SELLABLE_ASSET_TYPES` re-exports the same set. A simulated sale
+and a real one can never disagree about what is sellable.
 
 ## Assumptions are codes, never sentences
 

@@ -183,3 +183,20 @@ no-op for every event type except `asset_sale`.
 - Ghi chú (optional) → `description`.
 - Validation: quantity sold ≤ current quantity; `fee_amount ≤ amount`;
   `from_asset ≠ to_asset`.
+
+## A simulated sale (what-if) is NOT an asset_sale
+
+What-if's funding step ("thử bán một phần tài sản") asks the same question this
+flow answers, but **writes nothing**: no `money_events` row, no wallet credit,
+no valuation write, no position decrement, no `status = 'sold'`. It is a
+hypothesis held in memory for one request, and the code path must never be
+"unified" with this one.
+
+It is also simpler on purpose: **value only, no quantity, no fee, no sale date.**
+Goal progress is a function of value, and at exploration time nobody knows the
+brokerage fee or the exact unit price. Sellability is still the shared
+`SELLABLE_ASSET_TYPES`, so the two flows cannot disagree about what can be sold
+— the client additionally hides `real_estate`, whose partial sale is priced by
+area and so cannot be expressed as "bán 300tr".
+
+See [[what-if]] and [[forecast-and-flexible-money]].

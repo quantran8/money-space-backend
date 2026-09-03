@@ -102,6 +102,7 @@ export class PrismaForecastRepository
           today,
         ),
         liquidity: asset.liquidity,
+        type: asset.type,
         valueUpdatedAt: row.valueUpdatedAt?.toISOString().slice(0, 10) ?? null,
       };
     });

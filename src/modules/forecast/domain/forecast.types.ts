@@ -1,5 +1,6 @@
 import type { IsoDate } from '../../../common/utils/clock';
 import type { RecurrenceFrequency } from '../../../common/utils/recurrence';
+import type { AssetType } from '../../assets/entities/asset.entity';
 import type {
   CashflowCertainty,
   CashflowDirection,
@@ -38,6 +39,8 @@ export interface ForecastLiquidSource {
   /** Already valued in the household currency. */
   value: number;
   liquidity: 'usable_now' | 'not_immediately_usable' | 'long_term';
+  /** Carried for what-if's funding sale, which needs sellability by type. */
+  type: AssetType;
   valueUpdatedAt?: string | null;
 }
 

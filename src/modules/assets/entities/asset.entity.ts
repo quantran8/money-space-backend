@@ -29,6 +29,28 @@ export type AssetClass =
 
 export type AssetStatus = 'active' | 'sold' | 'closed';
 
+/**
+ * Asset types that can be sold through the asset-sale flow. Market-priced ones
+ * carry an `asset_market_positions` row (partial sale = reduce `quantity`);
+ * `real_estate` / `investment` are manual (partial sale = reduce the stored
+ * value). Wallets, deposits, insurance and `other` are excluded — see
+ * [[asset-sale]] for the rationale.
+ *
+ * Lives on the entity rather than on `AssetsService` so the forecast's pure
+ * what-if engine can read it without importing a Nest provider. Re-exported as
+ * `AssetsService.SELLABLE_ASSET_TYPES`; both names are the same set.
+ */
+export const SELLABLE_ASSET_TYPES: ReadonlySet<AssetType> = new Set<AssetType>([
+  'gold',
+  'stock',
+  'crypto',
+  'fund',
+  'foreign_currency',
+  'bond',
+  'real_estate',
+  'investment',
+]);
+
 export interface Asset {
   id: string;
   householdId: string;

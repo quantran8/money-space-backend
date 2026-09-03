@@ -16,9 +16,57 @@
  */
 
 import type { IsoDate } from '../../../common/utils/clock';
-import type { ForecastCashflowEvent, ForecastResult } from './forecast.types';
+import { SELLABLE_ASSET_TYPES } from '../../assets/entities/asset.entity';
+import type {
+  ForecastCashflowEvent,
+  ForecastLiquidSource,
+  ForecastResult,
+} from './forecast.types';
 
 export type WhatIfResultType = 'comfortable' | 'tight' | 'not_covered';
+
+/** The sale as the caller asked for it, once validated. */
+export interface AppliedAssetSale {
+  assetId: string;
+  amount: number;
+  receivingAssetId: string;
+}
+
+/**
+ * Can this asset fund a spend by being sold?
+ *
+ * `usable_now` is excluded because a wallet is transferred from, not sold.
+ * Sellability itself stays `SELLABLE_ASSET_TYPES` so a simulated sale and a
+ * real one can never disagree about what is sellable.
+ */
+export function isSellableForecastAsset(source: ForecastLiquidSource): boolean {
+  return (
+    source.liquidity !== 'usable_now' && SELLABLE_ASSET_TYPES.has(source.type)
+  );
+}
+
+/**
+ * The sale, as the forecast sees it: value moves from the sold asset into a
+ * wallet at t0. A conversion, not an event — see [[asset-sale]].
+ *
+ * Deliberately NOT a synthetic incoming event: see
+ * memory/forecast-and-flexible-money.md for why that shape reports a wrong
+ * flexible-money figure and charges the goals twice.
+ */
+export function applyAssetSale(
+  assets: ForecastLiquidSource[],
+  sale: AppliedAssetSale,
+): ForecastLiquidSource[] {
+  return assets.map((asset) => {
+    if (asset.assetId === sale.assetId) {
+      return { ...asset, value: asset.value - sale.amount };
+    }
+    if (asset.assetId === sale.receivingAssetId) {
+      return { ...asset, value: asset.value + sale.amount };
+    }
+    return asset;
+  });
+}
 
 /**
  * The spend, as the forecast sees it.

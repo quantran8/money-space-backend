@@ -12,7 +12,11 @@ import { AuditService } from '../../common/audit/audit.service';
 import { MoneyEventsService } from '../money-events/money-events.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { freshnessOf, staleAfterDaysFor } from '../../common/utils/freshness';
-import { Asset, AssetType } from './entities/asset.entity';
+import {
+  Asset,
+  AssetType,
+  SELLABLE_ASSET_TYPES,
+} from './entities/asset.entity';
 
 /**
  * Asset types that hold a free, spendable cash balance ("wallets"). Only these
@@ -1854,25 +1858,8 @@ export class AssetsService {
     await this.upsertCurrentValuation(next, context);
   }
 
-  /**
-   * Asset types that can be sold through the asset-sale flow. Market-priced
-   * ones carry an `asset_market_positions` row (partial sale = reduce
-   * `quantity`); `real_estate` / `investment` are manual (partial sale = reduce
-   * the stored value). Wallets, deposits, insurance and `other` are excluded —
-   * see [[asset-sale]] for the rationale. Exported-shape check used by the
-   * money-events service to validate an `asset_sale` before applying it.
-   */
-  static readonly SELLABLE_ASSET_TYPES: ReadonlySet<AssetType> =
-    new Set<AssetType>([
-      'gold',
-      'stock',
-      'crypto',
-      'fund',
-      'foreign_currency',
-      'bond',
-      'real_estate',
-      'investment',
-    ]);
+  /** The one set, defined on the entity so pure domain code can read it too. */
+  static readonly SELLABLE_ASSET_TYPES = SELLABLE_ASSET_TYPES;
 
   /**
    * Apply a sale to the sold asset: reduce its position and, when nothing is

@@ -28,6 +28,38 @@ pass the ORIGINAL values as the basis. It threads through
 because free room is `value − set aside`, and measuring the two halves against
 different bases makes them stop adding up.
 
+## Selling a goal's backing asset lowers that goal
+
+What-if can now simulate selling part of an asset to fund a spend (see
+[[forecast-and-flexible-money]]). No new goal code was needed:
+`resolveGoalCommittedPartsByGoal` is asset-agnostic by design, so handing it
+maps that include the sold asset makes the goal behind it report the loss, and
+`projectGoalDelayFromSpend` — already called inside `spendImpactAcrossWallets` —
+turns that into a slipped completion date.
+
+**The two allocation kinds behave differently, and both are right.** Selling
+300tr of a 600tr stock:
+
+- a **`fixed`** 400tr claim → `min(400, 300) = 300`, so the goal loses **100tr**.
+  The 200tr nobody had claimed sells first. This is the same "free money first"
+  rule `spreadAcrossWallets` applies to a spend, and a second, different rule for
+  sales is exactly the drift to avoid. Expect this to be reported as a bug; it is
+  not.
+- a **`percent`** claim → drops pro-rata: you sold half the position, so half of
+  every share of it went.
+
+**The sale path passes no `percentBasis`, while the spend path pins one.** They
+look inconsistent until you see why: a *spend* must take unassigned money first,
+so the percent must not re-derive against the lowered wallet. A *sale* removes a
+slice of the position itself, so re-reading the percent against what is left is
+the correct arithmetic. Pinning the basis there would instead claim the whole
+remaining position for one goal.
+
+A `holding` allocation contributes to `setAside` and never to `pace`
+(`resolveWalletShareByGoal` draws its asset set from `contribution` roles only),
+so a sale shows up as `setAsideReduction` — the goal moved backwards, which is
+the more serious of the two events.
+
 **This has been violated once, and the failure is worth remembering.**
 `resolveGoalCommittedAmount` computed its set-aside half by calling
 `allocationValue(allocation, assetValues)` — dropping the basis — while its pace
