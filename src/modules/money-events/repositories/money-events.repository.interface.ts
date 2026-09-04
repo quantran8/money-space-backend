@@ -7,7 +7,7 @@ export interface MoneyEventFilter {
   /** `YYYY-MM` — restricts to events whose `eventDate` falls in that month. */
   month?: string;
   type?: string;
-  category?: string;
+  categoryId?: string;
   /** Hard cap on rows returned (already validated/clamped by the caller). */
   limit?: number;
 }
@@ -20,6 +20,17 @@ export interface MoneyEventMonthSummary {
 
 export interface MoneyEventsRepository {
   assertHousehold(householdId: string): Promise<Household>;
+  /**
+   * Resolve a category the household can see (its own row, else the shared
+   * system row) to an id — by id when `categoryId` is given, else by `code`.
+   * Returns undefined when nothing matches. Internal callers pass a system
+   * code (`debt`, `interest`, `investment`, `other`); the user-facing path
+   * passes an id straight from the picker.
+   */
+  resolveCategoryId(
+    householdId: string,
+    ref: { categoryId?: string; code?: string },
+  ): Promise<string | undefined>;
   createId(prefix: string): string;
   findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]>;
   /**

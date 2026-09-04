@@ -553,12 +553,19 @@ export function toMoneyEventCard(event: MoneyEvent) {
     date: formatDateLabel(event.isoDate),
     isoDate: event.isoDate,
     type: event.type,
-    category: event.category,
+    // The id only. The client already holds the full category list (system +
+    // this household's own) and resolves the code, label, glyph and colour off
+    // it, so shipping those per event would duplicate them on every row.
+    categoryId: event.categoryId,
     direction: event.direction,
     fromAssetId: event.fromAssetId,
     toAssetId: event.toAssetId,
     upcomingPaymentId: event.upcomingPaymentId,
     debtId: event.debtId,
+    // The recorder's profile id only — no name. The client already holds the
+    // member list and resolves it there, so a member who was renamed or has left
+    // is never reported under a stale name copied onto the row.
+    createdById: event.createdById,
   };
 }
 

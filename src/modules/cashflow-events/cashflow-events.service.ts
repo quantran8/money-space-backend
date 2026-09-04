@@ -68,12 +68,32 @@ export class CashflowEventsService {
     return this.ensureCashflowEvent(householdId, eventId);
   }
 
+  /**
+   * A category the household can see, or the system `other` fallback when the
+   * caller named none. `category` used to be a free code string defaulting to
+   * `'other'` in the column; with a real FK the default has to be resolved.
+   */
+  private async resolveCategoryId(
+    householdId: string,
+    categoryId?: string,
+  ): Promise<string> {
+    if (!categoryId) {
+      return this.moneyEvents.systemCategoryId(householdId, 'other');
+    }
+    return this.moneyEvents.resolveCategoryIdOrThrow(householdId, categoryId);
+  }
+
   async createCashflowEvent(
     householdId: string,
     payload: CreateCashflowEventDto,
     creatorMemberId?: string,
   ) {
-    const event = this.buildEvent(householdId, payload, creatorMemberId);
+    const event = this.buildEvent(
+      householdId,
+      payload,
+      await this.resolveCategoryId(householdId, payload.categoryId),
+      creatorMemberId,
+    );
     await this.cashflowEventsRepository.insertCashflowEvent(event);
     return event;
   }
@@ -87,9 +107,24 @@ export class CashflowEventsService {
     householdId: string,
     payloads: CreateCashflowEventDto[],
   ) {
-    const events = payloads.map((payload) =>
-      this.buildEvent(householdId, payload),
+    // Resolve the `other` fallback once rather than per payload — a debt's
+    // repayment schedule can be dozens of rows and they overwhelmingly share it.
+    const fallbackId = await this.moneyEvents.systemCategoryId(
+      householdId,
+      'other',
     );
+    const events: CashflowEvent[] = [];
+    for (const payload of payloads) {
+      events.push(
+        this.buildEvent(
+          householdId,
+          payload,
+          payload.categoryId
+            ? await this.resolveCategoryId(householdId, payload.categoryId)
+            : fallbackId,
+        ),
+      );
+    }
     await this.cashflowEventsRepository.insertCashflowEvents(events);
     return events;
   }
@@ -107,6 +142,10 @@ export class CashflowEventsService {
       id: event.id,
       householdId: event.householdId,
       name: payload.name?.trim() ?? event.name,
+      categoryId:
+        payload.categoryId === undefined
+          ? event.categoryId
+          : await this.resolveCategoryId(householdId, payload.categoryId),
       amount: payload.amount ?? event.amount,
       direction,
       expectedDate: payload.expectedDate ?? event.expectedDate,
@@ -250,7 +289,9 @@ export class CashflowEventsService {
         // debit/credit, valuation points and the goal mirror all fire.
         const created = await this.moneyEvents.createMoneyEvent(householdId, {
           type: event.direction === 'outgoing' ? 'payment_paid' : 'income',
-          category: event.direction === 'outgoing' ? 'other' : 'income',
+          // The event's OWN category. Outgoing used to be hardcoded `other`,
+          // which put every completed upcoming item in one bucket.
+          categoryId: event.categoryId,
           amount,
           isoDate: occurrenceDate,
           fromAssetId:
@@ -259,11 +300,11 @@ export class CashflowEventsService {
             event.direction === 'incoming' ? settlementAssetId : undefined,
           cashflowEventId: event.id,
           debtId: event.debtId ?? undefined,
-          // `note` IS the `description` column. The call used to pass both a
-          // `description: event.name` (silently dropped — no such DTO field)
-          // and this, so a completed item recorded a blank description unless
-          // the user typed a note. Fall back to the event's own name.
-          note: payload.note?.trim() || event.name,
+          // `note` IS the `description` column. Only what the user actually
+          // typed goes in it — the row's own name/category already say what
+          // this is, so this must NOT fall back to `event.name`, or a
+          // completion with no typed note reads as if someone wrote it.
+          note: payload.note?.trim() ?? '',
         });
 
         await this.cashflowEventsRepository.updateCashflowEvent(eventId, next);
@@ -356,12 +397,14 @@ export class CashflowEventsService {
   private buildEvent(
     householdId: string,
     payload: CreateCashflowEventDto,
+    categoryId: string,
     creatorMemberId?: string,
   ): CashflowEvent {
     const event: CashflowEvent = {
       id: this.cashflowEventsRepository.createId('cashflow-event'),
       householdId,
       name: payload.name?.trim() ?? '',
+      categoryId,
       amount: payload.amount,
       direction: payload.direction,
       expectedDate: payload.expectedDate,

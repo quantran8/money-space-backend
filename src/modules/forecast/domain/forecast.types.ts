@@ -47,6 +47,9 @@ export interface ForecastLiquidSource {
 export interface ForecastCashflowEvent {
   id: string;
   name: string;
+  /** FK to `money_event_categories.id`. Carried so the timeline can draw the
+   *  same category mark the recorded ledger draws. */
+  categoryId?: string | null;
   direction: CashflowDirection;
   amount: number;
   expectedDate: IsoDate;
@@ -108,6 +111,9 @@ export interface ForecastOccurrence {
   isSynthetic: boolean;
   date: IsoDate;
   name: string;
+  /** The source event's category, for the row's disc. Id only — the client
+   *  already holds the category list and resolves label/glyph/colour off it. */
+  categoryId?: string | null;
   direction: CashflowDirection;
   amount: number;
   requirement: CashflowRequirement;

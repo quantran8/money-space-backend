@@ -958,7 +958,7 @@ describe('AssetsService', () => {
         note: '',
         isoDate,
         type: direction === 'in' ? 'income' : 'expense',
-        category: 'other',
+        categoryId: 'cat-other',
         direction: direction === 'in' ? 'inflow' : 'outflow',
         toAssetId: direction === 'in' ? 'asset-tcb' : undefined,
         fromAssetId: direction === 'in' ? undefined : 'asset-tcb',

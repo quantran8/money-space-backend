@@ -13,7 +13,8 @@ export interface CreateMoneyEventDto {
   note?: string;
   isoDate: string;
   type: MoneyEventType;
-  category: string;
+  /** FK to `money_event_categories.id`. Required — every event has a category. */
+  categoryId: string;
   direction?: MoneyDirection;
   fromAssetId?: string;
   toAssetId?: string;

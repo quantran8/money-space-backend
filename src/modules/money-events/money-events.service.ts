@@ -53,7 +53,7 @@ export class MoneyEventsService {
       {
         month: query?.month,
         type: query?.type,
-        category: query?.category,
+        categoryId: query?.categoryId,
         limit,
       },
     );
@@ -143,15 +143,51 @@ export class MoneyEventsService {
   }
 
   /**
-   * `category` is required on a money event — it's the primary label now that
-   * `title` is gone. Reject a missing / empty / whitespace-only category with a
-   * 400. Used on create (always) and on update when the field is provided (an
-   * edit must not blank an existing category).
+   * A category is required on a money event — it's the primary label now that
+   * `title` is gone. `categoryId` is a real FK, so this both validates presence
+   * AND that the id points at a category this household can actually see;
+   * a 400 either way. Used on create (always) and on update when the field is
+   * provided (an edit must not blank an existing category).
    */
-  private assertCategoryPresent(category?: string): void {
-    if (!category || category.trim().length === 0) {
+  async resolveCategoryIdOrThrow(
+    householdId: string,
+    categoryId?: string,
+  ): Promise<string> {
+    if (!categoryId || categoryId.trim().length === 0) {
       throw new BadRequestException('A money event must have a category.');
     }
+    const resolved = await this.moneyEventsRepository.resolveCategoryId(
+      householdId,
+      { categoryId: categoryId.trim() },
+    );
+    if (!resolved) {
+      throw new BadRequestException(
+        `Category "${categoryId}" was not found for this household.`,
+      );
+    }
+    return resolved;
+  }
+
+  /**
+   * The id of a SYSTEM category by its code, for the internal flows that
+   * classify an event on the user's behalf (a debt movement, saving interest,
+   * an asset purchase). These used to write the code straight into the column;
+   * with a real FK they have to resolve it first.
+   */
+  async systemCategoryId(
+    householdId: string,
+    code: string,
+  ): Promise<string> {
+    const resolved = await this.moneyEventsRepository.resolveCategoryId(
+      householdId,
+      { code },
+    );
+    if (!resolved) {
+      throw new BadRequestException(
+        `System category "${code}" is missing — the category seed did not run.`,
+      );
+    }
+    return resolved;
   }
 
   async createMoneyEvent(householdId: string, payload: CreateMoneyEventDto) {
@@ -160,7 +196,10 @@ export class MoneyEventsService {
     // Reject an empty/whitespace category up front (400). Internal callers
     // (debts, saving interest, revaluations) always pass a code, so this only
     // guards the user-facing create path.
-    this.assertCategoryPresent(payload.category);
+    const categoryId = await this.resolveCategoryIdOrThrow(
+      householdId,
+      payload.categoryId,
+    );
     // Income/expense/transfer only move cash — their linked assets must be
     // spendable wallets. Reject a non-wallet source/destination up front (400)
     // before opening the write transaction.
@@ -184,7 +223,7 @@ export class MoneyEventsService {
       note: payload.note?.trim() ?? '',
       isoDate: payload.isoDate,
       type: payload.type,
-      category: payload.category,
+      categoryId,
       direction: deriveDirection(payload.type, payload.direction),
       fromAssetId: payload.fromAssetId,
       toAssetId: payload.toAssetId,
@@ -338,12 +377,21 @@ export class MoneyEventsService {
       return 0;
     }
 
+    // The system `interest` category, resolved once: the dedup check below and
+    // every event created in the loop both need its id now that the column is
+    // an FK rather than the code string.
+    const interestCategoryId = await this.systemCategoryId(
+      householdId,
+      'interest',
+    );
+
     // Idempotency: dates already credited for this deposit.
     const creditedDates = new Set(
       existingEvents
         .filter(
           (event) =>
-            event.category === 'interest' && event.fromAssetId === assetId,
+            event.categoryId === interestCategoryId &&
+            event.fromAssetId === assetId,
         )
         .map((event) => event.isoDate),
     );
@@ -375,7 +423,7 @@ export class MoneyEventsService {
             amount: period.amount,
             isoDate: period.periodEnd,
             type: 'income',
-            category: 'interest',
+            categoryId: interestCategoryId,
             // Wallet destination moves cash into the wallet (inflow);
             // capitalizing into principal is a bookkeeping entry that must not
             // move a wallet.
@@ -415,11 +463,12 @@ export class MoneyEventsService {
     payload: UpdateMoneyEventDto,
   ) {
     const event = await this.ensureMoneyEvent(householdId, eventId);
-    // An edit that touches `category` must not blank it — category is required.
-    // (Omitting the field entirely leaves the existing category untouched.)
-    if (payload.category !== undefined) {
-      this.assertCategoryPresent(payload.category);
-    }
+    // An edit that touches the category must not blank it — a category is
+    // required. (Omitting the field entirely leaves the existing one untouched.)
+    const nextCategoryId =
+      payload.categoryId === undefined
+        ? event.categoryId
+        : await this.resolveCategoryIdOrThrow(householdId, payload.categoryId);
     // A repayment recorded against a bank/institution debt is locked — its
     // amount and schedule are fixed. Reject the edit before touching anything.
     // (The debt's own borrow inflow is not a repayment, so re-dating it on a
@@ -437,7 +486,7 @@ export class MoneyEventsService {
         nextType,
         payload.direction ?? event.direction,
       ),
-      category: payload.category ?? event.category,
+      categoryId: nextCategoryId,
       isoDate: payload.isoDate ?? event.isoDate,
       amount: payload.amount ?? event.amount,
       feeAmount: payload.feeAmount ?? event.feeAmount,

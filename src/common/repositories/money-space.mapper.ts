@@ -71,21 +71,6 @@ export function nullableDate(value: string | null | undefined) {
 }
 
 /**
- * `category` is now a free-form CODE (backed by the `money_event_categories`
- * table, not a Postgres enum). Keep any non-empty, well-formed code as-is —
- * existence against the household's + system categories is validated at the
- * service layer. Falls back to `other` only when empty/blank.
- *
- * Note: this replaces the old enum coercion, which silently rewrote codes not
- * in the fixed enum (e.g. `interest`, used for saving-deposit interest events)
- * to `other` — a real data-loss bug.
- */
-export function normalizeMoneyEventCategory(category?: string): string {
-  const code = category?.trim();
-  return code && code.length > 0 ? code : 'other';
-}
-
-/**
  * Normalize the `households.config` jsonb into a typed {@link HouseholdConfig}.
  * Prisma returns jsonb already parsed (object), but a raw SQL path may hand back
  * a string — tolerate both, and never throw on malformed data (fall back to {}).
@@ -104,9 +89,9 @@ function mapHouseholdConfig(value: unknown): HouseholdConfig {
   }
   const source = raw as Record<string, unknown>;
   const config: HouseholdConfig = {};
-  const defaultCode = source.defaultEventCategoryCode;
-  if (typeof defaultCode === 'string' && defaultCode.length > 0) {
-    config.defaultEventCategoryCode = defaultCode;
+  const defaultCategoryId = source.defaultEventCategoryId;
+  if (typeof defaultCategoryId === 'string' && defaultCategoryId.length > 0) {
+    config.defaultEventCategoryId = defaultCategoryId;
   }
   const displayCurrency = source.displayCurrency;
   if (
@@ -138,6 +123,8 @@ export function mapMoneyEventCategory(row: DbRow): MoneyEventCategory {
     householdId: row.householdId ?? row.household_id ?? null,
     code: row.code,
     label: row.label,
+    iconKey: row.iconKey ?? row.icon_key ?? null,
+    iconColor: row.iconColor ?? row.icon_color ?? null,
     isSystem: row.isSystem ?? row.is_system ?? false,
     sortOrder: row.sortOrder ?? row.sort_order ?? 0,
     // Default-ness is per-household (pointer on households.config), not a row
@@ -473,7 +460,7 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     note: row.description ?? '',
     isoDate: dateOnly(row.eventDate ?? row.event_date),
     type: row.eventType ?? row.event_type,
-    category: row.category,
+    categoryId: row.categoryId ?? row.category_id,
     direction: row.direction,
     fromAssetId: row.fromAssetId ?? row.from_asset_id ?? undefined,
     toAssetId: row.toAssetId ?? row.to_asset_id ?? undefined,
@@ -483,6 +470,9 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     upcomingPaymentId:
       row.cashflowEventId ?? row.cashflow_event_id ?? undefined,
     debtId: row.debtId ?? row.debt_id ?? undefined,
+    // Who recorded it. Read both spellings: raw SQL yields snake_case rows while
+    // the Prisma client yields camelCase.
+    createdById: row.createdById ?? row.created_by ?? undefined,
   };
 }
 
@@ -491,6 +481,7 @@ export function mapCashflowEvent(row: DbRow): CashflowEvent {
     id: row.id,
     householdId: row.householdId ?? row.household_id,
     name: row.name,
+    categoryId: row.categoryId ?? row.category_id,
     amount: numberFromDb(row.amount),
     direction: row.direction,
     expectedDate: dateOnly(row.expectedDate ?? row.expected_date),

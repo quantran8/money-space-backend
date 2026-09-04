@@ -31,7 +31,7 @@ export class MoneyEventCategoriesController {
   }
 
   /**
-   * Set (or clear) the household's default money-event category by CODE. Works
+   * Set (or clear) the household's default money-event category by ID. Works
    * for system and custom categories alike (the default is a per-household
    * pointer, not a row flag). Declared before `:categoryId` so the fixed
    * "default" segment isn't captured as a category id.
@@ -41,7 +41,7 @@ export class MoneyEventCategoriesController {
     @Param('householdId') householdId: string,
     @Body() payload: SetDefaultCategoryDto,
   ) {
-    return this.service.setDefaultCategory(householdId, payload.code ?? null);
+    return this.service.setDefaultCategory(householdId, payload.categoryId ?? null);
   }
 
   @Patch(':categoryId')

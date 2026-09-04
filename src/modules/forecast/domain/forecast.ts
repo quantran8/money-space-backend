@@ -112,6 +112,7 @@ export function runForecast(input: ForecastInput): ForecastResult {
         isSynthetic: event.isSynthetic === true,
         date: occurrence.date,
         name: event.name,
+        categoryId: event.categoryId ?? null,
         direction: event.direction,
         amount: event.amount,
         requirement: event.requirement,

@@ -112,6 +112,7 @@ export class PrismaForecastRepository
       return {
         id: event.id,
         name: event.name,
+        categoryId: event.categoryId ?? null,
         direction: event.direction,
         amount: event.amount,
         expectedDate: event.expectedDate,

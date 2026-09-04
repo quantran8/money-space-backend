@@ -54,10 +54,18 @@ export interface MoneyEvent {
   note: string;
   isoDate: string;
   type: MoneyEventType;
-  category: string;
+  /** FK to `money_event_categories.id` (was a free code string). */
+  categoryId: string;
   direction: MoneyDirection;
   fromAssetId?: string;
   toAssetId?: string;
   upcomingPaymentId?: string;
   debtId?: string;
+  /**
+   * Profile id of whoever recorded the event (`money_events.created_by`, NOT
+   * NULL). Distinct from the privacy owner. Clients resolve it against the
+   * household's members to name the person; a creator who has since left the
+   * household resolves to nothing and the row falls back to the household.
+   */
+  createdById?: string;
 }

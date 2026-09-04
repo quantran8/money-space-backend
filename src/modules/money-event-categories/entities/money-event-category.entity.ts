@@ -9,6 +9,12 @@ export interface MoneyEventCategory {
   /** Human label (seed/default language). Kept for admin display + fallback;
    *  the localized name comes from i18n keyed by `code`. */
   label: string;
+  /** Glyph key the client maps to an icon component. NULL = none chosen; the
+   *  client falls back. Stored per row so custom categories get a glyph too. */
+  iconKey: string | null;
+  /** Disc fill (hex string). NULL = the client's neutral default. The glyph
+   *  itself is always drawn white over whatever this is. */
+  iconColor: string | null;
   /** System rows are seeded, shared, and cannot be edited or deleted. */
   isSystem: boolean;
   sortOrder: number;

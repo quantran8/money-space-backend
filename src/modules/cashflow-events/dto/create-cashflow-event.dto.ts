@@ -7,6 +7,9 @@ import type {
 
 export interface CreateCashflowEventDto {
   name: string;
+  /** FK to `money_event_categories.id`. Falls back to the system `other`
+   *  category when omitted. */
+  categoryId?: string;
   amount: number;
   direction: CashflowDirection;
   expectedDate: string;

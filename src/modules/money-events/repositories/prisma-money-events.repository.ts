@@ -4,7 +4,6 @@ import { uuidv7 } from '../../../common/utils/uuid';
 import {
   mapHousehold,
   mapMoneyEvent,
-  normalizeMoneyEventCategory,
 } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
@@ -63,7 +62,7 @@ export class PrismaMoneyEventsRepository
 
   private buildEventFilter(
     householdId: string,
-    filter: { month?: string; type?: string; category?: string },
+    filter: { month?: string; type?: string; categoryId?: string },
   ): Prisma.MoneyEventWhereInput {
     const where: Prisma.MoneyEventWhereInput = {
       householdId,
@@ -76,8 +75,8 @@ export class PrismaMoneyEventsRepository
       where.eventType =
         filter.type as Prisma.EnumMoneyEventTypeFilter['equals'];
     }
-    if (filter.category) {
-      where.category = filter.category;
+    if (filter.categoryId) {
+      where.categoryId = filter.categoryId;
     }
     return where;
   }
@@ -87,7 +86,7 @@ export class PrismaMoneyEventsRepository
     filter: {
       month?: string;
       type?: string;
-      category?: string;
+      categoryId?: string;
       limit?: number;
     },
   ): Promise<{ items: MoneyEvent[]; total: number }> {
@@ -165,19 +164,45 @@ export class PrismaMoneyEventsRepository
     return event ? mapMoneyEvent(event) : undefined;
   }
 
+  async resolveCategoryId(
+    householdId: string,
+    ref: { categoryId?: string; code?: string },
+  ): Promise<string | undefined> {
+    const scope = [{ householdId: null }, { householdId }];
+
+    if (ref.categoryId) {
+      const row = await this.prisma.moneyEventCategory.findFirst({
+        where: { id: ref.categoryId, deletedAt: null, OR: scope },
+        select: { id: true },
+      });
+      if (row) return row.id;
+    }
+
+    if (ref.code) {
+      const rows = await this.prisma.moneyEventCategory.findMany({
+        where: { code: ref.code, deletedAt: null, OR: scope },
+        select: { id: true, householdId: true },
+      });
+      // The household's own row wins over a system row sharing the code.
+      const own = rows.find((row) => row.householdId === householdId);
+      return (own ?? rows[0])?.id;
+    }
+
+    return undefined;
+  }
+
   async insertMoneyEvent(event: MoneyEvent): Promise<void> {
     // Single round-trip: insert the money event while deriving `created_by`
     // from the household row in one statement. If the household doesn't exist
     // (or is soft-deleted) the SELECT yields no row, nothing is inserted, and
     // we surface a 404 — matching the previous assertHousehold behaviour.
     const eventDate = this.toDate(event.isoDate);
-    const category = normalizeMoneyEventCategory(event.category);
 
     // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills it
     // on ORM writes, but a raw INSERT must set it explicitly.
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO money_events
-        (id, household_id, description, event_type, category, amount,
+        (id, household_id, description, event_type, category_id, amount,
          fee_amount, sold_quantity, sold_value, currency, event_date, direction,
          from_asset_id, to_asset_id,
          cashflow_event_id, debt_id, created_by, updated_at)
@@ -186,7 +211,7 @@ export class PrismaMoneyEventsRepository
         h.id,
         ${event.note},
         ${event.type}::"MoneyEventType",
-        ${category},
+        ${event.categoryId}::uuid,
         ${event.amount}::numeric,
         ${event.feeAmount ?? 0}::numeric,
         ${event.soldQuantity ?? null}::numeric,
@@ -218,7 +243,7 @@ export class PrismaMoneyEventsRepository
       data: {
         description: event.note,
         eventType: event.type,
-        category: normalizeMoneyEventCategory(event.category),
+        categoryId: event.categoryId,
         amount: event.amount,
         feeAmount: event.feeAmount ?? 0,
         soldQuantity: event.soldQuantity ?? null,

@@ -95,6 +95,8 @@ export class PrismaMoneyEventCategoriesRepository
         householdId: category.householdId,
         code: category.code,
         label: category.label,
+        iconKey: category.iconKey,
+        iconColor: category.iconColor,
         isSystem: category.isSystem,
         sortOrder: category.sortOrder,
       },
@@ -109,6 +111,8 @@ export class PrismaMoneyEventCategoriesRepository
       where: { id },
       data: {
         label: category.label,
+        iconKey: category.iconKey,
+        iconColor: category.iconColor,
         sortOrder: category.sortOrder,
       },
     });
@@ -121,16 +125,16 @@ export class PrismaMoneyEventCategoriesRepository
     });
   }
 
-  async setDefaultCategoryCode(
+  async setDefaultCategoryId(
     householdId: string,
-    code: string | null,
+    categoryId: string | null,
   ): Promise<void> {
     // Merge into the existing jsonb config (`||` preserves other keys); clearing
     // the default removes just that key so the bag doesn't accumulate nulls.
-    if (code === null) {
+    if (categoryId === null) {
       await this.prisma.$executeRaw`
         UPDATE households
-        SET config = (COALESCE(config, '{}'::jsonb) - 'defaultEventCategoryCode')
+        SET config = (COALESCE(config, '{}'::jsonb) - 'defaultEventCategoryId')
         WHERE id = ${householdId}::uuid
           AND deleted_at IS NULL
       `;
@@ -139,17 +143,34 @@ export class PrismaMoneyEventCategoriesRepository
     await this.prisma.$executeRaw`
       UPDATE households
       SET config = COALESCE(config, '{}'::jsonb)
-        || jsonb_build_object('defaultEventCategoryCode', ${code}::text)
+        || jsonb_build_object('defaultEventCategoryId', ${categoryId}::text)
       WHERE id = ${householdId}::uuid
         AND deleted_at IS NULL
     `;
+  }
+
+  async findVisibleCategoryById(
+    householdId: string,
+    id: string,
+  ): Promise<MoneyEventCategory | undefined> {
+    const row = await this.prisma.moneyEventCategory.findFirst({
+      // System rows included, unlike `findHouseholdCategoryById`: an event may
+      // point at a shared system category as legitimately as at a custom one.
+      where: {
+        id,
+        deletedAt: null,
+        OR: [{ householdId: null }, { householdId }],
+      },
+    });
+
+    return row ? mapMoneyEventCategory(row) : undefined;
   }
 
   async findCategoryByCode(
     householdId: string,
     code: string,
   ): Promise<MoneyEventCategory | undefined> {
-    const row = await this.prisma.moneyEventCategory.findFirst({
+    const rows = await this.prisma.moneyEventCategory.findMany({
       where: {
         code,
         deletedAt: null,
@@ -157,6 +178,11 @@ export class PrismaMoneyEventCategoriesRepository
       },
     });
 
-    return row ? mapMoneyEventCategory(row) : undefined;
+    // The household's OWN row wins over a system row sharing the code.
+    // `createCategory` refuses to create such a shadow, but a code that was a
+    // household's before it was seeded as a system code can still produce one.
+    const own = rows.find((row) => row.householdId === householdId);
+    const resolved = own ?? rows[0];
+    return resolved ? mapMoneyEventCategory(resolved) : undefined;
   }
 }

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -11,9 +10,63 @@ import type { UpdateMoneyEventCategoryDto } from './dto/update-money-event-categ
 import { MONEY_EVENT_CATEGORIES_REPOSITORY } from './repositories/money-event-categories.repository.interface';
 import type { MoneyEventCategoriesRepository } from './repositories/money-event-categories.repository.interface';
 
-// Lowercase snake_case, matching the seeded system codes. Keeps codes usable as
-// i18n keys (`options.eventCategory.<code>`) on the client.
-const CODE_PATTERN = /^[a-z][a-z0-9_]*$/;
+// Glyph keys are kebab-case lucide icon names. Shape-checked only: the CLIENT
+// owns the key → component map and falls back on anything it does not know, so
+// pinning the valid set here would mean a backend release every time the client
+// adds a glyph.
+const ICON_KEY_PATTERN = /^[a-z][a-z0-9-]*$/;
+const ICON_KEY_MAX = 64;
+
+// 3- or 6-digit hex, with or without alpha (#RGB, #RRGGBB, #RRGGBBAA). The
+// disc's fill is a free colour choice, not a palette off the design tokens —
+// so this only checks it IS a colour, not which one.
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+// Empty string and null both mean "no custom fill". Normalizing them to null
+// keeps one representation in the column, so the client's default has one
+// case to check.
+function normalizeIconColor(iconColor: string | null | undefined): string | null {
+  if (iconColor === undefined || iconColor === null) return null;
+  const trimmed = iconColor.trim();
+  if (!trimmed) return null;
+  if (!HEX_COLOR_PATTERN.test(trimmed)) {
+    throw new BadRequestException(
+      'Category icon color must be a hex color (e.g. "#3B82F6").',
+    );
+  }
+  return trimmed.toLowerCase();
+}
+
+// Vietnamese diacritics -> ASCII, everything else collapsed to underscores.
+// `đ`/`Đ` survive NFD decomposition (it isn't a combining-mark form of `d`), so
+// they get an explicit pass before the generic strip.
+function slugify(label: string): string {
+  const ascii = label
+    .replace(/[đĐ]/g, 'd')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  const slug = ascii
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return slug || 'category';
+}
+
+// Empty string and null both mean "no glyph". Normalizing them to null keeps one
+// representation in the column, so the client's fallback has one case to check.
+function normalizeIconKey(iconKey: string | null | undefined): string | null {
+  if (iconKey === undefined || iconKey === null) return null;
+  const trimmed = iconKey.trim().toLowerCase();
+  if (!trimmed) return null;
+  if (trimmed.length > ICON_KEY_MAX || !ICON_KEY_PATTERN.test(trimmed)) {
+    throw new BadRequestException(
+      'Category icon key must be kebab-case letters and digits (a lucide icon name).',
+    );
+  }
+
+  return trimmed;
+}
 
 @Injectable()
 export class MoneyEventCategoriesService {
@@ -27,11 +80,17 @@ export class MoneyEventCategoriesService {
     const rows = await this.repository.findForHousehold(householdId);
     // Overlay per-household default-ness: the pointer lives on the household's
     // config, not on the (possibly shared) category rows.
-    const defaultCode = household.config.defaultEventCategoryCode;
-    const items = rows.map((category) => ({
-      ...category,
-      isDefault: !!defaultCode && category.code === defaultCode,
-    }));
+    const defaultId = household.config.defaultEventCategoryId;
+    const items = rows
+      .map((category) => ({
+        ...category,
+        isDefault: !!defaultId && category.id === defaultId,
+      }))
+      // The default leads the list wherever it is rendered — a picker, the
+      // settings card — so the row the household actually reaches for is not
+      // buried mid-alphabet. Everything after it keeps the repository's
+      // sortOrder/label order.
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
     return { householdId, items, total: items.length };
   }
 
@@ -43,14 +102,14 @@ export class MoneyEventCategoriesService {
    * household can see; a code it can't see (or a deleted one) is rejected. Pass
    * `code = null` to clear the default. Returns the updated category list.
    */
-  async setDefaultCategory(householdId: string, code: string | null) {
+  async setDefaultCategory(householdId: string, categoryId: string | null) {
     await this.repository.assertHousehold(householdId);
-    if (code !== null) {
-      const normalized = code.trim().toLowerCase();
+    if (categoryId !== null) {
+      const normalized = categoryId.trim();
       if (!normalized) {
-        throw new BadRequestException('A default category code is required.');
+        throw new BadRequestException('A default category id is required.');
       }
-      const category = await this.repository.findCategoryByCode(
+      const category = await this.repository.findVisibleCategoryById(
         householdId,
         normalized,
       );
@@ -59,9 +118,9 @@ export class MoneyEventCategoriesService {
           `Category "${normalized}" was not found for this household.`,
         );
       }
-      await this.repository.setDefaultCategoryCode(householdId, normalized);
+      await this.repository.setDefaultCategoryId(householdId, normalized);
     } else {
-      await this.repository.setDefaultCategoryCode(householdId, null);
+      await this.repository.setDefaultCategoryId(householdId, null);
     }
     return this.listCategories(householdId);
   }
@@ -72,20 +131,23 @@ export class MoneyEventCategoriesService {
   ): Promise<MoneyEventCategory> {
     await this.repository.assertHousehold(householdId);
 
-    const code = payload.code?.trim().toLowerCase();
     const label = payload.label?.trim();
-    if (!code || !CODE_PATTERN.test(code)) {
-      throw new BadRequestException(
-        'Category code must be lowercase letters, digits or underscores and start with a letter.',
-      );
-    }
     if (!label) {
       throw new BadRequestException('Category label is required.');
     }
-    // Code is unique per scope; a household can't shadow a system code either
-    // (the DB partial-unique indexes enforce this, but we surface a clean 409).
-    if (await this.repository.codeExists(householdId, code)) {
-      throw new ConflictException(`Category code "${code}" already exists.`);
+
+    // The code is ALWAYS derived from the label, never taken from the client —
+    // a household should never have to invent, see, or retry a lowercase
+    // snake_case slug by hand. Collisions (two categories sharing a slug, or a
+    // slug landing on a seeded system code) are resolved by appending "_2",
+    // "_3", ... rather than surfacing a 409 the label field gave no way to
+    // predict.
+    const base = slugify(label);
+    let code = base;
+    let suffix = 2;
+    while (await this.repository.codeExists(householdId, code)) {
+      code = `${base}_${suffix}`;
+      suffix += 1;
     }
 
     const sortOrder =
@@ -97,6 +159,8 @@ export class MoneyEventCategoriesService {
       householdId,
       code,
       label,
+      iconKey: normalizeIconKey(payload.iconKey),
+      iconColor: normalizeIconColor(payload.iconColor),
       isSystem: false,
       sortOrder,
       // A freshly created category is never the default until explicitly set.
@@ -122,6 +186,15 @@ export class MoneyEventCategoriesService {
     const next: MoneyEventCategory = {
       ...existing,
       label: label ?? existing.label,
+      // Absent leaves the glyph alone; an explicit null clears it.
+      iconKey:
+        payload.iconKey === undefined
+          ? existing.iconKey
+          : normalizeIconKey(payload.iconKey),
+      iconColor:
+        payload.iconColor === undefined
+          ? existing.iconColor
+          : normalizeIconColor(payload.iconColor),
       sortOrder: payload.sortOrder ?? existing.sortOrder,
     };
 
@@ -136,8 +209,8 @@ export class MoneyEventCategoriesService {
     // pointer so the form doesn't try to auto-select a code that no longer
     // exists. (assertHousehold already ran inside ensureCustomCategory.)
     const household = await this.repository.assertHousehold(householdId);
-    if (household.config.defaultEventCategoryCode === existing.code) {
-      await this.repository.setDefaultCategoryCode(householdId, null);
+    if (household.config.defaultEventCategoryId === existing.id) {
+      await this.repository.setDefaultCategoryId(householdId, null);
     }
     return { deleted: true, categoryId: id };
   }
