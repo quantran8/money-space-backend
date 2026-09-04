@@ -13,6 +13,7 @@ import { VnstockCommodityProvider } from './providers/vnstock-commodity.provider
 import { NoopCommodityProvider } from './providers/noop-commodity.provider';
 import { COMMODITY_PROVIDER } from './providers/commodity-provider.interface';
 import type { CommodityProvider } from './providers/commodity-provider.interface';
+import { CommodityPriceProvider } from './providers/commodity-price.provider';
 import { CompositePriceProvider } from './providers/composite-price.provider';
 import { PRICE_PROVIDER } from './providers/price-provider.interface';
 import type { PriceProvider } from './providers/price-provider.interface';
@@ -46,6 +47,7 @@ import {
     TwelveDataPriceProvider,
     CoinMarketCapPriceProvider,
     VnstockPriceProvider,
+    CommodityPriceProvider,
     {
       // Route each class to the provider that quotes it (see `provider-routing`);
       // with no key configured at all, fall back to the noop provider so
@@ -55,11 +57,13 @@ import {
         twelveData: TwelveDataPriceProvider,
         coinMarketCap: CoinMarketCapPriceProvider,
         vnstock: VnstockPriceProvider,
+        commodity: CommodityPriceProvider,
         noop: NoopPriceProvider,
       ): PriceProvider => {
         const routes = priceRoutes(providerKeysFromEnv(), {
           twelveData,
           coinMarketCap,
+          commodity,
         });
         // vnstock needs no key, so there is always at least this route.
         const overrides = priceOverrides({ vnstock });
@@ -71,6 +75,7 @@ import {
         TwelveDataPriceProvider,
         CoinMarketCapPriceProvider,
         VnstockPriceProvider,
+        CommodityPriceProvider,
         NoopPriceProvider,
       ],
     },

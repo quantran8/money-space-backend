@@ -7,8 +7,20 @@ import { FxRate } from '../entities/fx-rate.entity';
 import type { SymbolRequest } from '../providers/symbol-request';
 import { MarketDataRepository } from './market-data.repository.interface';
 
-/** Classes the batched provider can price; gold & FX stay on other sources. */
-const PROVIDER_ASSET_CLASSES: AssetClass[] = ['stock', 'fund', 'crypto'];
+/**
+ * Classes the batched provider can price. Gold and foreign currency are quoted
+ * by the commodity feed rather than the instrument providers, but they route
+ * through the same composite (see `CommodityPriceProvider`) — leaving them out
+ * here kept them out of `getMarketPrices()` entirely, so every such holding was
+ * valued at its stored purchase price forever.
+ */
+const PROVIDER_ASSET_CLASSES: AssetClass[] = [
+  'stock',
+  'fund',
+  'crypto',
+  'gold',
+  'foreign_currency',
+];
 
 @Injectable()
 export class PrismaMarketDataRepository

@@ -271,7 +271,10 @@ export function fxRateToVnd(
  * kept in chỉ, lượng or gram. Every other class quotes in the same unit it is
  * held in, and a quote already carrying the position's unit is returned as-is.
  */
-function priceInPositionUnit(quote: MarketPrice, positionUnit: string): number {
+export function priceInPositionUnit(
+  quote: MarketPrice,
+  positionUnit: string,
+): number {
   if (quote.assetClass !== 'gold') return quote.price;
   if (quote.unit.trim().toLowerCase() === positionUnit.trim().toLowerCase()) {
     return quote.price;

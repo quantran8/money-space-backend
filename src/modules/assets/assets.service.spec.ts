@@ -48,6 +48,86 @@ describe('AssetsService', () => {
     };
   }
 
+  /**
+   * `listAssets` decorates each position with today's quote. Gold is published
+   * per lượng, so a holding counted in chỉ must be restated — the raw figure is
+   * 10x the position's own unit, and the sale/purchase dialogs seed their đồng
+   * field straight from it, labelled "per <position unit>".
+   */
+  describe('listAssets market price', () => {
+    function goldHarness(unit: string, pricePerLuong: number) {
+      const asset = {
+        id: 'asset-gold',
+        householdId: 'household-1',
+        name: 'NHẪN TRÒN TRƠN',
+        type: 'gold',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'gold',
+          symbol: 'NHẪN TRÒN TRƠN',
+          quantity: 1,
+          unit,
+          quoteCurrency: 'VND',
+          purchasePrice: 15_120_000,
+        },
+      } as unknown as Asset;
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetsByHousehold: jest.fn().mockResolvedValue([asset]),
+        getFxRates: jest.fn().mockResolvedValue([]),
+      } as unknown as AssetsRepository;
+      const marketData = {
+        getMarketPrices: jest.fn().mockResolvedValue([
+          {
+            assetClass: 'gold',
+            symbol: 'NHẪN TRÒN TRƠN',
+            price: pricePerLuong,
+            unit: 'lượng',
+            quoteCurrency: 'VND',
+            priceTime: '2026-09-03T17:00:00.000Z',
+            source: 'giavangnet',
+          },
+        ]),
+      } as unknown as MarketDataService;
+      return new AssetsService(
+        repository,
+        {
+          runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+            work(),
+          ),
+        } as unknown as PrismaService,
+        marketData,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      );
+    }
+
+    it('states the quote per the position unit, not per lượng', async () => {
+      const service = goldHarness('chỉ', 150_500_000);
+
+      const { items } = await service.listAssets('household-1');
+
+      // 150,500,000/lượng → 15,050,000/chỉ, the same basis as `purchasePrice`
+      // beside it and as `currentValue`.
+      expect(items[0].marketPosition?.marketPrice).toBe(15_050_000);
+      expect(items[0].currentValue).toBe(15_050_000);
+    });
+
+    it('leaves a holding already counted in lượng alone', async () => {
+      const service = goldHarness('lượng', 150_500_000);
+
+      const { items } = await service.listAssets('household-1');
+
+      expect(items[0].marketPosition?.marketPrice).toBe(150_500_000);
+    });
+  });
+
   it('records an asset_purchase when a same-symbol position is increased', async () => {
     const existing: Asset = {
       id: 'asset-btc',

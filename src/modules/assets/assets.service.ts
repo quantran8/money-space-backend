@@ -62,6 +62,7 @@ import {
   liquidityForAsset,
   marketUnitForAssetType,
   normalizeCountsAsFlexible,
+  priceInPositionUnit,
   quoteFor,
 } from '../../common/utils/money-space.utils';
 import type { CreateAssetDto } from './dto/create-asset.dto';
@@ -158,6 +159,14 @@ export class AssetsService {
    * The price is carried in the instrument's OWN currency, never converted:
    * `quoteFor` matches on class + symbol only, so a USD instrument returns a USD
    * figure and the client decides what it may do with it.
+   *
+   * The **unit** is converted, though — `marketPrice` is stated per one of the
+   * position's own units, the same basis as `purchasePrice`/`lastPrice` beside
+   * it, so every price on a position means the same thing. Gold is the only
+   * class where that differs from the quote (dealers publish per lượng), and
+   * handing the raw per-lượng figure to a holding counted in chỉ overstated it
+   * 10x — the sale/purchase dialogs seed their đồng field from this and label it
+   * "per <position unit>". See [[asset-valuation]].
    */
   private withMarketPrice(asset: Asset, marketPrices: MarketPrice[]): Asset {
     if (!asset.marketPosition || marketPrices.length === 0) return asset;
@@ -173,7 +182,7 @@ export class AssetsService {
       ...asset,
       marketPosition: {
         ...asset.marketPosition,
-        marketPrice: quote.price,
+        marketPrice: priceInPositionUnit(quote, asset.marketPosition.unit),
         marketPriceCurrency: quote.quoteCurrency,
         marketPriceAt: quote.priceTime,
       },

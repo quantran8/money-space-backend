@@ -31,6 +31,17 @@ Single dispatch entry point. Returns VND, or `null`/`0` when a price is unknown.
   - **Price source precedence**: `marketPosition.lastPrice` (latest manual
     price) → `quoteFor()` market-price cache → original `purchasePrice`
     as the final fallback/cost basis.
+  - **Every class must have a route into that cache, or it silently prices at
+    cost.** Gold and foreign currency come from the commodity feed rather than
+    the instrument providers, and were absent from `getMarketPrices()` entirely
+    — excluded both by `PROVIDER_ASSET_CLASSES` (the symbol-universe query) and
+    by `priceRoutes`. Both classes therefore fell to the `purchasePrice`
+    fallback: the endpoint returned the cost basis and the nightly cron wrote it
+    into `asset_value_history`, so the curve was flat at cost rather than
+    tracking the dealer price. `CommodityPriceProvider` closes that gap — see
+    [[market-data]]. The fallback is silent by design (an unpriced symbol must
+    not fail a request), so adding a class means adding its route in the same
+    change.
   - `purchasePrice` is persisted on `asset_market_positions.purchase_price` as the
     original purchase/cost price and is not overwritten by revaluation.
     `lastPrice` / `lastPriceAt` are persisted in `last_price` / `last_price_at`
@@ -261,13 +272,20 @@ Rules that follow from this:
 - The form keys its prefill on the **chosen** unit, not the quote's: one
   response now covers all three, so keying on `quote.unit` would stop
   re-prefilling when the user switches.
+- **`marketPosition.marketPrice`** (today's quote, attached per response by
+  `listAssets`) is stated **per the position's own unit** too, via the same
+  `priceInPositionUnit`. It sits beside `purchasePrice`/`lastPrice` and the
+  sale/purchase dialogs seed their đồng field from it and label it
+  "per <position unit>" — so handing over the raw per-lượng figure showed a gold
+  holding counted in chỉ at 10x, and pre-filled a sale at ten times the real
+  price. `currentValue` was always right; only this display/seed field was not.
 - `purchasePrice` and `lastPrice` are already stored **per the position's own
   unit**; only the shared market-cache quote needs restating.
 
 ## Where it lives in code
 
 - **frontend-web**: `src/features/assets/model/assets.ts` (`valuationModeForType`, `defaultLiquidityForType`, `computeCurrentValue`, `computeMaturityValue`). Market pricing stubbed in `src/features/assets/api/assets.repository.ts` (`latestPrice→null`, `fxToVnd→1`). Asset detail page + value-history chart: `src/features/assets/ui/asset-detail-page.tsx`, `use-asset-detail.ts` (reads the `value-history` endpoint), `asset-value-chart.tsx`.
-- **backend**: `src/common/utils/money-space.utils.ts` (`VALUATION_MODE_BY_TYPE`, `computeCurrentValue`, `priceInPositionUnit`, `fxRateToVnd`, `computeLiquidityTotals`); `src/modules/assets/` (`normalizeAsset`, `upsertCurrentValuation`); `src/modules/market-data/gold-units.ts` (the lượng/chỉ/gram ratios — the single copy).
+- **backend**: `src/common/utils/money-space.utils.ts` (`VALUATION_MODE_BY_TYPE`, `computeCurrentValue`, `priceInPositionUnit`, `fxRateToVnd`, `computeLiquidityTotals`); `src/modules/assets/` (`normalizeAsset`, `upsertCurrentValuation`, `withMarketPrice`); `src/modules/market-data/gold-units.ts` (the lượng/chỉ/gram ratios — the single copy).
 - **mobile-app**: to be ported — must mirror the same tables and formulas.
 
 ## Enums
