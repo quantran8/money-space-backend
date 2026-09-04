@@ -42,33 +42,56 @@ settle a given cashflow event.
 
 **No `title` field.** The free-text `title` was dropped from money events — the
 **note** is now the descriptive label and `category` is the classification. The
-record form no longer has a "Nội dung" field; the note carries the description
-(the form auto-fills a sensible note for transfer /
-payment_paid when the user leaves it blank, e.g. `Chuyển từ … sang …`, `Đã trả
-…`). Everywhere the UI used to show `title` (events timeline / `record-card` /
-data table, dashboard recents, debt & asset history rows) it now shows the note,
-falling back to the translated category label when the note is empty. The
-timeline's `FinancialRecordItem` keeps a derived `title` (note-or-category)
-purely as the display label — it is not a stored event field.
+record form no longer has a "Nội dung" field; the note carries the description.
+**An empty note is a real, displayable state, not something to placeholder** —
+`use-events-page.ts` sends exactly `values.note.trim()` on create/edit/revalue,
+with no fallback text. This was previously wrong: the form used to synthesize
+`t('common.noAdditionalNote')` ("Chưa có ghi chú thêm.") or an auto-generated
+transfer sentence (`Chuyển từ … sang …`) whenever the note was left blank, and
+`CashflowEventsService.completeCashflowEvent` fell back to the cashflow event's
+own `name` — all removed, because the read side already has a real fallback
+(see next sentence) and synthesized text is indistinguishable from something
+the user actually typed. Everywhere the UI used to show `title` (events
+timeline / `record-card` / dashboard recents, debt & asset history rows) it now
+shows the note, falling back to the translated **category** label when the note
+is empty. The timeline's `FinancialRecordItem` keeps a derived `title`
+(note-or-category) purely as the display label — it is not a stored event
+field.
 
-**`category` is REQUIRED and a free-form CODE**, not a fixed enum — backed by the
-`money_event_categories` table (seeded system rows with `household_id IS NULL` +
-per-household custom rows). Adding a category is a data insert, not a schema
-change. It is mandatory: the record form requires the "Danh mục" picker for
+**`category_id` is REQUIRED and a real FOREIGN KEY** to `money_event_categories`
+(seeded system rows with `household_id IS NULL` + per-household custom rows).
+Adding a category is a data insert, not a schema change.
+
+It was a free TEXT *code* until migration `20260904090000_category_id_foreign_key`,
+resolved against the table at the app layer only. Why it could not be an FK
+before: `code` is unique only per SCOPE — a partial unique index per household
+plus another for the global rows — so no single unique constraint covered it
+and nothing could reference it. `id` is a global PK, so `category_id` can.
+The old `category` column is **dropped**, not kept alongside: one source of
+truth. Backfill resolved each row's code in the app's own lookup order (the
+household's own category first, then the shared system row), falling back to
+the system `other` row for anything unmatched.
+
+It is mandatory: the record form requires the "Danh mục" picker for
 expense/income (`buildActualSchema` superRefine — the auto-classified types
-derive it), and the backend rejects a blank category with a 400.
-`normalizeMoneyEventCategory` keeps any non-empty code (falls back to `other`
-only for internal auto-classified flows). The `interest` code
-(saving-deposit interest events) is a seeded system category — the old enum
-omitted it, so it was silently rewritten to `other` (fixed).
+derive it), and the backend rejects a missing or unresolvable category with a
+400 (`resolveCategoryIdOrThrow`, which also proves the id is one this household
+can actually see). Internal flows that classify on the user's behalf — a debt
+movement, saving-deposit interest, an asset purchase or sale — resolve a SYSTEM
+category by code through `systemCategoryId(householdId, code)` rather than
+writing a literal, since a code is no longer a storable value.
 
 **Category UI (not free-text).** The record form's "Danh mục" field is a
-`<Select>` bound to the category **code**, sourced from the
+`<Select>` whose option values are category **ids** (what an event stores),
+sourced from the
 `money_event_categories` table via `useEventCategories` → `categoryOptions` in
 `use-events-page.ts` (system rows + this household's custom rows). The **display
-label always follows the user's language via the code**:
+label always follows the user's language via the row's CODE**:
 `t('options.eventCategory.<code>', { defaultValue: dbLabel })` — the DB `label` is
-only a fallback for custom codes with no i18n key. Households manage their own
+only a fallback for custom codes with no i18n key. Since an event carries only
+the id, every surface that renders one resolves id → {label, iconKey, iconColor}
+through `useCategoryVisuals()` (core), shared by the events timeline, the
+dashboard's spending rows and both category pickers. Households manage their own
 categories (add / edit label / delete) from the **Settings page**
 (`settings/ui/components/categories-card.tsx`); system rows are read-only. Backend
 CRUD lives at `/api/households/:id/money-event-categories`
@@ -77,15 +100,43 @@ immutable** on update — renaming would orphan events pointing at it; create a 
 category and re-tag instead.
 
 **Default category (`isDefault`).** A household can mark **one** category as its
-default; the create form auto-selects it (`defaultCategoryCode` memo in
-`use-events-page.ts` prefills `category` on the create reset). Each
-`EventCategoryItem` carries `isDefault` (computed by the backend from the
-household's config pointer — works for system OR custom codes; see backend
-memory). The Settings → Categories card (`categories-card.tsx`) shows a **star
-toggle** per row: clicking sets that code as default (clearing the previous),
-clicking the current default clears it — via `PUT
-/money-event-categories/default` with `{ code }` / `{ code: null }`
-(`setDefaultEventCategory` → `useEventCategories().setDefaultCategory`).
+default; the create form auto-selects it (`defaultCategoryId` memo in
+`use-events-page.ts` prefills the form's `category` field — which holds an id —
+on the create reset). Each `EventCategoryItem` carries `isDefault` (computed by
+the backend from the household's config pointer, `defaultEventCategoryId` —
+works for system OR custom rows; see backend memory). The Settings → Categories
+card (`categories-card.tsx`) shows a **star toggle** per row: clicking sets that
+category as default (clearing the previous), clicking the current default clears
+it — via `PUT /money-event-categories/default` with `{ categoryId }` /
+`{ categoryId: null }` (`setDefaultEventCategory` →
+`useEventCategories().setDefaultCategory`). The pointer was
+`defaultEventCategoryCode` until the FK migration, which rewrote it to the
+resolved id (dropping it entirely where the code no longer resolved, rather than
+silently repointing the household's choice at `other`).
+
+**The code is server-generated, never client-supplied, on create.** A
+household types only a label; `MoneyEventCategoriesService.createCategory`
+derives the code via `slugify()` (Vietnamese diacritics → ASCII — `đ`/`Đ`
+handled explicitly first, since NFD does not decompose them — then collapsed
+to `snake_case`) and resolves a collision (two labels producing the same slug,
+or a slug landing on a seeded system code) by appending `_2`, `_3`, ... The
+"Add category" dialog has no code field at all; `CreateMoneyEventCategoryDto.code`
+is optional and ignored if sent.
+
+**Icon and colour (`iconKey` / `iconColor`).** Every category — system and
+custom — carries an optional glyph key (a kebab-case lucide icon name, e.g.
+`piggy-bank`) and an optional hex fill (`#RRGGBB[AA]`) for the disc it renders
+as everywhere a category-carrying row or picker appears (`RecordCard`, the
+category `<Select>` in both the money-event and cashflow-event forms, the
+Settings card). The backend only shape-checks these — it does NOT pin the
+valid icon set, so a new glyph is a client-only change; the frontend owns the
+key→component map and always falls back rather than rendering a hole for an
+unrecognized key. The glyph draws **white** when a colour is set, neutral
+(`wash`/`ink2`) otherwise. The 16 seeded system categories were backfilled with
+icon keys in migration `20260903100000`; colours were left unset (household
+choice). Custom categories pick both via the Settings card's icon/colour
+picker; system rows keep their seeded glyph and no colour, same read-only rule
+as their code.
 
 ## Direction derivation (`deriveDirection` / `getDirectionFromEventType`)
 

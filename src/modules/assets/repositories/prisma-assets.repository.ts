@@ -174,7 +174,7 @@ export class PrismaAssetsRepository
     // household in one round-trip, like `insertAsset`/`insertMoneyEvent`.
     await this.prisma.$executeRaw`
       INSERT INTO money_events
-        (id, household_id, description, event_type, category, amount,
+        (id, household_id, description, event_type, category_id, amount,
          fee_amount, currency, event_date, direction, to_asset_id,
          created_by, updated_at)
       SELECT
@@ -182,7 +182,9 @@ export class PrismaAssetsRepository
         h.id,
         ${event.note ?? ''},
         'asset_update'::"MoneyEventType",
-        'other',
+        (SELECT c.id FROM money_event_categories c
+         WHERE c.household_id IS NULL AND c.code = 'other'
+           AND c.deleted_at IS NULL LIMIT 1),
         ${event.amount}::numeric,
         0::numeric,
         'VND',
@@ -214,7 +216,7 @@ export class PrismaAssetsRepository
     // so the position stays the single source of the asset's value.
     await this.prisma.$executeRaw`
       INSERT INTO money_events
-        (id, household_id, description, event_type, category, amount,
+        (id, household_id, description, event_type, category_id, amount,
          fee_amount, currency, event_date, direction, to_asset_id,
          quantity_before, quantity_after, created_by, updated_at)
       SELECT
@@ -222,7 +224,9 @@ export class PrismaAssetsRepository
         h.id,
         ${event.note ?? ''},
         'asset_quantity_adjustment'::"MoneyEventType",
-        'other',
+        (SELECT c.id FROM money_event_categories c
+         WHERE c.household_id IS NULL AND c.code = 'other'
+           AND c.deleted_at IS NULL LIMIT 1),
         ${event.amount}::numeric,
         0::numeric,
         'VND',
@@ -260,7 +264,7 @@ export class PrismaAssetsRepository
     const fundingAssetId = event.fundingAssetId ?? null;
     await this.prisma.$executeRaw`
       INSERT INTO money_events
-        (id, household_id, description, event_type, category, amount,
+        (id, household_id, description, event_type, category_id, amount,
          fee_amount, currency, event_date, direction, from_asset_id, to_asset_id,
          created_by, updated_at)
       SELECT
@@ -268,7 +272,9 @@ export class PrismaAssetsRepository
         h.id,
         ${event.note},
         'asset_purchase'::"MoneyEventType",
-        'investment',
+        (SELECT c.id FROM money_event_categories c
+         WHERE c.household_id IS NULL AND c.code = 'investment'
+           AND c.deleted_at IS NULL LIMIT 1),
         ${event.amount}::numeric,
         0::numeric,
         'VND',

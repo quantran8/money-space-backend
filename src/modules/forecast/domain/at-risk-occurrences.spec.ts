@@ -15,6 +15,7 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
     name: 'TCB',
     value: 10 * M,
     liquidity: 'usable_now',
+    type: 'bank_account',
     valueUpdatedAt: '2026-08-13',
     ...over,
   };

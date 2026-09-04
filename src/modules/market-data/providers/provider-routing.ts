@@ -9,6 +9,9 @@ import type {
 /** Classes Twelve Data quotes when it is the one serving them. */
 const TWELVE_DATA_CLASSES: AssetClass[] = ['stock', 'fund', 'crypto'];
 
+/** Classes the commodity feed quotes; it needs no key, so they always route. */
+const COMMODITY_CLASSES: AssetClass[] = ['gold', 'foreign_currency'];
+
 /** Venues that identify a Vietnamese listing. */
 const VN_MARKETS: ReadonlySet<string> = new Set([
   'HOSE',
@@ -37,7 +40,11 @@ export function isVietnameseEquity(request: SymbolRequest): boolean {
  */
 export function priceRoutes(
   keys: ProviderKeys,
-  providers: { twelveData: PriceProvider; coinMarketCap: PriceProvider },
+  providers: {
+    twelveData: PriceProvider;
+    coinMarketCap: PriceProvider;
+    commodity: PriceProvider;
+  },
 ): Map<AssetClass, PriceProvider> {
   const routes = new Map<AssetClass, PriceProvider>();
   if (keys.twelveData) {
@@ -47,6 +54,12 @@ export function priceRoutes(
   }
   // Set last so it wins the crypto slot over Twelve Data.
   if (keys.coinMarketCap) routes.set('crypto', providers.coinMarketCap);
+  // Gold and FX come from the dealer/bank feed, which needs no key — so, like
+  // the reference-data routes below, these are always present. Without them the
+  // composite dropped both classes and the valuation engine never saw a quote.
+  for (const assetClass of COMMODITY_CLASSES) {
+    routes.set(assetClass, providers.commodity);
+  }
   return routes;
 }
 

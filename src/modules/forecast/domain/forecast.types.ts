@@ -1,5 +1,6 @@
 import type { IsoDate } from '../../../common/utils/clock';
 import type { RecurrenceFrequency } from '../../../common/utils/recurrence';
+import type { AssetType } from '../../assets/entities/asset.entity';
 import type {
   CashflowCertainty,
   CashflowDirection,
@@ -38,12 +39,17 @@ export interface ForecastLiquidSource {
   /** Already valued in the household currency. */
   value: number;
   liquidity: 'usable_now' | 'not_immediately_usable' | 'long_term';
+  /** Carried for what-if's funding sale, which needs sellability by type. */
+  type: AssetType;
   valueUpdatedAt?: string | null;
 }
 
 export interface ForecastCashflowEvent {
   id: string;
   name: string;
+  /** FK to `money_event_categories.id`. Carried so the timeline can draw the
+   *  same category mark the recorded ledger draws. */
+  categoryId?: string | null;
   direction: CashflowDirection;
   amount: number;
   expectedDate: IsoDate;
@@ -105,6 +111,9 @@ export interface ForecastOccurrence {
   isSynthetic: boolean;
   date: IsoDate;
   name: string;
+  /** The source event's category, for the row's disc. Id only — the client
+   *  already holds the category list and resolves label/glyph/colour off it. */
+  categoryId?: string | null;
   direction: CashflowDirection;
   amount: number;
   requirement: CashflowRequirement;

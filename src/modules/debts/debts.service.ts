@@ -206,7 +206,10 @@ export class DebtsService {
               : `Vay: ${debt.name}`,
             isoDate: debt.borrowedAt ?? todayInTimeZone(),
             type: 'debt_update',
-            category: 'debt',
+            categoryId: await this.moneyEventsService.systemCategoryId(
+              householdId,
+              'debt',
+            ),
             // `debt_update` defaults to outflow; borrowed money comes IN, so
             // make the inflow explicit (explicit wins in `deriveDirection`).
             direction: 'inflow',
@@ -574,7 +577,10 @@ export class DebtsService {
                   : `Vay thêm: ${debt.name}`,
                 isoDate: effectiveDate,
                 type: 'debt_update',
-                category: 'debt',
+                categoryId: await this.moneyEventsService.systemCategoryId(
+                  householdId,
+                  'debt',
+                ),
                 // Inflow: credits the wallet, does NOT auto-reduce outstanding.
                 direction: 'inflow',
                 toAssetId: debt.receivedToAssetId,
@@ -603,7 +609,10 @@ export class DebtsService {
                 : `Điều chỉnh dư nợ: ${debt.name}`,
               isoDate: effectiveDate,
               type: 'adjustment',
-              category: 'debt',
+              categoryId: await this.moneyEventsService.systemCategoryId(
+                householdId,
+                'debt',
+              ),
               // Neutral: no wallet move, no auto-reduce — a bookkeeping record.
               direction: 'neutral',
               debtId: debt.id,

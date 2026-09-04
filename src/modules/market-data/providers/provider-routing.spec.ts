@@ -9,7 +9,8 @@ import type { SymbolReferenceProvider } from './symbol-reference-provider.interf
 
 const twelveData = { id: 'twelveData' } as unknown as PriceProvider;
 const coinMarketCap = { id: 'coinMarketCap' } as unknown as PriceProvider;
-const priceProviders = { twelveData, coinMarketCap };
+const commodity = { id: 'commodity' } as unknown as PriceProvider;
+const priceProviders = { twelveData, coinMarketCap, commodity };
 
 const refTwelveData = {
   id: 'twelveData',
@@ -27,8 +28,14 @@ const refProviders = {
 };
 
 describe('priceRoutes', () => {
-  it('routes nothing when no key is configured', () => {
-    expect(priceRoutes({}, priceProviders).size).toBe(0);
+  it('still routes gold and FX when no key is configured', () => {
+    const routes = priceRoutes({}, priceProviders);
+
+    // The commodity feed needs no key, so these two never depend on one.
+    expect(routes.get('gold')).toBe(commodity);
+    expect(routes.get('foreign_currency')).toBe(commodity);
+    expect(routes.get('stock')).toBeUndefined();
+    expect(routes.get('crypto')).toBeUndefined();
   });
 
   it('sends crypto to CoinMarketCap and equities to Twelve Data', () => {
@@ -56,19 +63,28 @@ describe('priceRoutes', () => {
     expect(routes.get('crypto')).toBe(twelveData);
   });
 
-  it('never routes classes neither provider quotes', () => {
+  it('sends gold and FX to the commodity feed, not the instrument providers', () => {
     const routes = priceRoutes(
       { twelveData: 'td', coinMarketCap: 'cmc' },
       priceProviders,
     );
-    expect(routes.get('gold')).toBeUndefined();
-    expect(routes.get('foreign_currency')).toBeUndefined();
+
+    // Leaving these unrouted dropped them from `getMarketPrices()`, so every
+    // gold/FX holding was valued at its purchase price forever.
+    expect(routes.get('gold')).toBe(commodity);
+    expect(routes.get('foreign_currency')).toBe(commodity);
   });
 
   it('ignores an empty-string key', () => {
-    expect(
-      priceRoutes({ twelveData: '', coinMarketCap: '' }, priceProviders).size,
-    ).toBe(0);
+    const routes = priceRoutes(
+      { twelveData: '', coinMarketCap: '' },
+      priceProviders,
+    );
+
+    expect(routes.get('stock')).toBeUndefined();
+    expect(routes.get('crypto')).toBeUndefined();
+    // Gold/FX are keyless, so they survive.
+    expect(routes.size).toBe(2);
   });
 });
 

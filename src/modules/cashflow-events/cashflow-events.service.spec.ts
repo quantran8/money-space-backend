@@ -48,7 +48,15 @@ describe('CashflowEventsService — completion (§18)', () => {
       runInTransaction: jest.fn(async (work: () => Promise<unknown>) => work()),
     } as never;
     const createMoneyEvent = jest.fn(async () => ({ id: 'me-1' }));
-    const moneyEvents = { createMoneyEvent } as never;
+    // `category` is an FK now, so the service resolves an id through
+    // MoneyEventsService before every create/update.
+    const systemCategoryId = jest.fn(async () => 'cat-other');
+    const resolveCategoryIdOrThrow = jest.fn(async (_hh: string, id: string) => id);
+    const moneyEvents = {
+      createMoneyEvent,
+      systemCategoryId,
+      resolveCategoryIdOrThrow,
+    } as never;
     // A usable_now wallet — the only kind that can settle an event.
     const getAssetDetail = jest.fn(async () => ({
       id: 'asset-vcb',
@@ -340,9 +348,16 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
       }),
       assertHousehold: jest.fn(async () => ({}) as never),
     } as never;
+    // `category` is an FK now: creating an event resolves the system `other`
+    // category through MoneyEventsService before it can build the row.
+    const moneyEvents = {
+      systemCategoryId: jest.fn(async () => 'cat-other'),
+      resolveCategoryIdOrThrow: jest.fn(async (_hh: string, id: string) => id),
+    } as never;
     const service = new CashflowEventsService(
       repository,
       {} as never,
+      moneyEvents,
       {} as never,
     );
     return { service, inserted };

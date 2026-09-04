@@ -1,6 +1,6 @@
 export interface ListMoneyEventsQuery {
   month?: string;
   type?: string;
-  category?: string;
+  categoryId?: string;
   limit?: string;
 }

@@ -852,6 +852,9 @@ model CashflowEvent {
   id                   String               @id @default(uuid(7)) @db.Uuid
   householdId          String               @map("household_id") @db.Uuid
   name                 String
+  // A real FK to `money_event_categories`, same as `money_events.category_id`.
+  // Completing an event carries it onto the money event it records.
+  categoryId           String               @map("category_id") @db.Uuid
   amount               Decimal              @default(0) @db.Decimal(14, 2)
   direction            CashflowDirection
   /// The CURRENT occurrence's date. Completing a recurring event advances this
@@ -901,6 +904,7 @@ model CashflowEvent {
   createdBy            Profile              @relation("CashflowEventCreatedBy", fields: [createdById], references: [id])
   updatedBy            Profile?             @relation("CashflowEventUpdatedBy", fields: [updatedById], references: [id])
   moneyEvents          MoneyEvent[]         @relation("MoneyEventCashflowEvent")
+  category             MoneyEventCategory   @relation("CashflowEventCategoryRef", fields: [categoryId], references: [id])
 
   @@index([householdId, expectedDate])
   @@index([householdId, status])
@@ -1066,10 +1070,11 @@ model MoneyEvent {
   householdId     String           @map("household_id") @db.Uuid
   description     String?
   eventType       MoneyEventType   @map("event_type")
-  // `category` is a free string CODE resolved against `money_event_categories`
-  // (seeded system rows + per-household custom rows) at the app layer — NOT a
-  // Postgres enum, so adding a category is a data insert, not a migration.
-  category        String           @default("other")
+  // A real FK to `money_event_categories`, not the free code string it used to
+  // be. `code` is only unique per household SCOPE (system rows share
+  // household_id NULL), so it could never be an FK target; `id` is a global PK
+  // and can. Adding a category is still a data insert, not a migration.
+  categoryId      String           @map("category_id") @db.Uuid
   amount          Decimal          @default(0) @db.Decimal(14, 2)
   feeAmount       Decimal          @default(0) @map("fee_amount") @db.Decimal(14, 2)
   soldQuantity    Decimal?         @map("sold_quantity") @db.Decimal(20, 8)
@@ -1111,6 +1116,7 @@ model MoneyEvent {
   createdBy       Profile          @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
   updatedBy       Profile?         @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
   valueHistory    AssetValuation[] @relation("MoneyEventValueHistory")
+  category        MoneyEventCategory @relation("MoneyEventCategoryRef", fields: [categoryId], references: [id])
 
   @@index([householdId, eventDate(sort: Desc)])
   @@index([fromAssetId])
@@ -1120,7 +1126,7 @@ model MoneyEvent {
   @@index([cashflowEventId])
   @@index([snapshotId])
   @@index([householdId, eventType])
-  @@index([householdId, category])
+  @@index([householdId, categoryId])
   @@map("money_events")
 }
 
@@ -1131,11 +1137,20 @@ model MoneyEventCategory {
   householdId String?    @map("household_id") @db.Uuid
   code        String
   label       String
+  // Glyph key the client maps to an icon component. On the ROW, not derived from
+  // `code`, so a household's custom category can pick a glyph too. NULL = none
+  // chosen; the client falls back.
+  iconKey     String?    @map("icon_key")
+  // Fill the disc renders as (a hex string, e.g. "#3B82F6"). NULL = the
+  // client's neutral default. The glyph itself is always drawn white over it.
+  iconColor   String?    @map("icon_color")
   isSystem    Boolean    @default(false) @map("is_system")
   sortOrder   Int        @default(0) @map("sort_order")
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   deletedAt   DateTime?  @map("deleted_at") @db.Timestamptz(6)
   household   Household? @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  moneyEvents     MoneyEvent[]    @relation("MoneyEventCategoryRef")
+  cashflowEvents  CashflowEvent[] @relation("CashflowEventCategoryRef")
 
   // A code is unique within its scope (global rows share householdId = NULL);
   // Postgres treats NULLs as distinct, so a partial unique index in the

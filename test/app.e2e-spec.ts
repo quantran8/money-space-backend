@@ -103,7 +103,7 @@ describe('AppModule integration', () => {
           note: 'Luong',
           isoDate: '2026-07-01',
           type: 'income',
-          category: 'income',
+          categoryId: 'cat-income',
           direction: 'inflow',
         },
       ]),

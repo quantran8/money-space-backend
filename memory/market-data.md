@@ -24,6 +24,9 @@ does **not** persist provider ticks in PostgreSQL.
   - Routing today: **crypto → CoinMarketCap** when `COIN_MARKETCAP_API_KEY` is
     set, **stock/fund (and crypto as fallback) → Twelve Data** when
     `TWELVEDATA_API_KEY` is set. CMC is applied last so it wins the crypto slot.
+    **gold & foreign_currency → `CommodityPriceProvider`**, always — the dealer
+    feed needs no key, so unlike the instrument classes these never depend on
+    one being configured.
   - **Per-position overrides** are checked *before* the class map, because
     `stock` is not served by one upstream: a **Vietnamese** listing goes to
     vnstock, a foreign one to Twelve Data. `isVietnameseEquity` decides from the
@@ -32,10 +35,39 @@ does **not** persist provider ticks in PostgreSQL.
     deliberately never used** — a bare code like `FPT` is a plausible foreign
     ticker too, so guessing from the string would misroute.
   - A class whose provider has **no key is left unrouted** → no quotes for it,
-    rather than calling an upstream with no credentials. With no key at all the
-    factory returns the noop provider.
+    rather than calling an upstream with no credentials. (Gold/FX are keyless,
+    so they are always routed and the map is never empty.)
   - A delegate that throws is logged and contributes nothing — one failing
     upstream must never blank out the classes another priced successfully.
+- **`CommodityPriceProvider`** puts gold and foreign currency behind the batched
+  `PriceProvider` interface, reading the same `getGoldPrices()` /
+  `getFxCounterRates()` lists — and the same Redis entries — that
+  `MarketDataService.getQuote` and the gold/FX endpoints serve, so a quote and a
+  valuation can never disagree about the price.
+  - **Why it exists.** Gold and FX are priced by the commodity feed, not the
+    instrument providers, and for a long time `getQuote` was the *only* way to
+    reach that feed — the symbol picker's path. The valuation engine reads the
+    batched `getMarketPrices()` universe instead, which excluded both classes
+    **twice**: `PROVIDER_ASSET_CLASSES` filtered them out of the symbol universe
+    query, and `priceRoutes` had no entry for them, so `CompositePriceProvider`
+    dropped whatever survived. `computeCurrentValue` therefore fell through to
+    the stored `purchasePrice` for **every gold and FX holding** — the live read
+    showed the cost basis, and the nightly cron wrote that same figure into
+    `asset_value_history` every night, so the history curve was a flat line at
+    cost. See [[asset-valuation]].
+  - **The feed publishes per lượng and nothing else — every other unit is
+    derived from it.** So this provider emits the raw dealer figure with
+    `unit: GOLD_QUOTE_UNIT` and lets `priceInPositionUnit` restate it into the
+    holding's own unit. Converting here as well would divide twice (a holding in
+    chỉ would price at a tenth of the truth). Note `getQuote` *does* convert —
+    it answers a form asking for one specific unit — so the two paths differ on
+    purpose; `unitPrices` carries the whole set either way, and `price`/`unit`
+    always agree with each other.
+  - Sell side first (`sellPrice ?? buyPrice`; FX `sell ?? buyTransfer ?? buyCash`)
+    — the acquisition price, matching `commodityQuote`. A symbol the feed does
+    not quote is skipped rather than guessed, and falls back downstream.
+  - One upstream list per class serves the whole batch; a class no request needs
+    is not fetched at all.
 - **`TwelveDataPriceProvider`** (https://twelvedata.com) is the equities adapter.
   Env: `TWELVEDATA_API_KEY` (required to activate),
   `TWELVEDATA_BASE_URL` (optional, default `https://api.twelvedata.com`),

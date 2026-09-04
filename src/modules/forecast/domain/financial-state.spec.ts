@@ -18,7 +18,7 @@ function asset(over: Partial<ForecastLiquidSource> = {}): ForecastLiquidSource {
     name: 'VCB',
     value: 100 * M,
     liquidity: 'usable_now',
-    financialNature: 'household',
+    type: 'bank_account',
     valueUpdatedAt: '2026-08-13',
     ...over,
   };

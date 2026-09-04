@@ -271,7 +271,10 @@ export function fxRateToVnd(
  * kept in chỉ, lượng or gram. Every other class quotes in the same unit it is
  * held in, and a quote already carrying the position's unit is returned as-is.
  */
-function priceInPositionUnit(quote: MarketPrice, positionUnit: string): number {
+export function priceInPositionUnit(
+  quote: MarketPrice,
+  positionUnit: string,
+): number {
   if (quote.assetClass !== 'gold') return quote.price;
   if (quote.unit.trim().toLowerCase() === positionUnit.trim().toLowerCase()) {
     return quote.price;
@@ -553,12 +556,19 @@ export function toMoneyEventCard(event: MoneyEvent) {
     date: formatDateLabel(event.isoDate),
     isoDate: event.isoDate,
     type: event.type,
-    category: event.category,
+    // The id only. The client already holds the full category list (system +
+    // this household's own) and resolves the code, label, glyph and colour off
+    // it, so shipping those per event would duplicate them on every row.
+    categoryId: event.categoryId,
     direction: event.direction,
     fromAssetId: event.fromAssetId,
     toAssetId: event.toAssetId,
     upcomingPaymentId: event.upcomingPaymentId,
     debtId: event.debtId,
+    // The recorder's profile id only — no name. The client already holds the
+    // member list and resolves it there, so a member who was renamed or has left
+    // is never reported under a stale name copied onto the row.
+    createdById: event.createdById,
   };
 }
 

@@ -9,6 +9,7 @@ function event(overrides: Partial<CashflowEvent> = {}): CashflowEvent {
     id: 'evt-1',
     householdId: 'hh-1',
     name: 'thi lx',
+    categoryId: 'cat-other',
     amount: 4 * M,
     direction: 'outgoing',
     expectedDate: '2026-09-01',

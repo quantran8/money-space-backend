@@ -12,7 +12,11 @@ import { AuditService } from '../../common/audit/audit.service';
 import { MoneyEventsService } from '../money-events/money-events.service';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { freshnessOf, staleAfterDaysFor } from '../../common/utils/freshness';
-import { Asset, AssetType } from './entities/asset.entity';
+import {
+  Asset,
+  AssetType,
+  SELLABLE_ASSET_TYPES,
+} from './entities/asset.entity';
 
 /**
  * Asset types that hold a free, spendable cash balance ("wallets"). Only these
@@ -58,6 +62,7 @@ import {
   liquidityForAsset,
   marketUnitForAssetType,
   normalizeCountsAsFlexible,
+  priceInPositionUnit,
   quoteFor,
 } from '../../common/utils/money-space.utils';
 import type { CreateAssetDto } from './dto/create-asset.dto';
@@ -154,6 +159,14 @@ export class AssetsService {
    * The price is carried in the instrument's OWN currency, never converted:
    * `quoteFor` matches on class + symbol only, so a USD instrument returns a USD
    * figure and the client decides what it may do with it.
+   *
+   * The **unit** is converted, though — `marketPrice` is stated per one of the
+   * position's own units, the same basis as `purchasePrice`/`lastPrice` beside
+   * it, so every price on a position means the same thing. Gold is the only
+   * class where that differs from the quote (dealers publish per lượng), and
+   * handing the raw per-lượng figure to a holding counted in chỉ overstated it
+   * 10x — the sale/purchase dialogs seed their đồng field from this and label it
+   * "per <position unit>". See [[asset-valuation]].
    */
   private withMarketPrice(asset: Asset, marketPrices: MarketPrice[]): Asset {
     if (!asset.marketPosition || marketPrices.length === 0) return asset;
@@ -169,7 +182,7 @@ export class AssetsService {
       ...asset,
       marketPosition: {
         ...asset.marketPosition,
-        marketPrice: quote.price,
+        marketPrice: priceInPositionUnit(quote, asset.marketPosition.unit),
         marketPriceCurrency: quote.quoteCurrency,
         marketPriceAt: quote.priceTime,
       },
@@ -1854,25 +1867,8 @@ export class AssetsService {
     await this.upsertCurrentValuation(next, context);
   }
 
-  /**
-   * Asset types that can be sold through the asset-sale flow. Market-priced
-   * ones carry an `asset_market_positions` row (partial sale = reduce
-   * `quantity`); `real_estate` / `investment` are manual (partial sale = reduce
-   * the stored value). Wallets, deposits, insurance and `other` are excluded —
-   * see [[asset-sale]] for the rationale. Exported-shape check used by the
-   * money-events service to validate an `asset_sale` before applying it.
-   */
-  static readonly SELLABLE_ASSET_TYPES: ReadonlySet<AssetType> =
-    new Set<AssetType>([
-      'gold',
-      'stock',
-      'crypto',
-      'fund',
-      'foreign_currency',
-      'bond',
-      'real_estate',
-      'investment',
-    ]);
+  /** The one set, defined on the entity so pure domain code can read it too. */
+  static readonly SELLABLE_ASSET_TYPES = SELLABLE_ASSET_TYPES;
 
   /**
    * Apply a sale to the sold asset: reduce its position and, when nothing is

@@ -17,6 +17,7 @@ describe('shared figures agree with each other', () => {
     name: 'VCB',
     value: 60 * M,
     liquidity: 'usable_now',
+    type: 'bank_account',
     valueUpdatedAt: TODAY,
   };
 
@@ -25,6 +26,7 @@ describe('shared figures agree with each other', () => {
     name: 'Sổ tiết kiệm',
     value: 40 * M,
     liquidity: 'usable_now',
+    type: 'bank_account',
     valueUpdatedAt: TODAY,
   };
 

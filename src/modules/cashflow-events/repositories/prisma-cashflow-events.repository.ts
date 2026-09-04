@@ -214,6 +214,7 @@ export class PrismaCashflowEventsRepository
         id: event.id,
         householdId: event.householdId,
         name: event.name,
+        categoryId: event.categoryId,
         amount: event.amount,
         direction: event.direction,
         expectedDate: this.toDate(event.expectedDate) as Date,
@@ -242,6 +243,7 @@ export class PrismaCashflowEventsRepository
       where: { id: eventId, householdId: event.householdId, deletedAt: null },
       data: {
         name: event.name,
+        categoryId: event.categoryId,
         amount: event.amount,
         direction: event.direction,
         expectedDate: this.toDate(event.expectedDate),

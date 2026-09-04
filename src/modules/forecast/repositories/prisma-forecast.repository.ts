@@ -102,6 +102,7 @@ export class PrismaForecastRepository
           today,
         ),
         liquidity: asset.liquidity,
+        type: asset.type,
         valueUpdatedAt: row.valueUpdatedAt?.toISOString().slice(0, 10) ?? null,
       };
     });
@@ -111,6 +112,7 @@ export class PrismaForecastRepository
       return {
         id: event.id,
         name: event.name,
+        categoryId: event.categoryId ?? null,
         direction: event.direction,
         amount: event.amount,
         expectedDate: event.expectedDate,

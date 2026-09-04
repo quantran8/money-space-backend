@@ -17,7 +17,7 @@ function bundle(over: Partial<ForecastBundle> = {}): ForecastBundle {
         name: 'VCB',
         value: 100 * M,
         liquidity: 'usable_now',
-        financialNature: 'household',
+        type: 'bank_account',
         valueUpdatedAt: TODAY,
       },
     ],
@@ -91,6 +91,7 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
     loadForecastBundle,
     forecastRepository,
     goalsRepository,
+    goalsService,
     cache,
   };
 }
@@ -109,7 +110,7 @@ describe('ForecastService — goal commitments measured after outflows', () => {
           name: 'TCB',
           value: 22 * M,
           liquidity: 'usable_now',
-          financialNature: 'household',
+          type: 'bank_account',
           valueUpdatedAt: TODAY,
         },
       ],
@@ -154,7 +155,7 @@ describe('ForecastService — goal commitments measured after outflows', () => {
           name: 'TCB',
           value: 22 * M,
           liquidity: 'usable_now',
-          financialNature: 'household',
+          type: 'bank_account',
           valueUpdatedAt: TODAY,
         },
       ],
@@ -408,6 +409,420 @@ describe('ForecastService.whatIf', () => {
     expect(wallets.reduce((sum, w) => sum + w.taken, 0)).toBe(
       900 * M - result.goalImpact.uncovered,
     );
+  });
+});
+
+describe('ForecastService.whatIf — funding a spend by selling an asset', () => {
+  /**
+   * 500tr liquid across two wallets, 600tr of stock, 200tr of gold, plus an
+   * insurance policy that is long-term but NOT sellable. The household in the
+   * feature's own worked example.
+   */
+  function household() {
+    return {
+      assets: [
+        {
+          assetId: 'bank-a',
+          name: 'Bank A',
+          value: 300 * M,
+          liquidity: 'usable_now' as const,
+          type: 'bank_account' as const,
+          valueUpdatedAt: TODAY,
+        },
+        {
+          assetId: 'bank-b',
+          name: 'Bank B',
+          value: 200 * M,
+          liquidity: 'usable_now' as const,
+          type: 'bank_account' as const,
+          valueUpdatedAt: TODAY,
+        },
+        {
+          assetId: 'stock',
+          name: 'Chứng khoán',
+          value: 600 * M,
+          liquidity: 'long_term' as const,
+          type: 'stock' as const,
+          valueUpdatedAt: TODAY,
+        },
+        {
+          assetId: 'gold',
+          name: 'Vàng',
+          value: 200 * M,
+          liquidity: 'long_term' as const,
+          type: 'gold' as const,
+          valueUpdatedAt: TODAY,
+        },
+        {
+          assetId: 'insurance',
+          name: 'Bảo hiểm',
+          value: 400 * M,
+          liquidity: 'long_term' as const,
+          type: 'insurance' as const,
+          valueUpdatedAt: TODAY,
+        },
+      ],
+      cashflowEvents: [],
+    };
+  }
+
+  const spend = { amount: 800 * M, plannedDate: TODAY };
+
+  it('reports what is usable today and what the spend is short of it', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', spend);
+
+    expect(result.liquidity.liquidAvailable).toBe(500 * M);
+    expect(result.liquidity.shortfall).toBe(300 * M);
+  });
+
+  it('measures the shortfall and `uncovered` as one figure', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', spend);
+
+    // Two names for the same fact. Asserted so they cannot drift apart.
+    expect(result.liquidity.shortfall).toBe(result.goalImpact.uncovered);
+  });
+
+  it('reports no shortfall when the spend fits', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', { ...spend, amount: 100 * M });
+
+    expect(result.liquidity.shortfall).toBe(0);
+    expect(result.fundingOptions).toEqual([]);
+  });
+
+  it('offers only sellable, non-liquid assets, biggest first', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', spend);
+
+    // Wallets are transferred from, not sold; insurance is not sellable.
+    expect(result.fundingOptions.map((option) => option.assetId)).toEqual([
+      'stock',
+      'gold',
+    ]);
+  });
+
+  it('loads the bundle ONCE even with a third engine run', async () => {
+    const { service, loadForecastBundle } = setup(household());
+
+    await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    expect(loadForecastBundle).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises today’s money by the proceeds, without inventing an inflow', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    /**
+     * The guard against modelling the sale as a synthetic INCOMING event: that
+     * shape leaves `flexibleMoneyToday` untouched (the starting balance never
+     * sees it) and can even move it the wrong way by becoming the next certain
+     * inflow. A t0 conversion moves it by exactly the proceeds.
+     */
+    expect(result.afterSale).not.toBeNull();
+    expect(
+      result.afterSale!.flexibleMoneyToday - result.after.flexibleMoneyToday,
+    ).toBe(300 * M);
+    expect(result.deltaWithSale?.flexibleMoneyToday).toBe(300 * M);
+  });
+
+  it('closes the shortfall it was asked to close', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    // 500tr liquid + 300tr raised = the full 800tr.
+    expect(result.goalImpact.uncovered).toBe(0);
+    expect(result.afterSale!.lowestProjectedBalance).toBe(0);
+  });
+
+  it('does not subtract the proceeds twice', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      amount: 300 * M,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    // Sell 300tr, spend 300tr: the low point lands exactly where it started.
+    expect(result.afterSale!.lowestProjectedBalance).toBe(
+      result.before.lowestProjectedBalance,
+    );
+  });
+
+  it('echoes the sale, including the wallet the engine chose', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    expect(result.assetSale).toMatchObject({
+      assetId: 'stock',
+      name: 'Chứng khoán',
+      amount: 300 * M,
+      // No fee on a hypothetical.
+      netProceeds: 300 * M,
+      assetValueBefore: 600 * M,
+      assetValueAfter: 300 * M,
+    });
+    // The household named no wallet; the engine did, and says which.
+    expect(result.assetSale!.receivingAssetId).toBeTruthy();
+    expect(result.assetSale!.receivingName).toBeTruthy();
+  });
+
+  it('measures the goal cost against the sold asset, not just the wallets', async () => {
+    const { service, goalsService } = setup(household());
+
+    await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    const [, before, after] = (
+      goalsService as unknown as {
+        spendImpactAcrossWallets: jest.Mock;
+      }
+    ).spendImpactAcrossWallets.mock.calls[0] as [
+      string,
+      Map<string, number>,
+      Map<string, number>,
+    ];
+
+    // The whole point: a goal backed by the stock must see it shrink.
+    expect([...before]).toEqual([...before]); // placeholder
+    expect(before.get('stock')).toBe(600 * M);
+    expect(after.get('stock')).toBe(300 * M);
+  });
+
+  it('nets the conversion to zero across the goal attribution maps', async () => {
+    const { service, goalsService } = setup(household());
+
+    // Sell 300tr and spend exactly the proceeds, so only the conversion moves.
+    await service.whatIf('hh-1', {
+      ...spend,
+      amount: 300 * M,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    const [, before, after] = (
+      goalsService as unknown as { spendImpactAcrossWallets: jest.Mock }
+    ).spendImpactAcrossWallets.mock.calls[0] as [
+      string,
+      Map<string, number>,
+      Map<string, number>,
+    ];
+
+    /**
+     * The before map is PRE-sale and the after map carries both the proceeds
+     * and the spend. Raising a wallet by 300tr and spending 300tr from it must
+     * leave every wallet exactly where it started — that is what makes the
+     * conversion net to zero and proves the proceeds are not counted twice.
+     */
+    for (const [assetId, value] of before) {
+      if (assetId === 'stock') continue;
+      expect(after.get(assetId)).toBe(value);
+    }
+    // …while the sold asset is the one thing that really did move.
+    expect(before.get('stock')).toBe(600 * M);
+    expect(after.get('stock')).toBe(300 * M);
+  });
+
+  it('does not credit a wallet with money the sale supplied', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    /**
+     * The bug this guards: `before` was read off the sale-topped-up map, so a
+     * wallet holding 300tr reported having held 600tr and paid all of it. Its
+     * own money and the proceeds are different facts.
+     */
+    const held = result.fundingSource.wallets.reduce(
+      (sum, wallet) => sum + wallet.before,
+      0,
+    );
+    expect(held).toBe(result.liquidity.liquidAvailable);
+    expect(result.fundingSource.fromSale).toBe(300 * M);
+  });
+
+  it('names the sale as its own funding source, not free money', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    const { fromSale, free, fromPace, fromSetAside } = result.fundingSource;
+    // The parts still account for the whole covered spend…
+    expect(fromSale + free + fromPace + fromSetAside).toBe(800 * M);
+    // …and the 300tr raised is not reported as money already lying around.
+    expect(fromSale).toBe(300 * M);
+    expect(free).toBe(500 * M);
+  });
+
+  it('stops reporting a shortfall once the sale has covered it', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    // Saying "còn thiếu 300tr" after raising exactly 300tr is simply wrong —
+    // and it is what kept the funding CTA on screen after it had been used.
+    expect(result.liquidity.shortfall).toBe(0);
+  });
+
+  it('never lets the sold asset pay for the spend directly', async () => {
+    const { service, goalsService } = setup(household());
+
+    await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    /**
+     * `goalClaimsByWallet` feeds `spreadAcrossWallets`. An illiquid asset in
+     * that map would be drained to pay for the purchase with no sale at all.
+     */
+    const claimCalls = (
+      goalsService as unknown as { goalClaimsByWallet: jest.Mock }
+    ).goalClaimsByWallet.mock.calls;
+    const spendMaps = claimCalls
+      .map(([, map]) => map as Map<string, number>)
+      // The funding-options lookup deliberately asks about non-liquid assets.
+      .filter((map) => !map.has('gold'));
+
+    for (const map of spendMaps) {
+      expect(map.has('stock')).toBe(false);
+      expect(map.has('insurance')).toBe(false);
+    }
+  });
+
+  it('leaves the payload untouched when no sale was asked for', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', spend);
+
+    expect(result.assetSale).toBeNull();
+    expect(result.afterSale).toBeNull();
+    expect(result.deltaWithSale).toBeNull();
+  });
+
+  it('still writes nothing on the sale path', async () => {
+    const { service, forecastRepository, goalsRepository } = setup(household());
+
+    await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    const called = (mock: object) =>
+      Object.entries(mock)
+        .filter(([, fn]) => (fn as jest.Mock).mock?.calls.length > 0)
+        .map(([name]) => name);
+
+    expect(called(forecastRepository)).toEqual(['loadForecastBundle']);
+    expect(called(goalsRepository)).toEqual([]);
+  });
+
+  it('keeps analytics bucketed, never the sale amount', async () => {
+    const { service } = setup(household());
+    const logged: string[] = [];
+    jest
+      .spyOn(service['logger'], 'log')
+      .mockImplementation((message: unknown) => {
+        logged.push(String(message));
+      });
+
+    await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+    });
+
+    const line = logged.find((entry) => entry.startsWith('what_if_run'))!;
+    expect(line).toContain('"hasAssetSale":true');
+    expect(line).not.toContain('300000000');
+    expect(line).not.toContain('800000000');
+  });
+
+  it('credits the wallet the household chose, not one of its own picking', async () => {
+    const { service } = setup(household());
+
+    const intoB = await service.whatIf('hh-1', {
+      ...spend,
+      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-b' },
+    });
+
+    expect(intoB.assetSale!.receivingAssetId).toBe('bank-b');
+    expect(intoB.assetSale!.receivingName).toBe('Bank B');
+    // The wallet that actually grew is the one that was named.
+    const b = intoB.fundingSource.wallets.find((w) => w.assetId === 'bank-b');
+    expect(b?.fromSale).toBe(300 * M);
+    expect(
+      intoB.fundingSource.wallets.find((w) => w.assetId === 'bank-a')?.fromSale,
+    ).toBe(0);
+  });
+
+  const W = 'bank-a';
+  it.each([
+    ['an unknown asset', { assetId: 'nope', amount: 10 * M, toAssetId: W }],
+    [
+      'a wallet as the thing sold',
+      { assetId: W, amount: 10 * M, toAssetId: 'bank-b' },
+    ],
+    [
+      'a non-sellable asset',
+      { assetId: 'insurance', amount: 10 * M, toAssetId: W },
+    ],
+    ['a zero amount', { assetId: 'stock', amount: 0, toAssetId: W }],
+    ['a negative amount', { assetId: 'stock', amount: -1, toAssetId: W }],
+    [
+      'more than the asset holds',
+      { assetId: 'stock', amount: 601 * M, toAssetId: W },
+    ],
+    [
+      'an unknown receiving wallet',
+      { assetId: 'stock', amount: 10 * M, toAssetId: 'nope' },
+    ],
+    // Proceeds must land somewhere spendable, or the sale funds nothing.
+    [
+      'a non-liquid receiving asset',
+      { assetId: 'stock', amount: 10 * M, toAssetId: 'gold' },
+    ],
+    [
+      'receiving into the asset being sold',
+      { assetId: 'stock', amount: 10 * M, toAssetId: 'stock' },
+    ],
+  ])('refuses %s', async (_label, assetSale) => {
+    const { service } = setup(household());
+
+    await expect(
+      service.whatIf('hh-1', { ...spend, assetSale }),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 

@@ -44,6 +44,9 @@ export interface CashflowEvent {
   id: string;
   householdId: string;
   name: string;
+  /** FK to `money_event_categories.id`, same as `money_events.category_id`.
+   *  Completing the event carries it onto the money event it records. */
+  categoryId: string;
   amount: number;
   direction: CashflowDirection;
   /** The CURRENT occurrence's date, not the series start. */

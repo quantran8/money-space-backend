@@ -23,6 +23,19 @@ Spec v3.1 §2.9 explicitly rejects a separate `upcoming_incomes` table: incoming
 and outgoing belong on **one timeline**, because the whole point is to see them
 interleaved day by day.
 
+**`category_id`** is a real FK to `money_event_categories`, exactly like
+`money_events.category_id` — one table, one vocabulary, for both the expected
+side and the recorded side. It is NOT NULL; omitting it on create resolves the
+system `other` category rather than storing a literal. See [[money-events]] for
+the category table itself (code generation, icon/colour, default, and why the
+FK targets `id` rather than `code`).
+
+A category did not exist on this table at all before migration
+`20260903100000_category_icon_key_and_cashflow_category` — every cashflow event
+was uncategorized, and completing an **outgoing** one hardcoded `other` on the
+money event it created regardless. That migration added it as a TEXT code;
+`20260904090000_category_id_foreign_key` then converted it to the FK.
+
 ## The four axes
 
 | field | values | what it decides |
@@ -102,7 +115,14 @@ Two behaviours worth knowing:
 2. **Create the money event via `MoneyEventsService.createMoneyEvent`** (never a
    raw insert), so wallet debit/credit, valuation points and the goal mirror all
    fire. `outgoing` → `payment_paid` debiting `fromAssetId`; `incoming` →
-   `income` crediting `toAssetId`. Both carry `cashflowEventId`.
+   `income` crediting `toAssetId`. Both carry `cashflowEventId` and the
+   cashflow event's own `categoryId`. **`note` is exactly what the caller typed**
+   (`payload.note?.trim() ?? ''`) — it must NOT fall back to the cashflow
+   event's `name` when nothing was typed. It used to (`payload.note?.trim() ||
+   event.name`), which made a completion with no note read as if someone had
+   written the event's name as its description; the timeline already falls
+   back to the category label for a record with no note (see
+   [[money-events]]).
 3. **Record `lastCompleted*`** — for a recurring series these describe the most
    recent completion, *not* a terminal state.
 4. **Branch:**

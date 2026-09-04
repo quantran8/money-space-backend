@@ -144,3 +144,19 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
 ## Enums
 
 `AssetType` (15), `ValuationMode`, `AssetLiquidity`, `AssetClass`, `CalculationType = saving_deposit | bond | loan_receivable | certificate_of_deposit`.
+
+## Sellability has one definition
+
+`SELLABLE_ASSET_TYPES` lives on the asset entity/model, not on a service, so the
+forecast's pure what-if engine can read it without importing a Nest provider
+(`AssetsService.SELLABLE_ASSET_TYPES` re-exports the same set). A real sale and
+a simulated one can never disagree about what can be sold.
+
+What-if's funding step narrows it twice more, both on the client: the asset must
+not be `usable_now` (a wallet is transferred from, not sold), and `real_estate`
+is hidden because a partial property sale is priced by area and cannot be
+expressed as "bán 300tr". It also requires a known `currentValue` — a
+market-priced asset with no quote has no figure the household could check.
+
+`ForecastLiquidSource` carries `type` for this; the forecast bundle already
+loads every active asset, so it costs no extra query.
