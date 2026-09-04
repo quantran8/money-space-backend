@@ -5,19 +5,23 @@
  * wallet goes up, and net worth is unchanged. Nothing is written — this is the
  * shape of a sale, held in memory for the length of one request.
  */
-export interface WhatIfAssetSaleDto {
+// Owned by the pure domain so the engine needs no DTO import.
+export { UNASSIGNED_WALLET_ID } from '../domain/what-if';
+
+/** One holding being sold. */
+export interface WhatIfAssetSaleLineDto {
   /** Must be an active, non-`usable_now`, sellable asset of the household. */
   assetId: string;
-  /**
-   * Gross proceeds, in VND — the same meaning `money_events.amount` carries for
-   * an `asset_sale`. A hypothetical carries no fee, so the wallet is credited
-   * this same figure.
-   */
+  /** Gross proceeds, in VND. A hypothetical carries no fee. */
   amount: number;
+}
+
+export interface WhatIfAssetSaleDto {
+  /** The holdings being sold — one is often not enough to close the gap. */
+  lines: WhatIfAssetSaleLineDto[];
   /**
-   * The wallet the proceeds land in. Required: a real sale names one
-   * (`money_events.to_asset_id`), and which account holds the cash decides
-   * which goals it is sitting in front of. Must be `usable_now`.
+   * The wallet the proceeds land in. Must be `usable_now`, or
+   * `UNASSIGNED_WALLET_ID` when the household holds no such wallet.
    */
   toAssetId: string;
 }

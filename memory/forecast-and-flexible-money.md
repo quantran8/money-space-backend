@@ -403,15 +403,42 @@ Three engine runs over one bundle, and the third only when a sale was asked for
 — a what-if without one behaves exactly as before. `before`/`after` keep their
 meanings and `afterSale` is added, so the client can show what the sale bought.
 
+**Everything the household READS comes from the after-sale run when there is
+one.** `newlyAtRisk`, `resultType` and `obligationsCovered` were all resolved
+against `afterForecast` — the spend WITHOUT the sale — while the client renders
+the after-sale side as the answer. So a bill the proceeds had already covered
+was still listed as broken, carrying a running balance that ignored every đồng
+raised: a 200tr spend against ~26tr of wallets printed −174tr beside a 4tr bill
+that the sale had in fact paid for. One `answerForecast = afterSaleForecast ??
+afterForecast` now feeds all three, so the tone, the flag and the list cannot
+describe a different world from the figures beside them.
+
 **No fee.** A sale's only net-worth effect is `−fee`, and what-if reports no
 net-worth figure; at exploration time nobody knows the brokerage fee anyway. A
 field left at 0 would imply the simulation accounted for something it did not.
 `netProceeds` stays a distinct field so adding a fee later does not change what
 `amount` means. The client renders a `noFee` assumption line.
 
+**Several holdings per sale, one destination.** `assetSale.lines` is a list of
+`{assetId, amount}`, because one holding is often not enough: short 500tr
+against 300tr of gold and 250tr of stocks, a single-asset step is a question
+with no answer the household could act on. Every line is validated the same way
+(sellable, non-`usable_now`, within its own value), and the same asset twice is
+refused — two lines each passing their own bound would sell 200% of it.
+`applyAssetSale` subtracts every line and credits the destination once with the
+total.
+
 **The receiving wallet is named by the caller** (`assetSale.toAssetId`),
-validated `usable_now` and different from the asset being sold — the same two
-rules a real `asset_sale` enforces. The engine used to pick the least-promised
+validated `usable_now` and different from every asset being sold — the same two
+rules a real `asset_sale` enforces.
+
+**A household with no `usable_now` wallet names `UNASSIGNED_WALLET_ID`.** It
+used to fail validation with nothing it could send instead. The proceeds then
+join the run as a `usable_now` source of their own (`unassignedProceeds`) rather
+than crediting an account — the truth of an imagined sale: usable money no goal
+is standing in front of. It is refused whenever the household DOES hold a
+wallet, or it would become a way to park money outside the reach of the goals
+sitting in front of a real account — the very fact the caller names one for. The engine used to pick the least-promised
 wallet; it cannot, because which account holds the cash decides which goals it
 is sitting in front of, and that is the household's call. This is a narrow
 exception to the no-wallet-picker rule, which is about the SPEND's routing and

@@ -26,6 +26,7 @@ import {
   buildSyntheticEvent,
   classifyResult,
   isSellableForecastAsset,
+  UNASSIGNED_WALLET_ID,
   type AppliedAssetSale,
   type WhatIfResultType,
 } from './domain/what-if';
@@ -141,17 +142,24 @@ export interface WhatIfFundingOption {
   goalClaimedAmount: number;
 }
 
-/** The sale as applied, echoing the choices the engine made. */
-export interface WhatIfAppliedSale {
+/** One sold holding, as applied. */
+export interface WhatIfAppliedSaleLine {
   assetId: string;
   name: string;
-  /** Gross proceeds asked for. */
+  amount: number;
+  assetValueBefore: number;
+  assetValueAfter: number;
+}
+
+/** The sale as applied, echoing the choices the engine made. */
+export interface WhatIfAppliedSale {
+  /** Every holding sold, in the order the caller listed them. */
+  lines: WhatIfAppliedSaleLine[];
+  /** Gross proceeds asked for, across every line. */
   amount: number;
   /** What lands in the wallet. Equal to `amount` — a hypothetical has no fee. */
   netProceeds: number;
-  assetValueBefore: number;
-  assetValueAfter: number;
-  /** The wallet the household chose to receive the proceeds. */
+  /** The wallet the household chose, or `UNASSIGNED_WALLET_ID`. */
   receivingAssetId: string;
   receivingName: string;
 }
@@ -439,62 +447,97 @@ export class ForecastService {
       );
     }
 
-    // Step 2, when asked for: the asset being sold, and the wallet the money
-    // lands in. Both named by the caller — see memory/what-if.md.
+    // Step 2, when asked for: the assets being sold, and the wallet the money
+    // lands in. All named by the caller — see memory/what-if.md.
     const saleRequest = payload.assetSale;
-    let soldAsset: (typeof input.assets)[number] | undefined;
+    const soldAssets: (typeof input.assets)[number][] = [];
     let receivingAsset: (typeof input.assets)[number] | undefined;
     if (saleRequest) {
-      const saleAmount = Number(saleRequest.amount);
-      if (!Number.isFinite(saleAmount) || saleAmount <= 0) {
-        throw new BadRequestException(
-          'assetSale.amount must be a positive number',
-        );
+      const lines = saleRequest.lines ?? [];
+      if (lines.length === 0) {
+        throw new BadRequestException('assetSale.lines must not be empty');
       }
-      if (!saleRequest.assetId) {
-        throw new BadRequestException('assetSale.assetId is required');
-      }
-      soldAsset = input.assets.find(
-        (asset) => asset.assetId === saleRequest.assetId,
-      );
-      if (!soldAsset) {
-        throw new BadRequestException(
-          `Asset "${saleRequest.assetId}" was not found`,
+
+      const seen = new Set<string>();
+      for (const line of lines) {
+        const saleAmount = Number(line.amount);
+        if (!Number.isFinite(saleAmount) || saleAmount <= 0) {
+          throw new BadRequestException(
+            'assetSale.lines[].amount must be a positive number',
+          );
+        }
+        if (!line.assetId) {
+          throw new BadRequestException(
+            'assetSale.lines[].assetId is required',
+          );
+        }
+        // The same holding twice would sell more of it than exists, one line
+        // at a time, with each line passing its own bound.
+        if (seen.has(line.assetId)) {
+          throw new BadRequestException(
+            `Asset "${line.assetId}" appears in assetSale.lines more than once`,
+          );
+        }
+        seen.add(line.assetId);
+
+        const soldAsset = input.assets.find(
+          (asset) => asset.assetId === line.assetId,
         );
-      }
-      if (!isSellableForecastAsset(soldAsset)) {
-        throw new BadRequestException(
-          `Asset "${saleRequest.assetId}" cannot be sold to fund a spend`,
-        );
-      }
-      // An input bound, not a clamped figure: you cannot sell more than you
-      // hold, and the real sale enforces the same rule.
-      if (saleAmount > soldAsset.value) {
-        throw new BadRequestException(
-          `assetSale.amount exceeds the value of asset "${saleRequest.assetId}"`,
-        );
+        if (!soldAsset) {
+          throw new BadRequestException(
+            `Asset "${line.assetId}" was not found`,
+          );
+        }
+        if (!isSellableForecastAsset(soldAsset)) {
+          throw new BadRequestException(
+            `Asset "${line.assetId}" cannot be sold to fund a spend`,
+          );
+        }
+        // An input bound, not a clamped figure: you cannot sell more than you
+        // hold, and the real sale enforces the same rule.
+        if (saleAmount > soldAsset.value) {
+          throw new BadRequestException(
+            `assetSale.lines[].amount exceeds the value of asset "${line.assetId}"`,
+          );
+        }
+        soldAssets.push(soldAsset);
       }
 
       if (!saleRequest.toAssetId) {
         throw new BadRequestException('assetSale.toAssetId is required');
       }
-      receivingAsset = input.assets.find(
-        (asset) => asset.assetId === saleRequest.toAssetId,
-      );
-      if (!receivingAsset) {
-        throw new BadRequestException(
-          `Asset "${saleRequest.toAssetId}" was not found`,
+      /**
+       * A household with no `usable_now` wallet has no account to name, and
+       * used to hit a validation it could not satisfy. The proceeds are still
+       * usable money — they simply sit in no account yet.
+       */
+      if (saleRequest.toAssetId !== UNASSIGNED_WALLET_ID) {
+        receivingAsset = input.assets.find(
+          (asset) => asset.assetId === saleRequest.toAssetId,
         );
-      }
-      // Proceeds have to land somewhere spendable, or the sale funds nothing.
-      if (receivingAsset.liquidity !== 'usable_now') {
+        if (!receivingAsset) {
+          throw new BadRequestException(
+            `Asset "${saleRequest.toAssetId}" was not found`,
+          );
+        }
+        // Proceeds have to land somewhere spendable, or the sale funds nothing.
+        if (receivingAsset.liquidity !== 'usable_now') {
+          throw new BadRequestException(
+            `Asset "${saleRequest.toAssetId}" cannot receive sale proceeds`,
+          );
+        }
+        if (seen.has(receivingAsset.assetId)) {
+          throw new BadRequestException(
+            'assetSale.toAssetId must differ from the assets being sold',
+          );
+        }
+      } else if (
+        input.assets.some((asset) => asset.liquidity === 'usable_now')
+      ) {
+        // The sentinel is the answer for a household with no wallet, never a
+        // way for one with wallets to park money outside its goals' reach.
         throw new BadRequestException(
-          `Asset "${saleRequest.toAssetId}" cannot receive sale proceeds`,
-        );
-      }
-      if (receivingAsset.assetId === soldAsset.assetId) {
-        throw new BadRequestException(
-          'assetSale.toAssetId must differ from the asset being sold',
+          'assetSale.toAssetId must name a wallet when the household has one',
         );
       }
     }
@@ -550,11 +593,17 @@ export class ForecastService {
      * synthetic inflow — see memory/forecast-and-flexible-money.md.
      */
     const appliedSale: AppliedAssetSale | null =
-      saleRequest && soldAsset && receivingAsset
+      saleRequest && soldAssets.length > 0
         ? {
-            assetId: soldAsset.assetId,
-            amount: Number(saleRequest.amount),
-            receivingAssetId: receivingAsset.assetId,
+            lines: saleRequest.lines.map((line) => ({
+              assetId: line.assetId,
+              amount: Number(line.amount),
+            })),
+            amount: saleRequest.lines.reduce(
+              (sum, line) => sum + Number(line.amount),
+              0,
+            ),
+            receivingAssetId: receivingAsset?.assetId ?? null,
           }
         : null;
 
@@ -603,7 +652,11 @@ export class ForecastService {
         })
       : null;
 
-    const resultType = classifyResult(afterForecast);
+    // The world the household is looking at: with a sale applied, the client
+    // renders the after-SALE side as the answer, so the tone and the
+    // obligations flag have to describe that same world.
+    const answerForecast = afterSaleForecast ?? afterForecast;
+    const resultType = classifyResult(answerForecast);
 
     // Analytics: bucket + shape only. Never the amount, never the balances —
     // the household's figures stay theirs (§26D).
@@ -686,12 +739,16 @@ export class ForecastService {
      */
     const goalValuesBefore = new Map(walletsBefore);
     const goalValuesAfter = new Map(drain.values);
-    if (appliedSale && soldAsset) {
-      goalValuesBefore.set(soldAsset.assetId, soldAsset.value);
-      goalValuesAfter.set(
-        soldAsset.assetId,
-        soldAsset.value - appliedSale.amount,
+    if (appliedSale) {
+      const soldById = new Map(
+        soldAssets.map((asset) => [asset.assetId, asset]),
       );
+      for (const line of appliedSale.lines) {
+        const soldAsset = soldById.get(line.assetId);
+        if (!soldAsset) continue;
+        goalValuesBefore.set(soldAsset.assetId, soldAsset.value);
+        goalValuesAfter.set(soldAsset.assetId, soldAsset.value - line.amount);
+      }
       // The receiving wallet's credit is already inside `drain.values` via
       // `walletsToSpendFrom`; adding it here would count the proceeds twice.
     }
@@ -815,28 +872,42 @@ export class ForecastService {
       asOfDate,
       horizonDays,
       input: payload,
-      obligationsCovered: after.obligationsCovered,
+      obligationsCovered: answerForecast.obligationsCovered,
       before,
       after,
       liquidity,
       fundingOptions,
-      assetSale:
-        appliedSale && soldAsset
-          ? {
-              assetId: soldAsset.assetId,
-              name: soldAsset.name,
-              amount: appliedSale.amount,
-              // No fee on a hypothetical; kept distinct so adding one later
-              // does not change what `amount` means.
-              netProceeds: appliedSale.amount,
-              assetValueBefore: soldAsset.value,
-              assetValueAfter: soldAsset.value - appliedSale.amount,
-              receivingAssetId: appliedSale.receivingAssetId,
-              receivingName:
-                walletNames.get(appliedSale.receivingAssetId) ??
-                appliedSale.receivingAssetId,
-            }
-          : null,
+      assetSale: appliedSale
+        ? {
+            lines: appliedSale.lines.map((line) => {
+              const soldAsset = soldAssets.find(
+                (asset) => asset.assetId === line.assetId,
+              );
+              return {
+                assetId: line.assetId,
+                name: soldAsset?.name ?? line.assetId,
+                amount: line.amount,
+                assetValueBefore: soldAsset?.value ?? 0,
+                assetValueAfter: (soldAsset?.value ?? 0) - line.amount,
+              };
+            }),
+            amount: appliedSale.amount,
+            // No fee on a hypothetical; kept distinct so adding one later
+            // does not change what `amount` means.
+            netProceeds: appliedSale.amount,
+            /**
+             * `null` receiving id becomes the sentinel: the client renders its
+             * own label for money that sits in no account, since the backend
+             * emits no localized string (§3).
+             */
+            receivingAssetId:
+              appliedSale.receivingAssetId ?? UNASSIGNED_WALLET_ID,
+            receivingName: appliedSale.receivingAssetId
+              ? (walletNames.get(appliedSale.receivingAssetId) ??
+                appliedSale.receivingAssetId)
+              : UNASSIGNED_WALLET_ID,
+          }
+        : null,
       afterSale,
       deltaWithSale: afterSale
         ? {
@@ -856,7 +927,14 @@ export class ForecastService {
        * this", and "one of your bills stops being payable" is only an answer
        * once it names the bill and the date.
        */
-      newlyAtRisk: findNewlyAtRisk(beforeForecast, afterForecast),
+      newlyAtRisk: findNewlyAtRisk(
+        beforeForecast,
+        // The world the household is looking at. With a sale applied that is
+        // the after-SALE forecast: reading the sale-less one reported bills as
+        // broken by a shortfall the proceeds had already covered, and printed
+        // a running balance that ignored the money raised.
+        answerForecast,
+      ),
       delta: {
         flexibleMoneyToday:
           after.flexibleMoneyToday - before.flexibleMoneyToday,
