@@ -192,7 +192,9 @@ no valuation write, no position decrement, no `status = 'sold'`. It is a
 hypothesis held in memory for one request, and the code path must never be
 "unified" with this one.
 
-It is also simpler on purpose: **value only, no quantity, no fee, no sale date.**
+It is also simpler on purpose: **no fee and no sale date** — and it may name
+several holdings at once (`assetSale.lines`), since one is often not enough to
+close a gap.
 Goal progress is a function of value, and at exploration time nobody knows the
 brokerage fee or the exact unit price. Sellability is still the shared
 `SELLABLE_ASSET_TYPES`, so the two flows cannot disagree about what can be sold

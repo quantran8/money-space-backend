@@ -25,11 +25,28 @@ import type {
 
 export type WhatIfResultType = 'comfortable' | 'tight' | 'not_covered';
 
-/** The sale as the caller asked for it, once validated. */
-export interface AppliedAssetSale {
+/**
+ * Destination for a household that owns no `usable_now` wallet: the cash exists
+ * but sits in no account yet. See [[forecast-and-flexible-money]].
+ */
+export const UNASSIGNED_WALLET_ID = '__unassigned__';
+
+/** One sold holding, once validated. */
+export interface AppliedAssetSaleLine {
   assetId: string;
   amount: number;
-  receivingAssetId: string;
+}
+
+/** The sale as the caller asked for it, once validated. */
+export interface AppliedAssetSale {
+  lines: AppliedAssetSaleLine[];
+  /** Gross proceeds across every line. */
+  amount: number;
+  /**
+   * The wallet receiving the proceeds, or `null` when the household holds no
+   * `usable_now` wallet — the cash is then usable but sits in no account.
+   */
+  receivingAssetId: string | null;
 }
 
 /**
@@ -57,15 +74,38 @@ export function applyAssetSale(
   assets: ForecastLiquidSource[],
   sale: AppliedAssetSale,
 ): ForecastLiquidSource[] {
-  return assets.map((asset) => {
-    if (asset.assetId === sale.assetId) {
-      return { ...asset, value: asset.value - sale.amount };
+  const sold = new Map(sale.lines.map((line) => [line.assetId, line.amount]));
+  const next = assets.map((asset) => {
+    const amount = sold.get(asset.assetId);
+    if (amount !== undefined) {
+      return { ...asset, value: asset.value - amount };
     }
     if (asset.assetId === sale.receivingAssetId) {
       return { ...asset, value: asset.value + sale.amount };
     }
     return asset;
   });
+
+  // No wallet to land in: the proceeds still exist and are still spendable, so
+  // they join the run as a source of their own rather than vanishing.
+  if (sale.receivingAssetId === null) {
+    next.push(unassignedProceeds(sale.amount));
+  }
+  return next;
+}
+
+/**
+ * The proceeds themselves, when no wallet was named. `usable_now` because the
+ * money is spendable, and no goal claims it — nothing was ever set aside there.
+ */
+export function unassignedProceeds(amount: number): ForecastLiquidSource {
+  return {
+    assetId: UNASSIGNED_WALLET_ID,
+    name: UNASSIGNED_WALLET_ID,
+    type: 'cash',
+    liquidity: 'usable_now',
+    value: amount,
+  };
 }
 
 /**

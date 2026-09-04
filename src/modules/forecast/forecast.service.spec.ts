@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { ForecastService } from './forecast.service';
+import { UNASSIGNED_WALLET_ID } from './domain/what-if';
 import { CacheService } from '../../common/cache/cache.service';
 import type { ForecastBundle } from './repositories/forecast.repository.interface';
 
@@ -512,7 +513,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     expect(loadForecastBundle).toHaveBeenCalledTimes(1);
@@ -523,7 +527,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const result = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     /**
@@ -544,7 +551,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const result = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     // 500tr liquid + 300tr raised = the full 800tr.
@@ -558,7 +568,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
     const result = await service.whatIf('hh-1', {
       ...spend,
       amount: 300 * M,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     // Sell 300tr, spend 300tr: the low point lands exactly where it started.
@@ -572,17 +585,25 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const result = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     expect(result.assetSale).toMatchObject({
-      assetId: 'stock',
-      name: 'Chứng khoán',
       amount: 300 * M,
       // No fee on a hypothetical.
       netProceeds: 300 * M,
-      assetValueBefore: 600 * M,
-      assetValueAfter: 300 * M,
+      lines: [
+        {
+          assetId: 'stock',
+          name: 'Chứng khoán',
+          amount: 300 * M,
+          assetValueBefore: 600 * M,
+          assetValueAfter: 300 * M,
+        },
+      ],
     });
     // The household named no wallet; the engine did, and says which.
     expect(result.assetSale!.receivingAssetId).toBeTruthy();
@@ -594,7 +615,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     const [, before, after] = (
@@ -620,7 +644,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
     await service.whatIf('hh-1', {
       ...spend,
       amount: 300 * M,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     const [, before, after] = (
@@ -651,7 +678,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const result = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     /**
@@ -672,7 +702,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const result = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     const { fromSale, free, fromPace, fromSetAside } = result.fundingSource;
@@ -688,7 +721,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const result = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     // Saying "còn thiếu 300tr" after raising exactly 300tr is simply wrong —
@@ -701,7 +737,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     /**
@@ -737,7 +776,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     const called = (mock: object) =>
@@ -760,7 +802,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-a' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-a',
+      },
     });
 
     const line = logged.find((entry) => entry.startsWith('what_if_run'))!;
@@ -774,7 +819,10 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
 
     const intoB = await service.whatIf('hh-1', {
       ...spend,
-      assetSale: { assetId: 'stock', amount: 300 * M, toAssetId: 'bank-b' },
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: 'bank-b',
+      },
     });
 
     expect(intoB.assetSale!.receivingAssetId).toBe('bank-b');
@@ -787,35 +835,184 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
     ).toBe(0);
   });
 
+  /**
+   * Short 500tr against 300tr of gold and 250tr of stocks, no single holding
+   * closes the gap — the case a one-asset step could not express at all.
+   */
+  it('sells several holdings into one wallet to close a gap neither could', async () => {
+    const { service } = setup(household());
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      amount: 1000 * M,
+      assetSale: {
+        lines: [
+          { assetId: 'stock', amount: 350 * M },
+          { assetId: 'gold', amount: 150 * M },
+        ],
+        toAssetId: 'bank-a',
+      },
+    });
+
+    expect(result.assetSale!.amount).toBe(500 * M);
+    expect(result.assetSale!.lines.map((line) => line.assetId)).toEqual([
+      'stock',
+      'gold',
+    ]);
+    // Each holding is reported at what it actually gave up.
+    expect(result.assetSale!.lines[0]).toMatchObject({
+      assetValueBefore: 600 * M,
+      assetValueAfter: 250 * M,
+    });
+    expect(result.assetSale!.lines[1]).toMatchObject({
+      assetValueBefore: 200 * M,
+      assetValueAfter: 50 * M,
+    });
+    // 500tr liquid + 500tr raised = the full 1 tỷ.
+    expect(result.goalImpact.uncovered).toBe(0);
+    expect(
+      result.afterSale!.flexibleMoneyToday - result.after.flexibleMoneyToday,
+    ).toBe(500 * M);
+  });
+
+  /**
+   * A household tracking gold and stocks but no bank account has no wallet to
+   * name — and used to reach a required field it could not satisfy.
+   */
+  it('sells for a household that holds no wallet at all', async () => {
+    const walletless = {
+      assets: household().assets.filter(
+        (asset) => asset.liquidity !== 'usable_now',
+      ),
+      cashflowEvents: [],
+    };
+    const { service } = setup(walletless);
+
+    const result = await service.whatIf('hh-1', {
+      ...spend,
+      amount: 300 * M,
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 300 * M }],
+        toAssetId: UNASSIGNED_WALLET_ID,
+      },
+    });
+
+    expect(result.assetSale!.receivingAssetId).toBe(UNASSIGNED_WALLET_ID);
+    // The proceeds are real, usable money: the spend is covered by them alone.
+    expect(result.liquidity.liquidAvailable).toBe(0);
+    expect(
+      result.afterSale!.flexibleMoneyToday - result.after.flexibleMoneyToday,
+    ).toBe(300 * M);
+  });
+
+  /**
+   * The bills the household sees must be judged in the world they are looking
+   * at. Reading the sale-less forecast reported items as broken by a shortfall
+   * the proceeds had already covered, and printed a running balance that
+   * ignored the money raised.
+   */
+  it('judges at-risk bills against the world AFTER the sale', async () => {
+    const withBill = {
+      ...household(),
+      cashflowEvents: [
+        {
+          id: 'bill',
+          name: 'Học phí',
+          direction: 'outgoing' as const,
+          amount: 4 * M,
+          expectedDate: TODAY,
+          recurrence: 'once' as const,
+          recurrenceEndDate: null,
+          requirement: 'required' as const,
+          certainty: 'confirmed' as const,
+          status: 'expected' as const,
+        },
+      ],
+    };
+
+    // 500tr liquid, a 4tr bill, and a 600tr spend: without selling the bill
+    // breaks.
+    const { service } = setup(withBill);
+    const withoutSale = await service.whatIf('hh-1', {
+      ...spend,
+      amount: 600 * M,
+    });
+    expect(withoutSale.newlyAtRisk).toHaveLength(1);
+
+    // Selling enough to fund the spend leaves the bill payable, so it is not
+    // reported at all — and `obligationsCovered` agrees with that list.
+    const { service: service2 } = setup(withBill);
+    const withSale = await service2.whatIf('hh-1', {
+      ...spend,
+      amount: 600 * M,
+      assetSale: {
+        lines: [{ assetId: 'stock', amount: 200 * M }],
+        toAssetId: 'bank-a',
+      },
+    });
+    expect(withSale.newlyAtRisk).toEqual([]);
+    expect(withSale.obligationsCovered).toBe(true);
+  });
+
   const W = 'bank-a';
   it.each([
-    ['an unknown asset', { assetId: 'nope', amount: 10 * M, toAssetId: W }],
+    [
+      'an unknown asset',
+      { lines: [{ assetId: 'nope', amount: 10 * M }], toAssetId: W },
+    ],
     [
       'a wallet as the thing sold',
-      { assetId: W, amount: 10 * M, toAssetId: 'bank-b' },
+      { lines: [{ assetId: W, amount: 10 * M }], toAssetId: 'bank-b' },
     ],
     [
       'a non-sellable asset',
-      { assetId: 'insurance', amount: 10 * M, toAssetId: W },
+      { lines: [{ assetId: 'insurance', amount: 10 * M }], toAssetId: W },
     ],
-    ['a zero amount', { assetId: 'stock', amount: 0, toAssetId: W }],
-    ['a negative amount', { assetId: 'stock', amount: -1, toAssetId: W }],
+    [
+      'a zero amount',
+      { lines: [{ assetId: 'stock', amount: 0 }], toAssetId: W },
+    ],
+    [
+      'a negative amount',
+      { lines: [{ assetId: 'stock', amount: -1 }], toAssetId: W },
+    ],
     [
       'more than the asset holds',
-      { assetId: 'stock', amount: 601 * M, toAssetId: W },
+      { lines: [{ assetId: 'stock', amount: 601 * M }], toAssetId: W },
     ],
     [
       'an unknown receiving wallet',
-      { assetId: 'stock', amount: 10 * M, toAssetId: 'nope' },
+      { lines: [{ assetId: 'stock', amount: 10 * M }], toAssetId: 'nope' },
     ],
     // Proceeds must land somewhere spendable, or the sale funds nothing.
     [
       'a non-liquid receiving asset',
-      { assetId: 'stock', amount: 10 * M, toAssetId: 'gold' },
+      { lines: [{ assetId: 'stock', amount: 10 * M }], toAssetId: 'gold' },
     ],
     [
-      'receiving into the asset being sold',
-      { assetId: 'stock', amount: 10 * M, toAssetId: 'stock' },
+      'receiving into an asset being sold',
+      { lines: [{ assetId: 'stock', amount: 10 * M }], toAssetId: 'stock' },
+    ],
+    ['no lines at all', { lines: [], toAssetId: W }],
+    // The same holding twice would sell more of it than exists.
+    [
+      'the same asset on two lines',
+      {
+        lines: [
+          { assetId: 'stock', amount: 300 * M },
+          { assetId: 'stock', amount: 300 * M },
+        ],
+        toAssetId: W,
+      },
+    ],
+    // The sentinel is for a household with NO wallet, never a way to park
+    // money outside the reach of the goals that sit in front of an account.
+    [
+      'the unassigned sentinel while the household holds wallets',
+      {
+        lines: [{ assetId: 'stock', amount: 10 * M }],
+        toAssetId: UNASSIGNED_WALLET_ID,
+      },
     ],
   ])('refuses %s', async (_label, assetSale) => {
     const { service } = setup(household());
