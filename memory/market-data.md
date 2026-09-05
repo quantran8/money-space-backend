@@ -492,7 +492,8 @@ the two disagree about which products exist.
     searching "VNM" then returned four warrants ahead of VNM itself. They are
     short-dated derivatives that expire worthless, not a household holding.
   - Vietnamese `companyName` is preferred over `companyNameEn`; `currency` is
-    `VND` and `unit` is `cp`.
+    `VND` and `unit` is `cp`. Each row also carries `vn30`, taken straight from
+    the bundled directory — it drives the stock picker's default list.
 - `TwelveDataSymbolReferenceProvider` fetches the full `/stocks` and
   `/cryptocurrencies` lists; `CoinMarketCapSymbolReferenceProvider` fetches
   `/v1/cryptocurrency/map` (`listing_status=active`, `sort=cmc_rank`,
@@ -512,19 +513,36 @@ the two disagree about which products exist.
     curated shortlist — those lists are already short and curated upstream (the
     dealer's products, the supported currencies), so filtering them through
     `DEFAULT_SYMBOLS` would hide most of what the user can actually pick.
-  - **No `q`** (stock/crypto) → the **curated default list** (`DEFAULT_SYMBOLS`, e.g. AAPL/MSFT/
-    NVDA…, BTC/ETH/SOL…), each entry upgraded with live reference details
+  - **No `q`, stock** → the **VN30** (`SymbolReference.vn30`), in the reference
+    list's own order. This is a Vietnamese-first app: the picker opened on
+    AAPL/MSFT/NVDA, which is not what a household here holds, and the curated
+    US shortlist could never surface a VN ticker because the default list was
+    built *from* that shortlist rather than filtered out of the live list.
+    The flag comes from the `vnstock-js` directory (`vn30: boolean` on each
+    row), so it stays correct as the index is rebalanced instead of drifting
+    against a hard-coded list of 30 tickers.
+    - `DEFAULT_SYMBOL_LIMIT` is **30** so the whole VN30 fits; at the previous
+      20 the last ten constituents were silently cut.
+    - The VN30 is the default list only. A typed `q` still ranks over the
+      **whole** reference list (~1.6k VN equities + Twelve Data), so foreign
+      tickers remain reachable by searching for them.
+    - **Fallback**: no VN30 in the reference list (vnstock down) → the curated
+      `DEFAULT_SYMBOLS.stock` shortlist, logged as a warning.
+  - **No `q`, crypto** → the **curated default list** (`DEFAULT_SYMBOLS`,
+    BTC/ETH/SOL…), each entry upgraded with live reference details
     (name/exchange) when available so it stays accurate.
   - **With `q`** → ranked matches over the reference list: exact ticker > ticker
     prefix > ticker substring > name substring, alphabetical within a tier,
-    capped at `limit` (default 20, max 50).
+    capped at `limit` (default 30, max 50).
   - **Fallback**: if reference data is unavailable (no key / upstream down) the
     curated list still serves defaults, and a typed query filters that curated
     list — the picker always works.
 - Endpoint: `GET /api/market-data/symbols?assetClass=stock|crypto&q=&limit=`
   (auth-gated by the global `SupabaseAuthGuard`; no `:householdId`, so no
   household guard). Returns `{ assetClass, query, items: SymbolReference[], total }`.
-  `SymbolReference = { assetClass, symbol, name, exchange, currency, unit }`.
+  `SymbolReference = { assetClass, symbol, name, exchange, currency, unit, vn30? }`.
+  `vn30` is set only by the vnstock adapter — other sources cannot tell, and
+  leave it unset.
 - Code: `src/modules/market-data/providers/{symbol-reference-provider.interface,
   twelve-data-symbol-reference.provider,coinmarketcap-symbol-reference.provider,
   vnstock-symbol-reference.provider,composite-symbol-reference.provider,

@@ -38,7 +38,7 @@ const SEARCHABLE_CLASSES: SymbolAssetClass[] = [
   'gold',
   'foreign_currency',
 ];
-const DEFAULT_SYMBOL_LIMIT = 20;
+const DEFAULT_SYMBOL_LIMIT = 30; // Fits the whole VN30 default stock list.
 const MAX_SYMBOL_LIMIT = 50;
 
 @Injectable()
@@ -442,10 +442,9 @@ export class MarketDataService {
   }
 
   /**
-   * The curated popular list, each entry upgraded with live reference details
-   * (name/exchange/currency) when a match exists — so defaults stay accurate —
-   * falling back to the curated entry. If reference data is missing entirely we
-   * return the curated list as-is.
+   * The list shown before the user types. Stock leads with VN30 from the live
+   * reference data; the other classes use their own list or the curated
+   * fallback. See `memory/market-data.md`.
    */
   private defaultList(
     assetClass: SymbolAssetClass,
@@ -455,8 +454,7 @@ export class MarketDataService {
     // Gold/silver and foreign currency are already short, fully curated lists —
     // the dealer's products and the supported currencies. Filtering them
     // through a hard-coded shortlist would hide most of what the user can
-    // actually pick. Stock and crypto run to thousands, so those still lead
-    // with the curated popular names.
+    // actually pick.
     if (assetClass === 'gold' || assetClass === 'foreign_currency') {
       if (reference.length === 0) {
         // The curated list carries no prices, so a quote for it returns null.
@@ -466,6 +464,14 @@ export class MarketDataService {
         return DEFAULT_SYMBOLS[assetClass].slice(0, limit);
       }
       return reference.slice(0, limit);
+    }
+
+    if (assetClass === 'stock') {
+      const vn30 = reference.filter((entry) => entry.vn30);
+      if (vn30.length > 0) return vn30.slice(0, limit);
+      // vnstock down: the curated fallback is all we have.
+      this.logger.warn('VN30 list is empty — serving curated stock defaults');
+      return DEFAULT_SYMBOLS.stock.slice(0, limit);
     }
 
     const curated = DEFAULT_SYMBOLS[assetClass];

@@ -24,4 +24,9 @@ export interface SymbolReference {
   currency: string;
   /** Suggested position unit ("cp" for stock, "coin" for crypto). */
   unit: string;
+  /**
+   * VN30 constituent. Only VN equities carry it; it drives the stock picker's
+   * default list, so a source that cannot tell simply leaves it unset.
+   */
+  vn30?: boolean;
 }

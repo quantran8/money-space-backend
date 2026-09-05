@@ -23,6 +23,7 @@ describe('VnstockSymbolReferenceProvider', () => {
       companyName: 'Công ty Cổ phần Sữa Việt Nam',
       companyNameEn: 'Vietnam Dairy Products JSC',
       exchange: 'HSX',
+      vn30: true,
     },
     {
       symbol: 'SHS',
@@ -50,7 +51,18 @@ describe('VnstockSymbolReferenceProvider', () => {
       exchange: 'HSX',
       currency: 'VND',
       unit: 'cp',
+      vn30: true,
     });
+  });
+
+  it('carries the VN30 flag through, defaulting to false when absent', async () => {
+    search.mockReturnValue(DIRECTORY);
+    const provider = new VnstockSymbolReferenceProvider();
+
+    const result = await provider.listSymbols('stock');
+
+    // SHS has no `vn30` key in the fixture — it must not become undefined.
+    expect(result.find((r) => r.symbol === 'SHS')?.vn30).toBe(false);
   });
 
   it('initialises the bundled directory exactly once', async () => {
