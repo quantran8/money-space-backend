@@ -48,6 +48,10 @@ jobs:
     # "uncaught target signal 4 (Illegal instruction)" and, when it did survive,
     # took 10-15 minutes. A native runner does neither.
     runs-on: ${{ vars.BUILD_PLATFORM == 'linux/amd64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}
+    outputs:
+      # Safe to pass between jobs: unlike the image reference, this is derived
+      # from the date and the run number, so no secret can redact it away.
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -101,15 +105,38 @@ jobs:
           fi
           echo "image: ${OCIR_REGISTRY}/${OCIR_NAMESPACE}/${OCIR_REPOSITORY}:${GITHUB_SHA}"
 
+      - name: Compute the version
+        id: version
+        run: |
+          # Date plus the run number: sortable, unique, and derived from nothing
+          # anyone has to remember to bump. run_number increases monotonically
+          # per workflow, so two deploys on one day never collide.
+          #
+          # The date is Asia/Ho_Chi_Minh, not the runner's UTC — a deploy at 09:00
+          # local would otherwise be stamped with the previous day.
+          version="v$(TZ=Asia/Ho_Chi_Minh date +%Y.%m.%d)-${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "::notice::Building $version ($(git rev-parse --short HEAD))"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: ${{ vars.BUILD_PLATFORM || 'linux/arm64' }}
           push: true
+          # Three tags on one manifest, not three images: :<sha> is what the VM
+          # pulls and what a rollback names, :<version> is the human-readable
+          # handle for the same build, :latest is a convenience for pulling by
+          # hand. Only :latest moves between builds.
           tags: |
             ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
+            ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ steps.version.outputs.version }}
             ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:latest
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.version }}
+            APP_COMMIT=${{ github.sha }}
+            APP_BUILT_AT=${{ steps.version.outputs.built_at }}
           # Registry-backed layer cache, so unchanged pnpm layers are reused.
           cache-from: type=registry,ref=${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:buildcache
           cache-to: type=registry,ref=${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:buildcache,mode=max
@@ -362,10 +389,23 @@ jobs:
               -c 'npx --yes prisma@6.19.3 migrate deploy'"
 
       - name: Verify health
+        env:
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
         run: |
           for i in $(seq 1 20); do
-            if ssh oci "curl -fsS localhost:${{ vars.APP_PORT || '3000' }}/health" ; then
-              echo; echo "backend healthy"; exit 0
+            if body=$(ssh oci "curl -fsS localhost:${{ vars.APP_PORT || '3000' }}/health"); then
+              echo "$body"; echo "backend healthy"
+
+              # /health reports the build that is actually answering. A mismatch
+              # means the container is still the previous image — the pull or the
+              # restart did not take — which "healthy" alone would hide.
+              live=$(printf '%s' "$body" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+              if [ -n "$EXPECTED_VERSION" ] && [ "$live" != "$EXPECTED_VERSION" ]; then
+                echo "::error::Deployed $EXPECTED_VERSION but /health reports '$live'." >&2
+                exit 1
+              fi
+              echo "::notice::Live version: $live"
+              exit 0
             fi
             echo "waiting for backend ($i/20)..."; sleep 6
           done

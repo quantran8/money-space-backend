@@ -2,6 +2,7 @@ import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { BUILD_INFO } from './version';
 
 /**
  * Process-level safety net for errors NestJS's per-request wrapper can't catch:
@@ -42,6 +43,13 @@ async function bootstrap() {
   // target them directly and must not move with the API version.
   app.setGlobalPrefix('api', { exclude: ['', 'health'] });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
-  await app.listen(process.env.PORT ?? 3000);
+
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port);
+
+  // Names the build in the shipped logs, so a silent rollback is visible.
+  new Logger('Bootstrap').log(
+    `money-space-backend ${BUILD_INFO.version} (${BUILD_INFO.commit}) listening on ${port}`,
+  );
 }
 bootstrap();
