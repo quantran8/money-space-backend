@@ -66,6 +66,24 @@ COPY package.json ./
 # Shipped so `prisma migrate deploy` can be run against this image if wanted.
 COPY prisma ./prisma
 
+# Build identity, read at runtime by src/version.ts.
+# Last stage and after every COPY on purpose: an ARG changes every build and
+# invalidates every layer below it — higher up it would defeat the layer cache.
+# See memory/infrastructure/deployment.md.
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
+ARG APP_BUILT_AT
+ENV APP_VERSION=$APP_VERSION
+ENV APP_COMMIT=$APP_COMMIT
+ENV APP_BUILT_AT=$APP_BUILT_AT
+
+# Standard OCI annotation keys, so `docker inspect` identifies the image
+# without starting a container.
+LABEL org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$APP_COMMIT \
+      org.opencontainers.image.created=$APP_BUILT_AT \
+      org.opencontainers.image.title=money-space-backend
+
 USER node
 EXPOSE 3000
 

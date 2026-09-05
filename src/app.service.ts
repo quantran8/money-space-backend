@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { BUILD_INFO } from './version';
 
 @Injectable()
 export class AppService {
@@ -6,7 +7,8 @@ export class AppService {
     return {
       name: 'money-space-backend',
       status: 'ok',
-      version: '0.0.1',
+      version: BUILD_INFO.version,
+      commit: BUILD_INFO.commit,
       endpoints: [
         '/health',
         '/api/v1/households',
@@ -25,6 +27,10 @@ export class AppService {
     return {
       status: 'ok',
       service: 'money-space-backend',
+      // Which build is answering, so `curl /health` identifies what is live.
+      version: BUILD_INFO.version,
+      commit: BUILD_INFO.commit,
+      builtAt: BUILD_INFO.builtAt,
       timestamp: new Date().toISOString(),
     };
   }

@@ -112,6 +112,11 @@ output "ocir_repository" {
   )
 }
 
+output "compartment_id" {
+  description = "Compartment holding the registry. Needed by the image-pruning workflow."
+  value       = local.compartment_id
+}
+
 output "ocir_endpoint" {
   description = "OCIR registry host for docker login."
   value       = local.ocir_endpoint
@@ -136,6 +141,10 @@ output "github_secrets_checklist" {
     OCIR_REPOSITORY = var.container_repository_name
     APP_DIR         = local.app_dir
     BUILD_PLATFORM  = local.image_platform
+    # Pruning only. The four OCI_CLI_* values come from an API key, which
+    # Terraform does not mint — see DEPLOYMENT.md.
+    OCI_COMPARTMENT_ID = local.compartment_id
+    OCI_CLI_REGION     = var.region
     _notes = join(" ", [
       "Also set OCI_SSH_PRIVATE_KEY (the deploy keypair's private half),",
       "OCIR_USERNAME (<namespace>/<oci-username>, or <namespace>/oracleidentitycloudservice/<user> for federated logins),",

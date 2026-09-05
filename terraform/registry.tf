@@ -14,7 +14,9 @@ resource "oci_artifacts_container_repository" "backend" {
   display_name   = var.container_repository_name
   is_public      = var.container_repository_is_public
 
-  # Keep the last 10 image versions; older untagged layers age out.
+  # OCIR has no retention policy — nothing here or on the Oracle side expires an
+  # image, so every push accumulates until something removes it. That is what
+  # .github/workflows/prune-registry.yml is for.
   readme {
     content = "Backend image for ${var.project_name}. Pushed by GitHub Actions, pulled by the OCI compute instance."
     format  = "TEXT_MARKDOWN"

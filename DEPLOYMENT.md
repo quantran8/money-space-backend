@@ -80,6 +80,44 @@ If your account is federated (you sign in through an identity provider),
 `axttup8tl3ug/oracleidentitycloudservice/quan5080@gmail.com`. If `docker login`
 fails with the plain form, this is why.
 
+### Registry pruning (optional)
+
+Only needed for `prune-registry.yml`. OCIR expires nothing on its own, so
+without this the registry grows by roughly five manifests per deploy — the
+`:<sha>` build plus the previous `:latest` and `:buildcache` manifests, which
+lose their tags but stay behind as untagged residue.
+
+Deleting an image goes through the OCI control plane, **not** the registry, so
+`OCIR_TOKEN` is no use here: it is a Docker credential, and the registry v2 API
+does not expose manifest deletion. The control plane wants an API signing key.
+
+Generate one at **Console → Profile → My profile → API keys → Add API key**.
+Download the private key, and Oracle then shows a configuration preview holding
+the first three values below.
+
+| Secret | Where it comes from |
+| --- | --- |
+| `OCI_CLI_USER` | `user` in the configuration preview (`ocid1.user.oc1..…`) |
+| `OCI_CLI_TENANCY` | `tenancy` in the same preview |
+| `OCI_CLI_FINGERPRINT` | shown next to the key in the API keys list |
+| `OCI_CLI_KEY_CONTENT` | the downloaded `.pem`, whole file including the BEGIN/END lines |
+| `OCI_COMPARTMENT_ID` | `terraform output compartment_id` |
+
+Plus one variable:
+
+| Variable | Value |
+| --- | --- |
+| `OCI_CLI_REGION` | `ap-singapore-1` |
+
+`terraform output github_secrets_checklist` prints the last two; the API key
+values come from the Console, since Terraform does not mint keys.
+
+**Running it.** GitHub → **Actions** → *Prune OCIR images* → **Run workflow**.
+It defaults to a **dry run**: it lists what it would delete and deletes nothing,
+which is how to check the first run before trusting it. Untick *dry_run* to
+apply. `keep` defaults to 5 and is the number of builds kept as rollback
+targets. After that it runs itself every Sunday, always for real.
+
 ### Application secrets
 
 Copy these from your local `.env` — the same values the app already uses:
@@ -227,13 +265,30 @@ docker compose ps
 docker compose logs --tail 80 backend
 ```
 
-**Rolling back.** Images are tagged with the commit SHA, so a previous build can
-be started directly:
+**Which build is live.** `/health` answers, so no SSH is needed:
+
+```bash
+curl -s https://<domain>/health
+# {"status":"ok","version":"v2026.09.05-42","commit":"1a90823",...}
+```
+
+Every deploy is tagged twice — `:<version>` (`v2026.09.05-42`: the date in
+Ho Chi Minh time plus the workflow run number) and `:<commit-sha>`. Both name
+the same image; the version is the readable one, the SHA is what `.env` holds.
+Nothing needs bumping by hand.
+
+**Rolling back.** Images are tagged with both the version and the commit SHA, so
+a previous build can be started directly. Only the five most recent builds are
+kept — see *Registry pruning* — so an older build may no longer exist in the
+registry; rolling back past that means re-running the deploy workflow from that
+commit. Check the schema either way: a migration that has already run is not
+undone by starting an older image.
 
 ```bash
 ssh deploy@134.185.85.59
 cd /opt/money-space
-sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=\"ap-singapore-1.ocir.io/axttup8tl3ug/money-space-backend:<sha>\"|" .env
+# <ref> is either a version (v2026.09.05-42) or a commit SHA — both work.
+sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=\"ap-singapore-1.ocir.io/axttup8tl3ug/money-space-backend:<ref>\"|" .env
 docker compose --profile tls up -d
 ```
 
@@ -244,6 +299,7 @@ docker compose --profile tls up -d
 | | |
 | --- | --- |
 | `.github/workflows/deploy.yml` | build, push, deploy, verify |
+| `.github/workflows/prune-registry.yml` | weekly cleanup of old OCIR images |
 | `deploy/docker-compose.prod.yml` | the stack the VM runs |
 | `deploy/Caddyfile` | reverse proxy and TLS |
 | `terraform/` | the infrastructure, and how to change it |
