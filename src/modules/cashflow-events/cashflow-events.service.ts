@@ -300,11 +300,11 @@ export class CashflowEventsService {
             event.direction === 'incoming' ? settlementAssetId : undefined,
           cashflowEventId: event.id,
           debtId: event.debtId ?? undefined,
-          // `note` IS the `description` column. Only what the user actually
-          // typed goes in it — the row's own name/category already say what
-          // this is, so this must NOT fall back to `event.name`, or a
-          // completion with no typed note reads as if someone wrote it.
-          note: payload.note?.trim() ?? '',
+          // `note` IS the `description` column, and the history row uses it as
+          // its title. Falling back to the event's name keeps the label the
+          // household chose ("Tiền điện tháng 9") instead of collapsing the row
+          // to its bare category.
+          note: payload.note?.trim() || event.name,
         });
 
         await this.cashflowEventsRepository.updateCashflowEvent(eventId, next);

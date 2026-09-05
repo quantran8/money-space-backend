@@ -228,6 +228,36 @@ describe('CashflowEventsService — completion (§18)', () => {
     );
   });
 
+  it('names the completion after the event when no note is typed', async () => {
+    const { service, createMoneyEvent } = setup({
+      name: 'Tien dien thang 9',
+      settlementAssetId: 'asset-stored',
+    });
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {});
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ note: 'Tien dien thang 9' }),
+    );
+  });
+
+  it('prefers a typed note over the event name', async () => {
+    const { service, createMoneyEvent } = setup({
+      name: 'Tien dien thang 9',
+      settlementAssetId: 'asset-stored',
+    });
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {
+      note: '  Tra bu ky truoc  ',
+    });
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ note: 'Tra bu ky truoc' }),
+    );
+  });
+
   // Only flexible money settles an event — see memory/assets.md.
   it('refuses a wallet that is not counted as flexible money', async () => {
     const { service, getAssetDetail, createMoneyEvent } = setup();
