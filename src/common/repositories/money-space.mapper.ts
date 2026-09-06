@@ -1,4 +1,5 @@
 import type { Asset } from '../../modules/assets/entities/asset.entity';
+import type { CalculationTerm } from '../../modules/assets/entities/calculation-term.entity';
 import type { AssetValueHistory } from '../../modules/assets/entities/asset-value-history.entity';
 import type { SnapshotPoint } from '../../modules/dashboard/entities/snapshot-point.entity';
 import type {
@@ -229,6 +230,15 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
           principalAmount: numberFromDb(
             term.principalAmount ?? term.principal_amount,
           ),
+          // Falls back to the running principal for rows written before the
+          // column existed — correct for them, since nothing had capitalized.
+          basePrincipalAmount:
+            (term.basePrincipalAmount ?? term.base_principal_amount) != null
+              ? numberFromDb(
+                  term.basePrincipalAmount ?? term.base_principal_amount,
+                )
+              : numberFromDb(term.principalAmount ?? term.principal_amount),
+          status: (term.status as CalculationTerm['status']) ?? 'active',
           interestRate: numberFromDb(term.interestRate ?? term.interest_rate),
           startDate: dateOnly(term.startDate ?? term.start_date),
           maturityDate:

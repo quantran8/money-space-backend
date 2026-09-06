@@ -46,7 +46,13 @@ export class PrismaHouseholdsRepository
     const households = await this.prisma.household.findMany({
       where: {
         deletedAt: null,
-        householdMembers: { some: { userId } },
+        // `deletedAt: null` on the MEMBERSHIP too, not just the household.
+        // Leaving soft-deletes the member row (FKs from audit rows and owned
+        // assets still point at it), so `some: { userId }` alone kept matching
+        // a household the user had left — this endpoint gates the whole app
+        // client-side, so they were handed back the dashboard of a space they
+        // no longer belong to. Every request inside it then 403'd.
+        householdMembers: { some: { userId, deletedAt: null } },
       },
       orderBy: { createdAt: 'asc' },
     });

@@ -80,10 +80,7 @@ const SCHEDULED_OUTFLOW_HORIZON_DAYS = 30;
  * act on. With no date (the form before one is picked) the horizon stands.
  */
 function spendImpactWindowEnd(asOfDate: string | undefined): string {
-  const horizon = addDaysIso(
-    todayInTimeZone(),
-    SCHEDULED_OUTFLOW_HORIZON_DAYS,
-  );
+  const horizon = addDaysIso(todayInTimeZone(), SCHEDULED_OUTFLOW_HORIZON_DAYS);
   return asOfDate ? minIso(asOfDate, horizon) : horizon;
 }
 
@@ -223,7 +220,9 @@ export class GoalsService {
         this.goalsRepository.findFinancialGoalsByHousehold(householdId),
         this.goalsRepository.findAllocationsByHousehold(householdId),
         this.assetValueMap(householdId),
-        this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+        this.cashflowEventsRepository.findCashflowEventsByHousehold(
+          householdId,
+        ),
       ],
     );
 
@@ -550,7 +549,9 @@ export class GoalsService {
         this.goalsRepository.findFinancialGoalsByHousehold(householdId),
         this.goalsRepository.findAllocationsByHousehold(householdId),
         this.assetValueMap(householdId),
-        this.cashflowEventsRepository.findCashflowEventsByHousehold(householdId),
+        this.cashflowEventsRepository.findCashflowEventsByHousehold(
+          householdId,
+        ),
       ],
     );
 

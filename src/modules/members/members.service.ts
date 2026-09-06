@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import { HouseholdMember } from './entities/member.entity';
 import { makeInitials } from '../../common/utils/money-space.utils';
 import type { CreateMemberDto } from './dto/create-member.dto';
 import type { UpdateMemberDto } from './dto/update-member.dto';
+import type { HouseholdMembership } from '../auth/guards/household-access.guard';
 import { MEMBERS_REPOSITORY } from './repositories/members.repository.interface';
 import type { MembersRepository } from './repositories/members.repository.interface';
 
@@ -103,6 +105,44 @@ export class MembersService {
     return {
       deleted: true,
       memberId,
+    };
+  }
+
+  /**
+   * The caller removing their own membership row.
+   *
+   * Distinct from `deleteMember` in who may call it, not in what it does to
+   * the data — so the actual deletion is shared, and the two differ only in
+   * the check in front of it.
+   *
+   * The creator is refused for the same structural reason as in
+   * `deleteMember`, and it is worth stating plainly because "you cannot leave
+   * your own household" is otherwise a surprising sentence: the access guard
+   * resolves invite/remove/delete against a LIVE creator membership row, so a
+   * household whose creator has left can never invite or remove anyone again.
+   * `POST /households/:householdId/transfer-steward` is the way out of that.
+   */
+  async leaveHousehold(
+    householdId: string,
+    membership: HouseholdMembership | undefined,
+  ) {
+    // The guard sets this on every household-scoped request, so an absent
+    // membership means the route was reached without it — refuse rather than
+    // guess at whose row to delete.
+    if (!membership) {
+      throw new ForbiddenException('You are not a member of this household');
+    }
+    if (membership.isCreator) {
+      throw new BadRequestException(
+        'The member who created this household cannot leave it. Transfer that first.',
+      );
+    }
+
+    await this.ensureMember(householdId, membership.memberId);
+    await this.membersRepository.deleteMember(membership.memberId);
+    return {
+      left: true,
+      memberId: membership.memberId,
     };
   }
 

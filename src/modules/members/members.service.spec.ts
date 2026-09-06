@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { MembersService } from './members.service';
 import type { MembersRepository } from './repositories/members.repository.interface';
 import type { HouseholdMember } from './entities/member.entity';
@@ -98,6 +102,64 @@ describe('MembersService.deleteMember', () => {
 
     await expect(
       service.deleteMember(HOUSEHOLD, 'm-nope'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+/**
+ * Leaving is a separate operation from being removed, because the permission
+ * is different: `DELETE /members/:memberId` is creator-only, so routing a
+ * member's own exit through it 403'd exactly the people who needed it.
+ */
+describe('MembersService.leaveHousehold', () => {
+  const membership = (over = {}) => ({
+    memberId: 'm-partner',
+    householdId: HOUSEHOLD,
+    userId: PARTNER_USER,
+    isCreator: false,
+    ...over,
+  });
+
+  it('lets an ordinary member remove their own row', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.leaveHousehold(HOUSEHOLD, membership()),
+    ).resolves.toEqual({
+      left: true,
+      memberId: 'm-partner',
+    });
+    expect(repository.deleteMember).toHaveBeenCalledWith('m-partner');
+  });
+
+  /**
+   * Not a style rule: the access guard resolves invite/remove/delete against a
+   * LIVE creator membership row, so a household whose creator left could never
+   * invite or remove anyone again.
+   */
+  it('refuses the creator, who must transfer the role first', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.leaveHousehold(HOUSEHOLD, membership({ isCreator: true })),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repository.deleteMember).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the guard resolved no membership', async () => {
+    const { service, repository } = setup();
+
+    await expect(
+      service.leaveHousehold(HOUSEHOLD, undefined),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repository.deleteMember).not.toHaveBeenCalled();
+  });
+
+  it('404s when the resolved row is not in this household', async () => {
+    const { service } = setup({});
+
+    await expect(
+      service.leaveHousehold(HOUSEHOLD, membership()),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

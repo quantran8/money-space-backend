@@ -1,8 +1,9 @@
 export interface CompleteCashflowEventDto {
   /**
    * Which occurrence is being completed. Defaults to the record's current
-   * `expectedDate`. Used as the idempotency key so a double-tap cannot advance
-   * a recurring series twice.
+   * `expectedDate`. Purely an idempotency key so a double-tap cannot advance a
+   * recurring series twice — it is NOT the money event's date, which is the day
+   * the household confirmed.
    */
   occurrenceDate?: string;
   /** What was actually moved. Defaults to the planned `amount`. */

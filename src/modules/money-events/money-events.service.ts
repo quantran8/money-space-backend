@@ -174,10 +174,7 @@ export class MoneyEventsService {
    * an asset purchase). These used to write the code straight into the column;
    * with a real FK they have to resolve it first.
    */
-  async systemCategoryId(
-    householdId: string,
-    code: string,
-  ): Promise<string> {
+  async systemCategoryId(householdId: string, code: string): Promise<string> {
     const resolved = await this.moneyEventsRepository.resolveCategoryId(
       householdId,
       { code },
@@ -1009,7 +1006,9 @@ export class MoneyEventsService {
         // the one worth showing.
         const current = overdrafts[item.moneyEventId];
         overdrafts[item.moneyEventId] =
-          current === undefined ? item.balance : Math.min(current, item.balance);
+          current === undefined
+            ? item.balance
+            : Math.min(current, item.balance);
       }
     }
     return { householdId, overdrafts };

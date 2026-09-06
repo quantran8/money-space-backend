@@ -20,12 +20,15 @@ const ICON_KEY_MAX = 64;
 // 3- or 6-digit hex, with or without alpha (#RGB, #RRGGBB, #RRGGBBAA). The
 // disc's fill is a free colour choice, not a palette off the design tokens —
 // so this only checks it IS a colour, not which one.
-const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const HEX_COLOR_PATTERN =
+  /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 // Empty string and null both mean "no custom fill". Normalizing them to null
 // keeps one representation in the column, so the client's default has one
 // case to check.
-function normalizeIconColor(iconColor: string | null | undefined): string | null {
+function normalizeIconColor(
+  iconColor: string | null | undefined,
+): string | null {
   if (iconColor === undefined || iconColor === null) return null;
   const trimmed = iconColor.trim();
   if (!trimmed) return null;

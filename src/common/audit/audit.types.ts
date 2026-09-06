@@ -21,6 +21,10 @@ export type AuditAction =
   | 'asset.value_updated'
   | 'asset.liquidity_changed'
   | 'asset.sold'
+  // A saving deposit reaching its end and becoming a spendable account. Logged
+  // because the household did not ask for it — the money moved on its own, and
+  // an automatic change to what they can spend has to be visible somewhere.
+  | 'asset.deposit_settled'
   // Upcoming money
   | 'cashflow_event.added'
   | 'cashflow_event.completed'

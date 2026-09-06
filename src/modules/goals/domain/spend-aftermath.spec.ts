@@ -63,8 +63,19 @@ describe('resolveSpendAftermath', () => {
   it('counts incoming events as they land', () => {
     const result = resolveSpendAftermath(
       [
-        event({ id: 'salary', name: 'lương', amount: 20 * M, direction: 'incoming', expectedDate: '2026-09-05' }),
-        event({ id: 'rent', name: 'tiền nhà', amount: 8 * M, expectedDate: '2026-09-10' }),
+        event({
+          id: 'salary',
+          name: 'lương',
+          amount: 20 * M,
+          direction: 'incoming',
+          expectedDate: '2026-09-05',
+        }),
+        event({
+          id: 'rent',
+          name: 'tiền nhà',
+          amount: 8 * M,
+          expectedDate: '2026-09-10',
+        }),
       ],
       WALLET,
       0,
@@ -72,7 +83,10 @@ describe('resolveSpendAftermath', () => {
       '2026-09-30',
     );
 
-    expect(result.rows.map((row) => row.balanceAfter)).toEqual([20 * M, 12 * M]);
+    expect(result.rows.map((row) => row.balanceAfter)).toEqual([
+      20 * M,
+      12 * M,
+    ]);
     expect(result.shortfallCount).toBe(0);
   });
 
@@ -82,7 +96,12 @@ describe('resolveSpendAftermath', () => {
     const result = resolveSpendAftermath(
       [
         event({ id: 'bill', expectedDate: '2026-09-01' }),
-        event({ id: 'salary', amount: 30 * M, direction: 'incoming', expectedDate: '2026-09-05' }),
+        event({
+          id: 'salary',
+          amount: 30 * M,
+          direction: 'incoming',
+          expectedDate: '2026-09-05',
+        }),
       ],
       WALLET,
       0,

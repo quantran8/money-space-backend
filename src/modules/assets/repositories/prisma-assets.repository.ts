@@ -564,6 +564,33 @@ export class PrismaAssetsRepository
     return rows.map((row) => row.household_id);
   }
 
+  /**
+   * Households holding an active saving deposit whose term has started, for the
+   * nightly accrue-then-settle pass.
+   *
+   * Filtering on `status = 'active'` plus the type is what keeps this cheap and
+   * self-limiting: settling a deposit turns it into a `bank_account`, so a
+   * household drops out of this set the moment its last deposit is done.
+   */
+  async findHouseholdsWithActiveDeposits(
+    asOf: string,
+    limit: number,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<Array<{ household_id: string }>>`
+      SELECT DISTINCT a."household_id"
+      FROM "assets" a
+      JOIN "asset_calculation_terms" t
+        ON t."asset_id" = a."id" AND t."deleted_at" IS NULL
+      WHERE a."deleted_at" IS NULL
+        AND a."status" = 'active'
+        AND a."type" = 'saving_deposit'
+        AND t."status" = 'active'
+        AND t."start_date" <= ${asOf}::date
+      LIMIT ${limit}
+    `;
+    return rows.map((row) => row.household_id);
+  }
+
   async hasMarketValuationOnDate(
     householdId: string,
     valuationDate: string,
@@ -692,6 +719,13 @@ export class PrismaAssetsRepository
         assetId: asset.id,
         calculationType: asset.calculationTerm.calculationType,
         principalAmount: asset.calculationTerm.principalAmount,
+        // Fixed at creation: falls back to the principal on the first write,
+        // and every later write carries the value the mapper read back, so
+        // capitalizing interest can never move it.
+        basePrincipalAmount:
+          asset.calculationTerm.basePrincipalAmount ??
+          asset.calculationTerm.principalAmount,
+        status: asset.calculationTerm.status ?? 'active',
         currency: asset.currency,
         startDate: this.toDate(asset.calculationTerm.startDate),
         maturityDate: this.toDate(asset.calculationTerm.maturityDate),

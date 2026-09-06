@@ -228,6 +228,10 @@ export class CashflowEventsService {
     }
 
     const occurrenceDate = payload.occurrenceDate ?? event.expectedDate;
+    // WHICH occurrence is settled and WHEN the money actually moved are two
+    // different dates. `occurrenceDate` answers the first; the money event is
+    // history, so it is stamped with the day the household confirmed it.
+    const paidDate = this.today();
     // Idempotency guard. Without this a double-tap would create two money
     // events AND advance a monthly series two months — silently losing a month
     // from the forecast.
@@ -293,7 +297,7 @@ export class CashflowEventsService {
           // which put every completed upcoming item in one bucket.
           categoryId: event.categoryId,
           amount,
-          isoDate: occurrenceDate,
+          isoDate: paidDate,
           fromAssetId:
             event.direction === 'outgoing' ? settlementAssetId : undefined,
           toAssetId:

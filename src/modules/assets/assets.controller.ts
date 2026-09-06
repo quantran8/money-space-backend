@@ -16,6 +16,7 @@ import { AssetsService } from './assets.service';
 import type { CreateAssetDto } from './dto/create-asset.dto';
 import type { UpdateAssetDto } from './dto/update-asset.dto';
 import type { PurchaseIntoPositionDto } from './dto/purchase-into-position.dto';
+import { todayInTimeZone } from '../../common/utils/clock';
 
 @Controller('households/:householdId/assets')
 export class AssetsController {
@@ -51,6 +52,26 @@ export class AssetsController {
       householdId,
       assetId,
       payload,
+    );
+  }
+
+  /**
+   * Tất toán a saving deposit: the deposit pays out and becomes the account
+   * holding the money. Not `asset_sale` — a passbook is not sold, and the asset
+   * survives as a wallet rather than closing. See memory/asset-valuation.md.
+   *
+   * Dated today (an early withdrawal happens now); the maturity cron calls the
+   * same service method with the maturity date instead.
+   */
+  @Post(':assetId/withdraw')
+  withdrawSavingDeposit(
+    @Param('householdId') householdId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.assetsService.settleSavingDeposit(
+      householdId,
+      assetId,
+      todayInTimeZone(),
     );
   }
 
