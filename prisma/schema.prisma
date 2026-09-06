@@ -924,6 +924,7 @@ model CashflowEvent {
   @@index([ownerMemberId])
   @@index([financialGoalId])
   @@index([plannedAssetId])
+  @@index([householdId, categoryId])
   @@map("cashflow_events")
 }
 
