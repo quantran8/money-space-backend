@@ -62,6 +62,6 @@ if [[ "$DRY" -eq 1 ]]; then
 fi
 
 echo "→ Applying schema with 'prisma db push'..."
-npx prisma db push "${PUSH_ARGS[@]}"
+npx prisma db push ${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}
 
 echo "✓ Database schema is up to date."

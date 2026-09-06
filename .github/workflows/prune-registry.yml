@@ -107,65 +107,113 @@ jobs:
 
           echo "total images: $(jq '.data.items | length' images.json)"
 
+          # The tag list is NOT reliably present on a list response, so ask the
+          # API which images have versions instead of inferring it from the
+          # payload shape. This is the authoritative answer and the one the
+          # delete decision is built on.
+          oci artifacts container image list \
+            --compartment-id "$OCI_COMPARTMENT_ID" \
+            --repository-name "$OCIR_REPOSITORY" \
+            --lifecycle-state AVAILABLE \
+            --is-versioned true \
+            --all > tagged.json
+
+          echo "tagged images: $(jq '.data.items | length' tagged.json)"
+
+          # Printed so a surprising result is diagnosable from the log alone
+          # rather than by guessing at the schema.
+          echo "--- one raw item, for reference ---"
+          jq '.data.items[0]' images.json
+
       - name: Decide what to delete
         run: |
-          # Every image falls into one of three cases, decided by its tags:
+          # OCIR lists one row per TAG, not per image: a build tagged :<sha> and
+          # :<version> appears twice, sharing one digest. Rows are therefore
+          # grouped by digest so "keep 5" means five builds, not five tag rows —
+          # ungrouped it would have kept two and a half.
           #
+          # Which rows are tagged comes from the API (--is-versioned), not from
+          # the payload's shape: a list response carries no tag array, and
+          # reading one off it classified every image as untagged, which would
+          # have queued :latest, :buildcache and every rollback target for
+          # deletion.
+          #
+          # Three cases per digest:
           #   - no tags at all       -> delete. Nothing can pull it.
-          #   - latest or buildcache -> pinned. Only the current manifest still
-          #                             holds these; superseded ones already
-          #                             lost the tag and are untagged above.
-          #   - any other tag        -> rollback history, newest $KEEP kept.
-          #                             A build carries both :<sha> and
-          #                             :<version>, but they are two names for
-          #                             one manifest, so it counts once.
+          #   - latest or buildcache -> pinned, never deleted.
+          #   - anything else        -> rollback history, newest $KEEP kept.
           #
-          # The newest build normally carries BOTH its :<sha> and :latest, so it
-          # is pinned and a history entry at once. It therefore stays in the
-          # history ranking — counting it out would silently keep $KEEP + 1
-          # builds — and the pinned set is instead subtracted at the end, which
-          # also stops :buildcache from ever being queued for deletion.
-          #
-          # Bucketing on the versions array rather than on displayName is
-          # deliberate: the Console renders an untagged image as
-          # "<repo>:unknown@sha256:...", and matching that rendering would break
-          # the day a real tag happened to be named "unknown".
-          jq --argjson keep "$KEEP" '
-            .data.items
+          # :latest shares its digest with a real build, so that digest stays in
+          # the ranking and the count still means five builds; the pinned set is
+          # subtracted from the deletions at the end. :buildcache is the
+          # exception — it is a cache manifest with its own digest and no build
+          # behind it, so it is excluded from the ranking entirely. Counted in,
+          # it would eat a slot and leave only four builds kept.
+          jq -s --argjson keep "$KEEP" '
+            ([.[1].data.items[].id]) as $tagged_ids
+            | .[0].data.items
             | map({
                 id,
-                digest,
                 created: ."time-created",
-                tags: [(.versions // [])[].version]
+                name: ."display-name",
+                # Fall back to the id when a digest is absent, so a row is never
+                # silently merged with an unrelated one.
+                key: (.digest // .id),
+                tagged: (.id | IN($tagged_ids[]))
               })
-            | (map(select(.tags | any(. == "latest" or . == "buildcache")))) as $pinned
-            | ($pinned | map(.id)) as $pinned_ids
-            | (map(select(.tags | length == 0))) as $untagged
+            | group_by(.key)
+            | map({
+                key: .[0].key,
+                ids: map(.id),
+                created: (map(.created) | max),
+                names: (map(.name) | sort),
+                tagged: (map(.tagged) | any)
+              })
+            | (map(select(.tagged | not))) as $untagged
+            | (map(select(
+                .tagged and (.names | any(test(":(latest|buildcache)$")))
+              ))) as $pinned
+            | ($pinned | map(.key)) as $pinned_keys
             | (
-                map(select(.tags | any(. != "latest" and . != "buildcache")))
+                map(select(
+                  .tagged and (.names | any(test(":buildcache$")) | not)
+                ))
                 | sort_by(.created) | reverse
               ) as $history
             | {
                 untagged: $untagged,
                 pinned: $pinned,
                 keep: $history[:$keep],
-                drop: ($history[$keep:] | map(select(.id | IN($pinned_ids[]) | not)))
+                drop: ($history[$keep:] | map(select(.key | IN($pinned_keys[]) | not)))
               }
-          ' images.json > plan.json
+          ' images.json tagged.json > plan.json
 
-          echo "keeping ${{ env.KEEP }} most recent tagged builds:"
-          jq -r '.keep[] | "  \(.created)  \(.tags | join(","))"' plan.json
+          show() { jq -r "$1"'[] | "  \(.created)  \(.names | join(", "))"' plan.json; }
+
+          echo "keeping ${{ env.KEEP }} most recent builds:"; show '.keep'
           echo
-          echo "keeping (moving tags):"
-          jq -r '.pinned[] | "  \(.created)  \(.tags | join(","))"' plan.json
+          echo "keeping (moving tags):"; show '.pinned'
           echo
-          echo "deleting $(jq '.drop | length' plan.json) superseded builds:"
-          jq -r '.drop[] | "  \(.created)  \(.tags | join(","))"' plan.json
+          echo "deleting $(jq '.drop | length' plan.json) superseded builds:"; show '.drop'
           echo
           echo "deleting $(jq '.untagged | length' plan.json) untagged manifests"
 
-          jq -r '(.drop + .untagged)[].id' plan.json > to-delete.txt
-          echo "total to delete: $(wc -l < to-delete.txt)"
+          # A digest can span several rows; every row of a doomed digest goes.
+          jq -r '(.drop + .untagged)[].ids[]' plan.json > to-delete.txt
+          echo "total manifests to delete: $(wc -l < to-delete.txt)"
+
+          # Refuse to act on an answer that says nothing is tagged. Any
+          # repository in use has at least a :latest, so zero means the tag
+          # lookup failed rather than that the registry is genuinely all
+          # residue — and deleting on that answer takes the rollback targets
+          # with the junk.
+          if [ "$(jq '.keep | length' plan.json)" -eq 0 ] \
+             && [ "$(jq '.pinned | length' plan.json)" -eq 0 ] \
+             && [ "$(jq '.untagged | length' plan.json)" -gt 0 ]; then
+            echo "::error::Every image looks untagged, including :latest. Refusing to delete." >&2
+            echo "The tag lookup returned nothing — inspect tagged.json before re-running." >&2
+            exit 1
+          fi
 
       - name: Delete
         run: |

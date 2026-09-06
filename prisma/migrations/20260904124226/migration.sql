@@ -1,0 +1,9 @@
+-- Recorded by `prisma db push`, not written by hand.
+--
+-- This project applies prisma/schema.prisma with `db push` (see
+-- scripts/init-db.sh); migrations/ is documentation. Push stamps its own
+-- bare-timestamp row into _prisma_migrations, which then reads as a divergent
+-- migration against this directory. Committed empty so the history lines up.
+--
+-- The schema work of this push is described by the named migrations that share
+-- its timestamp: 20260903100000, 20260903110000, 20260904090000.

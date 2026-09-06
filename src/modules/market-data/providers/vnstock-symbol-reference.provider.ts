@@ -97,6 +97,7 @@ export class VnstockSymbolReferenceProvider implements SymbolReferenceProvider {
         exchange,
         currency: 'VND',
         unit: 'cp',
+        vn30: row.vn30 === true,
       });
     }
     return result;

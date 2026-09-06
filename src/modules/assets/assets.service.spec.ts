@@ -1136,9 +1136,7 @@ describe('AssetsService', () => {
         {
           simulate: (stored) =>
             stored.map((event) =>
-              event.id === 'event-1'
-                ? { ...event, amount: 1_000_000 }
-                : event,
+              event.id === 'event-1' ? { ...event, amount: 1_000_000 } : event,
             ),
         },
       );

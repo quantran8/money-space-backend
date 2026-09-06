@@ -1226,7 +1226,12 @@ describe('GoalsService — spend impact while editing a booked event', () => {
   it('does not subtract the event being edited', async () => {
     const { service } = withWallet();
 
-    const editing = await service.spendImpact('hh-1', 'tcb', 10 * M, 'evt-bill');
+    const editing = await service.spendImpact(
+      'hh-1',
+      'tcb',
+      10 * M,
+      'evt-bill',
+    );
     const creating = await service.spendImpact('hh-1', 'tcb', 10 * M);
 
     // Editing sees the whole 30tr — the bill's own 4tr is not taken out twice.
@@ -1252,7 +1257,12 @@ describe('GoalsService — spend impact while editing a booked event', () => {
   it('still subtracts when the excluded id matches nothing', async () => {
     const { service } = withWallet();
 
-    const impact = await service.spendImpact('hh-1', 'tcb', 10 * M, 'evt-other');
+    const impact = await service.spendImpact(
+      'hh-1',
+      'tcb',
+      10 * M,
+      'evt-other',
+    );
 
     expect(impact.assetValue).toBe(26 * M);
   });

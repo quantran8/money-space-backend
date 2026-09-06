@@ -330,16 +330,49 @@ export function computeCurrentValue(
   }
 
   if (asset.valuationMode === 'formula_calculated' && asset.calculationTerm) {
-    const effectiveEnd =
-      asset.calculationTerm.maturityDate &&
-      new Date(asset.calculationTerm.maturityDate) < new Date(asOf)
-        ? asset.calculationTerm.maturityDate
+    const term = asset.calculationTerm;
+
+    // A deposit that pays at the end of the term is worth its principal until
+    // it actually pays.
+    //
+    // Straight-line daily accrual claims money the household cannot have:
+    // break an `end_of_term` passbook tomorrow and the bank pays the non-term
+    // rate (often 0,2%/năm) on the elapsed days, NOT the contracted rate — so
+    // the accrued figure is not merely early, it is a number that will never
+    // exist. What the deposit is really worth before maturity is
+    // `computeSavingEarly`, and that is what the withdrawal flow pays out.
+    //
+    // A `monthly` deposit is different and keeps accruing here: its interest
+    // genuinely falls due month by month, and for `interestDestination:
+    // 'principal'` the accrual flow capitalizes each payout into
+    // `principalAmount` — so the balance grows for real.
+    //
+    // See memory/asset-valuation.md.
+    if (term.interestPayment === 'end_of_term') {
+      const matured =
+        !!term.maturityDate && new Date(term.maturityDate) <= new Date(asOf);
+      if (!matured) {
+        return term.principalAmount;
+      }
+      // At maturity the full-term interest is due. Once the settlement flow has
+      // run it is already inside `principalAmount`; before that this is what
+      // the household is owed.
+      const years =
+        daysBetween(term.startDate, term.maturityDate as string) / 365;
+      return term.principalAmount * (1 + (term.interestRate / 100) * years);
+    }
+
+    // `monthly`: interest lands on the deposit's own day each month, so the
+    // value STEPS on each anniversary rather than sloping daily. Gửi ngày 06
+    // means nothing is added until the 06th of the next month — quoting a
+    // part-month accrual would show money the bank has not paid.
+    const horizon =
+      term.maturityDate && new Date(term.maturityDate) < new Date(asOf)
+        ? term.maturityDate
         : asOf;
-    const elapsedYears =
-      daysBetween(asset.calculationTerm.startDate, effectiveEnd) / 365;
-    const rate = asset.calculationTerm.interestRate / 100;
-    const accrued = asset.calculationTerm.principalAmount * rate * elapsedYears;
-    return asset.calculationTerm.principalAmount + accrued;
+    const elapsedPayouts = wholeMonthsBetween(term.startDate, horizon);
+    const monthly = (term.principalAmount * (term.interestRate / 100)) / 12;
+    return term.principalAmount + monthly * elapsedPayouts;
   }
 
   return 0;
@@ -414,6 +447,92 @@ export function computeSavingEarly(
   return { principal, interest: -clawback, total: principal - clawback };
 }
 
+/** Why a deposit stopped being a deposit. */
+export type SavingSettlementReason = 'matured' | 'withdrawn_early';
+
+export interface SavingSettlement extends SavingBreakdown {
+  reason: SavingSettlementReason;
+  /** The date the settlement is booked at — maturity, or the withdrawal date. */
+  settledOn: string;
+}
+
+/**
+ * What a deposit pays out when it is closed on `asOf`, and why.
+ *
+ * The single answer for both settlement paths (the maturity cron and a manual
+ * withdrawal), so an early withdrawal made on the maturity date and the cron
+ * settling that same deposit cannot produce different money.
+ *
+ * The interest/principal split is what keeps this honest when interest has
+ * already been paid out month by month:
+ *
+ * - `interestDestination: 'wallet'` — every monthly payout already landed in a
+ *   wallet as its own money event. Settling must return the DEPOSIT only, so
+ *   the maths run on `basePrincipalAmount`; paying `principalAmount` here would
+ *   be fine (they are equal — capitalization never ran) but reading the base is
+ *   the statement of intent.
+ * - `interestDestination: 'principal'` — interest was capitalized, so it is
+ *   already inside `principalAmount`. That IS the payout at maturity; adding
+ *   `computeSavingOnTime`'s interest again would pay it twice.
+ *
+ * Accrual owns the interest, settlement owns the principal, and neither reaches
+ * into the other's money.
+ */
+export function computeSavingSettlement(
+  term: CalculationTerm,
+  asOf: string,
+): SavingSettlement {
+  const deposited = term.basePrincipalAmount ?? term.principalAmount;
+  const capitalizes = term.interestDestination === 'principal';
+  const matured = !!term.maturityDate && asOf >= term.maturityDate;
+
+  if (matured) {
+    const settledOn = term.maturityDate as string;
+    if (capitalizes) {
+      // Everything due was capitalized into the running principal; what is
+      // left to hand over is that balance.
+      const total = term.principalAmount;
+      return {
+        reason: 'matured',
+        settledOn,
+        principal: deposited,
+        interest: total - deposited,
+        total,
+      };
+    }
+    // Interest was paid out as it fell due, so only the deposit comes back.
+    return {
+      reason: 'matured',
+      settledOn,
+      principal: deposited,
+      interest: 0,
+      total: deposited,
+    };
+  }
+
+  // Before maturity the contracted rate is void. `computeSavingEarly` prices
+  // the elapsed months at the non-term rate and, for a monthly passbook, claws
+  // back interest already paid — against what was DEPOSITED, never against a
+  // balance that has interest folded into it.
+  const elapsedMonths = Math.max(
+    0,
+    Math.floor(daysBetween(term.startDate, asOf) / 30),
+  );
+  const early = computeSavingEarly(
+    { ...term, principalAmount: deposited },
+    elapsedMonths,
+  );
+  return {
+    reason: 'withdrawn_early',
+    settledOn: asOf,
+    principal: deposited,
+    interest: early.interest,
+    // An extreme rate/tenor pair can drive a clawback past the deposit; the
+    // household walks away with nothing rather than owing the bank.
+    total: Math.max(0, early.total),
+  };
+}
+
 /** One due interest payout: the period-end date and the amount to credit. */
 export interface SavingInterestPeriod {
   /** ISO date (YYYY-MM-DD) the interest becomes due. Idempotency key. */
@@ -434,6 +553,23 @@ function addMonthsIso(isoDate: string, months: number): string {
   ).getUTCDate();
   target.setUTCDate(Math.min(day, lastDay));
   return target.toISOString().slice(0, 10);
+}
+
+/**
+ * Whole monthly anniversaries between two dates — i.e. how many monthly payouts
+ * have fallen due. Counts with `addMonthsIso`, so it inherits the same
+ * end-of-month clamping the accrual flow uses and the two cannot disagree about
+ * whether a payout is due.
+ */
+export function wholeMonthsBetween(startDate: string, asOf: string): number {
+  if (asOf < startDate) return 0;
+  let months = 0;
+  // Terms are years, not centuries; the guard is only a stop against a
+  // malformed date looping forever.
+  while (months < 1200 && addMonthsIso(startDate, months + 1) <= asOf) {
+    months += 1;
+  }
+  return months;
 }
 
 /**

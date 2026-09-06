@@ -74,7 +74,8 @@ export function resolveSpendAftermath(
     // by id so the same set always walks the same way.
     .sort(
       (a, b) =>
-        a.expectedDate.localeCompare(b.expectedDate) || a.id.localeCompare(b.id),
+        a.expectedDate.localeCompare(b.expectedDate) ||
+        a.id.localeCompare(b.id),
     );
 
   let running = balanceAfterSpend;

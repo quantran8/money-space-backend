@@ -41,7 +41,10 @@ export class MoneyEventCategoriesController {
     @Param('householdId') householdId: string,
     @Body() payload: SetDefaultCategoryDto,
   ) {
-    return this.service.setDefaultCategory(householdId, payload.categoryId ?? null);
+    return this.service.setDefaultCategory(
+      householdId,
+      payload.categoryId ?? null,
+    );
   }
 
   @Patch(':categoryId')

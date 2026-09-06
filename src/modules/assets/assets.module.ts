@@ -11,6 +11,7 @@ import { PrismaDebtsRepository } from '../debts/repositories/prisma-debts.reposi
 import { AssetsController } from './assets.controller';
 import { AssetsService } from './assets.service';
 import { AssetsValuationCron } from './assets-valuation.cron';
+import { SavingDepositCron } from './saving-deposit.cron';
 import { ASSETS_REPOSITORY } from './repositories/assets.repository.interface';
 import { PrismaAssetsRepository } from './repositories/prisma-assets.repository';
 
@@ -30,6 +31,7 @@ import { PrismaAssetsRepository } from './repositories/prisma-assets.repository'
     // Daily capture of every market asset's value, so a household nobody opens
     // still gets a data point (see the class doc).
     AssetsValuationCron,
+    SavingDepositCron,
     {
       provide: ASSETS_REPOSITORY,
       useClass: PrismaAssetsRepository,

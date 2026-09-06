@@ -51,7 +51,9 @@ describe('CashflowEventsService — completion (§18)', () => {
     // `category` is an FK now, so the service resolves an id through
     // MoneyEventsService before every create/update.
     const systemCategoryId = jest.fn(async () => 'cat-other');
-    const resolveCategoryIdOrThrow = jest.fn(async (_hh: string, id: string) => id);
+    const resolveCategoryIdOrThrow = jest.fn(
+      async (_hh: string, id: string) => id,
+    );
     const moneyEvents = {
       createMoneyEvent,
       systemCategoryId,
@@ -228,6 +230,74 @@ describe('CashflowEventsService — completion (§18)', () => {
     );
   });
 
+  // The money event is HISTORY: it records the day the household confirmed,
+  // never the day the plan said. `occurrenceDate` is only the idempotency key.
+  it('stamps the money event with today, not the planned date', async () => {
+    const { service, createMoneyEvent } = setup({
+      expectedDate: '2026-08-15',
+      settlementAssetId: 'asset-stored',
+    });
+    jest
+      .spyOn(service as never, 'today')
+      .mockReturnValue('2026-08-03' as never);
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {
+      occurrenceDate: '2026-08-15',
+    });
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ isoDate: '2026-08-03' }),
+    );
+  });
+
+  it('stamps an overdue completion with today, not the missed due date', async () => {
+    const { service, createMoneyEvent } = setup({
+      expectedDate: '2026-07-10',
+      settlementAssetId: 'asset-stored',
+    });
+    jest
+      .spyOn(service as never, 'today')
+      .mockReturnValue('2026-08-03' as never);
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {});
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ isoDate: '2026-08-03' }),
+    );
+  });
+
+  it('names the completion after the event when no note is typed', async () => {
+    const { service, createMoneyEvent } = setup({
+      name: 'Tien dien thang 9',
+      settlementAssetId: 'asset-stored',
+    });
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {});
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ note: 'Tien dien thang 9' }),
+    );
+  });
+
+  it('prefers a typed note over the event name', async () => {
+    const { service, createMoneyEvent } = setup({
+      name: 'Tien dien thang 9',
+      settlementAssetId: 'asset-stored',
+    });
+
+    await service.completeCashflowEvent('hh-1', 'cf-1', {
+      note: '  Tra bu ky truoc  ',
+    });
+
+    expect(createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({ note: 'Tra bu ky truoc' }),
+    );
+  });
+
   // Only flexible money settles an event — see memory/assets.md.
   it('refuses a wallet that is not counted as flexible money', async () => {
     const { service, getAssetDetail, createMoneyEvent } = setup();
@@ -308,9 +378,9 @@ describe('CashflowEventsService — completion (§18)', () => {
     it('refuses to delete an event that belongs to a debt', async () => {
       const { service, repository } = setup({ debtId: 'debt-1' });
 
-      await expect(
-        service.deleteCashflowEvent('hh-1', 'cf-1'),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.deleteCashflowEvent('hh-1', 'cf-1')).rejects.toThrow(
+        ConflictException,
+      );
       expect(
         (repository as { deleteCashflowEvent: jest.Mock }).deleteCashflowEvent,
       ).not.toHaveBeenCalled();

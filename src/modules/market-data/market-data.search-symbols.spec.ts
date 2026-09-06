@@ -62,6 +62,36 @@ const MSFT: SymbolReference = {
   unit: 'cp',
 };
 
+/** VN equities: `vn30` marks the constituents that lead the stock picker. */
+const VCB: SymbolReference = {
+  assetClass: 'stock',
+  symbol: 'VCB',
+  name: 'Ngân hàng Thương mại Cổ phần Ngoại thương Việt Nam',
+  exchange: 'HSX',
+  currency: 'VND',
+  unit: 'cp',
+  vn30: true,
+};
+const FPT: SymbolReference = {
+  assetClass: 'stock',
+  symbol: 'FPT',
+  name: 'Công ty Cổ phần FPT',
+  exchange: 'HSX',
+  currency: 'VND',
+  unit: 'cp',
+  vn30: true,
+};
+/** Tradable but outside VN30 — must not reach the default list. */
+const SHS: SymbolReference = {
+  assetClass: 'stock',
+  symbol: 'SHS',
+  name: 'Chứng khoán Sài Gòn - Hà Nội',
+  exchange: 'HNX',
+  currency: 'VND',
+  unit: 'cp',
+  vn30: false,
+};
+
 describe('MarketDataService.searchSymbols', () => {
   it('returns the curated default list (no query) when reference data is empty', async () => {
     const service = buildService([]);
@@ -71,14 +101,27 @@ describe('MarketDataService.searchSymbols', () => {
     expect(result.query).toBe('');
   });
 
-  it('upgrades curated defaults with live reference details when available', async () => {
-    const service = buildService([
-      { ...APPLE, name: 'Apple Inc. (live)', exchange: 'XNAS' },
-    ]);
+  it('leads the stock default list with VN30 only', async () => {
+    const service = buildService([APPLE, SHS, VCB, FPT]);
     const result = await service.searchSymbols({ assetClass: 'stock' });
-    const aapl = result.items.find((i) => i.symbol === 'AAPL');
-    expect(aapl?.name).toBe('Apple Inc. (live)');
-    expect(aapl?.exchange).toBe('XNAS');
+    // Reference order is preserved; non-VN30 and foreign tickers are excluded.
+    expect(result.items.map((i) => i.symbol)).toEqual(['VCB', 'FPT']);
+  });
+
+  it('falls back to curated stock defaults when no VN30 is available', async () => {
+    // vnstock down: the reference list carries no VN30 flag at all.
+    const service = buildService([APPLE, MSFT]);
+    const result = await service.searchSymbols({ assetClass: 'stock' });
+    expect(result.items[0].symbol).toBe('AAPL');
+  });
+
+  it('still searches the whole reference list, not just VN30', async () => {
+    const service = buildService([APPLE, SHS, VCB, FPT]);
+    const result = await service.searchSymbols({
+      assetClass: 'stock',
+      q: 'SHS',
+    });
+    expect(result.items.map((i) => i.symbol)).toEqual(['SHS']);
   });
 
   it('ranks exact ticker > prefix > substring > name match', async () => {

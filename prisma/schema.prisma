@@ -648,6 +648,16 @@ model AssetCalculationTerm {
   assetId              String                 @map("asset_id") @db.Uuid
   calculationType      AssetCalculationType   @map("calculation_type")
   principalAmount      Decimal                @map("principal_amount") @db.Decimal(14, 2)
+  // The amount actually deposited, never mutated after creation.
+  //
+  // `principalAmount` is NOT that number for long: capitalizing monthly
+  // interest (`interestDestination = 'principal'`) rewrites it in place to
+  // principal + interest, so after the first payout the original deposit is
+  // gone. Early withdrawal has to claw interest back against money the
+  // household actually put in, and the settlement of a `wallet`-destination
+  // deposit pays back only this — the interest already left. Nullable for rows
+  // written before the column existed; readers fall back to `principalAmount`.
+  basePrincipalAmount  Decimal?               @map("base_principal_amount") @db.Decimal(14, 2)
   currency             String                 @default("VND")
   startDate            DateTime               @map("start_date") @db.Date
   maturityDate         DateTime?              @map("maturity_date") @db.Date
@@ -914,6 +924,7 @@ model CashflowEvent {
   @@index([ownerMemberId])
   @@index([financialGoalId])
   @@index([plannedAssetId])
+  @@index([householdId, categoryId])
   @@map("cashflow_events")
 }
 

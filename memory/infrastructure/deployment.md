@@ -97,6 +97,18 @@ Postgres is deliberately absent — the app talks to hosted Supabase.
   manifest, which the Console then lists as `<repo>:unknown@sha256:...`. Nothing
   can pull those. `prune-registry.yml` keeps the five newest `:<sha>` builds and
   deletes the rest weekly.
+- **OCIR lists one row per tag, not per image.** A build tagged `:<sha>` and
+  `:<version>` is two rows sharing one digest, and a list response carries no
+  tag array at all — reading tags off the payload classified everything as
+  untagged, which would have deleted `:latest`, `:buildcache` and every rollback
+  target. Ask the API instead (`--is-versioned`) and group rows by digest, or
+  "keep 5" counts tag rows and keeps two and a half builds. `:buildcache` is
+  excluded from that ranking: it is a cache manifest with no build behind it.
+- **The Console sorts by creation time, and the moving tags win.** `:latest` and
+  `:buildcache` are pushed a few seconds after the build's own tags, so they head
+  the list and the `:<sha>`/`:<version>` rows sit further down the page. An
+  absent tag there is almost always a scrolling artefact — search for it before
+  concluding the build did not push it.
 - **The registry token cannot delete.** `OCIR_TOKEN` authenticates `docker
   login` against the registry v2 endpoint, which does not implement manifest
   deletion at all. Deletion is a control-plane call (`oci artifacts container

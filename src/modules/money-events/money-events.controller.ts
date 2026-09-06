@@ -64,31 +64,12 @@ export class MoneyEventsController {
     return this.moneyEventsService.createMoneyEvent(householdId, payload);
   }
 
-  /**
-   * Auto-credit due saving-deposit interest across the whole household.
-   * Idempotent — an external worker can call this on a schedule. See
-   * {@link MoneyEventsService.accrueHouseholdInterest}.
-   */
-  // Worker-called (external scheduler, no request user) — public seam, like the
-  // rest of the accrual flow. NOT a member action, so no capability check.
-  @Public()
-  @Post('accrue-interest')
-  accrueHouseholdInterest(@Param('householdId') householdId: string) {
-    return this.moneyEventsService.accrueHouseholdInterest(householdId);
-  }
-
-  /** Auto-credit due interest on a single saving deposit. Idempotent. */
-  @Public()
-  @Post('assets/:assetId/accrue-interest')
-  accrueSavingInterestForAsset(
-    @Param('householdId') householdId: string,
-    @Param('assetId') assetId: string,
-  ) {
-    return this.moneyEventsService.accrueSavingInterestForAsset(
-      householdId,
-      assetId,
-    );
-  }
+  // The two `@Public()` accrual endpoints that used to sit here are gone.
+  // They were an unauthenticated seam for an external worker that was never
+  // built, so nothing ever called them and no interest was ever credited.
+  // `SavingDepositCron` now runs accrual (and settlement) in-process — see
+  // memory/asset-valuation.md. `MoneyEventsService.accrueHouseholdInterest`
+  // survives as the service method the cron calls.
 
   /**
    * Advisory: what this edit would do to the wallets it touches, without writing

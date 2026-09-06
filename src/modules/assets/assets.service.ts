@@ -54,14 +54,20 @@ function formatVndPlain(amount: number): string {
   return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(amount))} đ`;
 }
 import { AssetValueHistory } from './entities/asset-value-history.entity';
+import type {
+  CalculationTerm,
+  DepositSettledEvent,
+} from './entities/calculation-term.entity';
 import type { MoneyEvent } from '../money-events/entities/money-event.entity';
 import {
   computeCurrentValue,
   computeLiquidityTotals,
   defaultValuationModeForAssetType,
+  computeSavingSettlement,
   liquidityForAsset,
   marketUnitForAssetType,
   normalizeCountsAsFlexible,
+  type SavingSettlement,
   priceInPositionUnit,
   quoteFor,
 } from '../../common/utils/money-space.utils';
@@ -2104,6 +2110,209 @@ export class AssetsService {
     };
     await this.assetsRepository.updateAsset(assetId, next);
     await this.upsertCurrentValuation(next);
+  }
+
+  /**
+   * Settle a saving deposit and turn it INTO the wallet holding the money.
+   *
+   * The household's own model: opening a passbook creates an account, and when
+   * it matures that account is simply money you can spend. So no second asset
+   * is created and nothing is transferred between two rows — the SAME asset
+   * converts, keeping its id, so its value history runs unbroken from "gửi
+   * 100tr" through every monthly interest step to "105,2tr dùng được".
+   *
+   * Deliberately NOT reachable through `updateAsset`: `assertIdentityUnchanged`
+   * refuses every type change, and it has to keep refusing them — that guard is
+   * what stops a user re-typing cash into a stock and hanging an asset's
+   * history off something the household never owned. This is the one sanctioned
+   * type change, and it is a settlement rather than an edit.
+   *
+   * Runs inside the caller's transaction.
+   */
+  /**
+   * Settle every deposit in a household whose maturity date has passed.
+   *
+   * Called by the nightly cron AFTER interest accrual, so a deposit that
+   * capitalizes gets its final payout folded into the principal before that
+   * principal is handed over. Reversing the order would settle a deposit one
+   * month light.
+   *
+   * Each deposit is settled at its OWN maturity date, so a passbook entered
+   * months late lands in the month it actually matured.
+   */
+  async settleMaturedDeposits(
+    householdId: string,
+    asOf: string,
+  ): Promise<{ householdId: string; settled: number }> {
+    const { items } = await this.listAssets(householdId);
+    const due = items.filter(
+      (asset) =>
+        asset.type === 'saving_deposit' &&
+        asset.status === 'active' &&
+        asset.calculationTerm?.maturityDate &&
+        asset.calculationTerm.maturityDate <= asOf,
+    );
+
+    let settled = 0;
+    for (const deposit of due) {
+      try {
+        await this.settleSavingDeposit(householdId, deposit.id, asOf);
+        settled += 1;
+      } catch (error) {
+        // One bad deposit must not abandon the household's others.
+        this.logger.error(
+          `Settling deposit ${deposit.id} failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return { householdId, settled };
+  }
+
+  /**
+   * Settle a saving deposit: work out the payout, record it, and turn the
+   * deposit into the wallet holding that money.
+   *
+   * The one entry point for BOTH ways a deposit ends — the maturity cron and a
+   * manual early withdrawal — so the two can never disagree about the money.
+   * `computeSavingSettlement` decides which it is from the date alone.
+   *
+   * Dated at the settlement date, not today: a deposit that matured in June is
+   * money that arrived in June, and booking it now would move it into the wrong
+   * month's totals and put the step in the wrong place on the chart.
+   */
+  async settleSavingDeposit(
+    householdId: string,
+    assetId: string,
+    asOf: string,
+  ): Promise<{ asset: Asset; settlement: SavingSettlement }> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (asset.type !== 'saving_deposit' || !asset.calculationTerm) {
+      throw new BadRequestException('Chỉ khoản tiết kiệm mới có thể tất toán.');
+    }
+    if (asset.status !== 'active') {
+      throw new BadRequestException('Khoản tiết kiệm này đã được tất toán.');
+    }
+
+    const settlement = computeSavingSettlement(asset.calculationTerm, asOf);
+    const before = asset.calculationTerm.principalAmount;
+
+    return this.prisma.runInTransaction(async () => {
+      const eventId = this.assetsRepository.createId('event');
+      const label =
+        settlement.reason === 'matured'
+          ? `Tất toán khi đáo hạn: ${asset.name}`
+          : `Rút trước hạn: ${asset.name}`;
+      await this.assetsRepository.insertRevaluationEvent({
+        id: eventId,
+        householdId,
+        assetId,
+        // The signed delta the settlement represents, matching every other
+        // `asset_update`: what the household holds here changed by this much.
+        amount: settlement.total - before,
+        isoDate: settlement.settledOn,
+        note: asset.note ? `${label} — ${asset.note}` : label,
+      });
+
+      const next = await this.convertDepositToWallet(
+        householdId,
+        assetId,
+        settlement,
+        { moneyEventId: eventId, valuationDate: settlement.settledOn },
+      );
+
+      // Nothing listens for a notification yet — see
+      // memory/asset-valuation.md. The seam exists so wiring one later touches
+      // no caller.
+      await this.announceDepositSettled({
+        householdId,
+        assetId,
+        assetName: asset.name,
+        settledOn: settlement.settledOn,
+        principal: settlement.principal,
+        interest: settlement.interest,
+        payout: settlement.total,
+        reason: settlement.reason,
+      });
+
+      return { asset: next, settlement };
+    });
+  }
+
+  /**
+   * The seam a notification will hang off. Today it writes the household's
+   * journal entry and nothing else — `audit_logs` already IS that journal, and
+   * the settlement's own money event is what the user actually sees. A
+   * placeholder table or a no-op service would be the mistake
+   * `memory/attention-items.md` records this codebase making once already.
+   */
+  private async announceDepositSettled(
+    event: DepositSettledEvent,
+  ): Promise<void> {
+    await this.audit.record(event.householdId, {
+      // NULL actor: nobody pressed anything for a maturity, and attributing it
+      // to a person would be a lie the household can read.
+      actorId: null,
+      action: 'asset.deposit_settled',
+      entityType: 'asset',
+      entityId: event.assetId,
+      // What it did to the money the household can spend — a matured deposit
+      // moves out of `not_immediately_usable` and becomes usable.
+      impact: { metric: 'flexible_money', delta: event.payout },
+      details: {
+        assetName: event.assetName,
+        settledOn: event.settledOn,
+        principal: event.principal,
+        interest: event.interest,
+        payout: event.payout,
+        reason: event.reason,
+      },
+    });
+  }
+
+  async convertDepositToWallet(
+    householdId: string,
+    assetId: string,
+    settlement: SavingSettlement,
+    context?: ValuationContext,
+  ): Promise<Asset> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (asset.type !== 'saving_deposit' || !asset.calculationTerm) {
+      throw new BadRequestException(
+        'Chỉ khoản tiết kiệm mới có thể tất toán thành tài khoản.',
+      );
+    }
+
+    // `normalizeAsset` keeps exactly one valuation source per asset, so moving
+    // to `manual` drops the term. Record WHY it ended before it goes, or the
+    // difference between "đáo hạn" and "rút trước hạn" is lost.
+    const closedTerm: CalculationTerm = {
+      ...asset.calculationTerm,
+      status: settlement.reason === 'matured' ? 'matured' : 'closed',
+    };
+
+    const next: Asset = this.normalizeAsset({
+      ...asset,
+      type: 'bank_account',
+      valuationMode: 'manual',
+      manualValue: settlement.total,
+      calculationTerm: closedTerm,
+      // Never hardcode `usable_now`: the `assets_liquidity_matches_type` CHECK
+      // rejects a row whose bucket contradicts its type, and a household that
+      // deliberately excluded this deposit from flexible money keeps that
+      // answer. `normalizeCountsAsFlexible` re-reads the override against the
+      // NEW type's default, so a flag that merely restates it collapses to null.
+      countsAsFlexible: normalizeCountsAsFlexible(
+        'bank_account',
+        asset.countsAsFlexible,
+      ),
+      liquidity: liquidityForAsset('bank_account', asset.countsAsFlexible),
+    });
+
+    await this.assetsRepository.updateAsset(assetId, next);
+    await this.upsertCurrentValuation(next, context);
+    return next;
   }
 
   private async getAssetRecords(householdId: string) {

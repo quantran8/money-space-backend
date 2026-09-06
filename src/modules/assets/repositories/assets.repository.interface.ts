@@ -138,6 +138,11 @@ export interface AssetsRepository {
     valuationDate: string,
     limit: number,
   ): Promise<string[]>;
+  /** Households with an active saving deposit, for the nightly interest pass. */
+  findHouseholdsWithActiveDeposits(
+    asOf: string,
+    limit: number,
+  ): Promise<string[]>;
   hasMarketValuationOnDate(
     householdId: string,
     valuationDate: string,
