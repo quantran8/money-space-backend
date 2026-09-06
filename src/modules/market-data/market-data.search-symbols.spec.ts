@@ -18,6 +18,7 @@ function buildService(reference: SymbolReference[]) {
   const repository = {
     getFxRates: jest.fn().mockResolvedValue([]),
     getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
   } as unknown as MarketDataRepository;
   const priceProvider = {
     getLatestPrices: jest.fn().mockResolvedValue([]),

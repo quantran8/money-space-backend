@@ -61,6 +61,7 @@ import type {
 import type { MoneyEvent } from '../money-events/entities/money-event.entity';
 import {
   computeCurrentValue,
+  fxRateToVnd,
   computeLiquidityTotals,
   defaultValuationModeForAssetType,
   computeSavingSettlement,
@@ -181,20 +182,26 @@ export class AssetsService {
     const quote = quoteFor(marketPrices, assetClass, symbol, quoteCurrency);
     if (!quote) return asset;
 
-    // Crypto is also cached in USD — the currency it is really quoted in — so a
-    // đồng-priced holding can show both. See memory/market-data.md.
+    // Crypto is cached in BOTH currencies. `marketPrice` is always the đồng one
+    // — the figure every screen totals in — and the instrument's own currency
+    // rides alongside as `nativeMarketPrice`, whichever the position is stored
+    // in. See memory/market-data.md.
+    const vnd =
+      quote.quoteCurrency.toUpperCase() === 'VND'
+        ? quote
+        : (quoteFor(marketPrices, assetClass, symbol, 'VND') ?? quote);
     const native =
-      quote.quoteCurrency.toUpperCase() === 'USD'
-        ? undefined
-        : quoteFor(marketPrices, assetClass, symbol, 'USD');
+      vnd.quoteCurrency.toUpperCase() === 'VND'
+        ? quoteFor(marketPrices, assetClass, symbol, 'USD')
+        : undefined;
 
     return {
       ...asset,
       marketPosition: {
         ...asset.marketPosition,
-        marketPrice: priceInPositionUnit(quote, unit),
-        marketPriceCurrency: quote.quoteCurrency,
-        marketPriceAt: quote.priceTime,
+        marketPrice: priceInPositionUnit(vnd, unit),
+        marketPriceCurrency: vnd.quoteCurrency,
+        marketPriceAt: vnd.priceTime,
         nativeMarketPrice:
           native && native.quoteCurrency.toUpperCase() === 'USD'
             ? {
@@ -729,13 +736,33 @@ export class AssetsService {
    * price paid. `knownValue` lets a caller that already computed it (inside the
    * write transaction) skip a second round-trip to the market/FX data.
    */
+  /**
+   * Restate a cost stated in a position's own currency as đồng — what a wallet
+   * actually holds. Throws rather than guessing when no rate is published: a
+   * silent 1:1 would debit 2.400đ for a $2.400 purchase.
+   */
+  private async toVndCost(cost: number, quoteCurrency: string): Promise<number> {
+    if (!cost || quoteCurrency.toUpperCase() === 'VND') return cost;
+    const fxRates = await this.assetsRepository.getFxRates();
+    const rate = fxRateToVnd(fxRates, quoteCurrency);
+    if (rate === null) {
+      throw new BadRequestException(
+        `Chưa có tỉ giá ${quoteCurrency.toUpperCase()}/VND để quy đổi giá mua`,
+      );
+    }
+    return cost * rate;
+  }
+
   private async resolvePurchaseCost(
     asset: Asset,
     knownValue?: number,
   ): Promise<number> {
     const position = asset.marketPosition;
     if (position?.purchasePrice) {
-      return Math.max(0, position.quantity * position.purchasePrice);
+      // The wallet being debited holds đồng, but a USD-quoted position states
+      // its cost in USD. See memory/market-data.md.
+      const cost = position.quantity * position.purchasePrice;
+      return Math.max(0, await this.toVndCost(cost, position.quoteCurrency));
     }
     if (knownValue !== undefined) {
       return Math.max(0, knownValue);
@@ -898,7 +925,11 @@ export class AssetsService {
       throw new BadRequestException('Giá mua không hợp lệ');
     }
 
-    const cost = payload.quantity * payload.purchasePrice;
+    // `purchasePrice` is in the position's own currency; the wallet is đồng.
+    const cost = await this.toVndCost(
+      payload.quantity * payload.purchasePrice,
+      held.quoteCurrency,
+    );
     const fundingAssetId = payload.fundingAssetId || null;
     // Checked before the transaction opens, like `createAsset` does, so a
     // rejected purchase leaves nothing behind.

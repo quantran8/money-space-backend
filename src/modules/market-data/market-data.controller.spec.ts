@@ -38,6 +38,7 @@ describe('MarketDataController caching', () => {
       {
         getFxRates: jest.fn().mockResolvedValue([]),
         getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
       },
       { getLatestPrices: jest.fn().mockResolvedValue([]) },
       { listSymbols: jest.fn().mockResolvedValue([]) },
