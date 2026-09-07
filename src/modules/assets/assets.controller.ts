@@ -140,6 +140,29 @@ export class AssetsController {
     );
   }
 
+  /**
+   * Move automatic pricing onto (or off) one asset.
+   *
+   * Its own route rather than a field on `PATCH :assetId`, because it is not an
+   * edit to the asset: it can change a DIFFERENT asset too, when the household
+   * is at its ceiling and one has to give way. The response names that asset so
+   * the UI can say which one stopped updating.
+   */
+  @Patch(':assetId/auto-price')
+  setAutoPrice(
+    @Param('householdId') householdId: string,
+    @Param('assetId') assetId: string,
+    @Body() payload: { enabled: boolean },
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.assetsService.setAutoPrice(
+      householdId,
+      assetId,
+      payload.enabled === true,
+      user?.id,
+    );
+  }
+
   @Patch(':assetId')
   updateAsset(
     @Param('householdId') householdId: string,

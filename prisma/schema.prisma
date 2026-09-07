@@ -717,6 +717,20 @@ model Asset {
   // the forecast and the dashboard cannot end up with different totals. The
   // `assets_liquidity_matches_type` CHECK keeps the two in step.
   countsAsFlexible            Boolean?               @map("counts_as_flexible")
+  /// Whether this asset's price is refreshed automatically by the valuation
+  /// cron. Free plans get a limited number of these.
+  ///
+  /// It is deliberately SEPARATE from `valuationMode`. Creating a gold, stock
+  /// or crypto asset is never blocked — blocking it would block the balance
+  /// sheet a Vietnamese household opens the app for, and they would leave
+  /// rather than pay. What Premium sells is the automation, so an asset over
+  /// the ceiling is still created and still `market_priced`; it simply lands
+  /// with this false and carries a "Cập nhật tay" chip until the household
+  /// chooses it as one of their automatic ones.
+  ///
+  /// Defaults true so every asset that predates this keeps refreshing exactly
+  /// as it did.
+  autoPriceEnabled            Boolean                @default(true) @map("auto_price_enabled")
   status                      AssetStatus            @default(active)
   soldAt                      DateTime?              @map("sold_at") @db.Timestamptz(6)
   areaSqm                     Decimal?               @map("area_sqm") @db.Decimal(14, 4)

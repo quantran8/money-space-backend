@@ -134,6 +134,26 @@ export interface AssetsRepository {
    * done today" check has to be part of the same query or it becomes one
    * round-trip per household.
    */
+  /**
+   * How many of the household's live assets currently refresh automatically.
+   * The count the auto-price quota is enforced against.
+   */
+  countAutoPricedAssets(householdId: string): Promise<number>;
+
+  /**
+   * The household's automatically-priced assets, oldest first. Used to decide
+   * which one gives way when the household turns automation onto another and
+   * is already at its ceiling.
+   */
+  findAutoPricedAssetIds(householdId: string): Promise<string[]>;
+
+  /** Turn automatic pricing on or off for one asset. */
+  setAutoPriceEnabled(
+    householdId: string,
+    assetId: string,
+    enabled: boolean,
+  ): Promise<void>;
+
   findHouseholdsNeedingMarketValuation(
     valuationDate: string,
     limit: number,

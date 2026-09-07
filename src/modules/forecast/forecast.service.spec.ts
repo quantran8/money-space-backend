@@ -4,6 +4,7 @@ import { ForecastService } from './forecast.service';
 import { UNASSIGNED_WALLET_ID } from './domain/what-if';
 import { CacheService } from '../../common/cache/cache.service';
 import type { ForecastBundle } from './repositories/forecast.repository.interface';
+import { premiumEntitlement } from '../billing/test-support/entitlement.fixture';
 
 const M = 1_000_000;
 // Must match the service's clock: it anchors to the household timezone
@@ -81,11 +82,24 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
   // to the loader, so these tests exercise the actual cached code path rather
   // than a stub, while staying offline.
   const cache = new CacheService();
+  // Premium, and a counter that records nothing: these tests are about the
+  // engine, not the plan. The quota has its own spec.
+  const entitlements = {
+    forHousehold: jest.fn(async () => premiumEntitlement()),
+    assertQuota: jest.fn(),
+  } as never;
+  const whatIfUsage = {
+    used: jest.fn(async () => 0),
+    consume: jest.fn(async () => 1),
+  } as never;
+
   const service = new ForecastService(
     forecastRepository,
     goalsRepository,
     goalsService,
     cache,
+    entitlements,
+    whatIfUsage,
   );
   return {
     service,

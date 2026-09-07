@@ -8,6 +8,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { EntitlementService } from '../billing/entitlement.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { MoneyEventsService } from '../money-events/money-events.service';
 import { todayInTimeZone } from '../../common/utils/clock';
@@ -122,9 +123,25 @@ export class AssetsService {
     // it arrives lazily — see the module's `forwardRef` note.
     @Inject(forwardRef(() => MoneyEventsService))
     private readonly moneyEventsService: MoneyEventsService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   private readonly logger = new Logger(AssetsService.name);
+
+  /**
+   * Whether the household has room for one more automatically-priced asset.
+   *
+   * `null` is unlimited, so a premium household never reaches the count.
+   */
+  private async canAutoPrice(householdId: string): Promise<boolean> {
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    const limit = entitlement.limits.marketPricedAssets;
+    if (limit === null) return true;
+
+    const used = await this.assetsRepository.countAutoPricedAssets(householdId);
+    return used < limit;
+  }
+
 
   async listAssets(householdId: string) {
     // `assertHousehold` only guards; it does not feed `getAssetRecords`. Running
@@ -630,7 +647,23 @@ export class AssetsService {
       marketPosition: payload.marketPosition,
       calculationTerm: payload.calculationTerm,
       holderMemberId: payload.holderMemberId || creatorMemberId || null,
+      autoPriceEnabled: true,
     });
+
+    // The auto-price quota — and note what it does NOT do: it never refuses.
+    //
+    // Creating a gold, stock or crypto asset is always allowed. Blocking it
+    // would block the balance sheet a Vietnamese household opens the app for,
+    // and they would leave rather than pay; what Premium sells is the
+    // automation, not the record. So an asset over the ceiling is created
+    // exactly as asked, just with automatic pricing off — the UI shows a
+    // "Cập nhật tay" chip and the household can move automation onto it.
+    //
+    // That also means the household picks WHICH assets are automatic, rather
+    // than being stuck with "the first two you happened to create".
+    if (asset.valuationMode === 'market_priced') {
+      asset.autoPriceEnabled = await this.canAutoPrice(householdId);
+    }
 
     // "We just bought this" names the wallet that paid; "we already own this"
     // leaves it out. Only the former moves money, and only it has to be
@@ -2346,6 +2379,84 @@ export class AssetsService {
   async getActiveAssetRecords(householdId: string) {
     const records = await this.getAssetRecords(householdId);
     return records.filter((asset) => asset.status === 'active');
+  }
+
+  /**
+   * Turn automatic pricing on or off for one asset.
+   *
+   * Turning it ON while already at the ceiling does NOT fail. The oldest asset
+   * currently on automatic gives way instead, and the response says which —
+   * so the household is choosing which two assets are automatic rather than
+   * being told "no" and left to work out what to switch off first.
+   *
+   * A 402 here would be the wrong answer twice over: the household is not
+   * asking for MORE automation, they are asking to move the automation they
+   * already have.
+   */
+  async setAutoPrice(
+    householdId: string,
+    assetId: string,
+    enabled: boolean,
+    actorId?: string,
+  ) {
+    const asset = await this.ensureAsset(householdId, assetId);
+
+    // Nothing to automate on a manual asset — there is no price to fetch.
+    if (asset.valuationMode !== 'market_priced') {
+      throw new BadRequestException(
+        `Asset "${assetId}" is not priced from the market`,
+      );
+    }
+
+    if (asset.autoPriceEnabled === enabled) {
+      return { assetId, autoPriceEnabled: enabled, turnedOff: null };
+    }
+
+    let turnedOff: string | null = null;
+
+    if (enabled) {
+      const entitlement = await this.entitlements.forHousehold(householdId);
+      const limit = entitlement.limits.marketPricedAssets;
+
+      if (limit !== null) {
+        const current = await this.assetsRepository.findAutoPricedAssetIds(
+          householdId,
+        );
+        // `>=` because this asset is about to join them.
+        if (current.length >= limit) {
+          turnedOff = current[0] ?? null;
+          if (turnedOff) {
+            await this.assetsRepository.setAutoPriceEnabled(
+              householdId,
+              turnedOff,
+              false,
+            );
+          }
+        }
+      }
+    }
+
+    await this.assetsRepository.setAutoPriceEnabled(
+      householdId,
+      assetId,
+      enabled,
+    );
+
+    await this.audit.record(householdId, {
+      actorId,
+      action: 'asset.auto_price_changed',
+      entityType: 'asset',
+      entityId: assetId,
+      details: {
+        objectName: asset.name,
+        autoPriceEnabled: enabled,
+        // Named so the journal can explain why another asset stopped updating
+        // — otherwise that change looks like it happened on its own.
+        replacedAssetId: turnedOff,
+      },
+    });
+
+    return { assetId, autoPriceEnabled: enabled, turnedOff };
   }
 
   private async ensureAsset(householdId: string, assetId: string) {

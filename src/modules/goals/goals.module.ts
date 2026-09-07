@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { AssetsModule } from '../assets/assets.module';
+import { BillingModule } from '../billing/billing.module';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { SNAPSHOTS_REPOSITORY } from '../snapshots/repositories/snapshots.repository.interface';
 import { PrismaSnapshotsRepository } from '../snapshots/repositories/prisma-snapshots.repository';
@@ -16,7 +17,9 @@ import { PrismaGoalsRepository } from './repositories/prisma-goals.repository';
 // values, so resolving a goal card needs them. The edge is one-way — Assets
 // knows nothing about goals — so there is no cycle.
 @Module({
-  imports: [CommonModule, AssetsModule, MarketDataModule],
+  // BillingModule: creating a goal is subject to the plan's goal quota, which
+  // is counted in the service (a guard cannot count — see `RequirePremium`).
+  imports: [CommonModule, AssetsModule, MarketDataModule, BillingModule],
   // `AssetGoalUsageController` serves an /assets/:id/* route from here: the
   // answer needs goals, and AssetsModule cannot import this one without making
   // the existing Goals → Assets edge a cycle.

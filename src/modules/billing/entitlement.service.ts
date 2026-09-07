@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { CacheService } from '../../common/cache/cache.service';
+import { WhatIfUsageService } from './whatif-usage.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { resolveEntitlement, type SubscriptionRow } from './domain/entitlement';
 import {
@@ -55,6 +56,7 @@ export class EntitlementService {
     @Inject(BILLING_REPOSITORY)
     private readonly billingRepository: BillingRepository,
     private readonly cache: CacheService,
+    private readonly whatIfUsage: WhatIfUsageService,
   ) {}
 
   private readonly memory = new Map<
@@ -77,16 +79,17 @@ export class EntitlementService {
     householdId: string,
     now = new Date(),
   ): Promise<Entitlement> {
-    const [entitlement, counts] = await Promise.all([
+    const [entitlement, counts, whatIfThisMonth] = await Promise.all([
       this.forHousehold(householdId, now),
       this.billingRepository.countUsage(householdId),
+      // A Redis read, not a query — what-if writes no rows, deliberately. See
+      // `WhatIfUsageService` for why, and note it fails open to 0.
+      this.whatIfUsage.used(householdId),
     ]);
 
     return {
       ...entitlement,
-      // What-if runs are a Redis counter rather than a table; Phase 3 fills
-      // this in when that counter exists.
-      usage: { ...counts, whatIfThisMonth: 0 },
+      usage: { ...counts, whatIfThisMonth },
     };
   }
 

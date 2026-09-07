@@ -10,6 +10,12 @@ import type { WhatIfRequestDto } from './dto/what-if.dto';
  * `POST /what-if`. Running a simulation is a READ — it writes nothing — so a
  * `view_summary` partner must be able to ask "what happens if we spend this?".
  * It is a POST only because it needs a request body.
+ *
+ * There is no `@RequirePremium()` here either, and `/forecast-bundle` in
+ * particular must never carry one: it serves a Free household at horizon 30,
+ * which is the view that drives adoption. What is gated is the horizon VALUE,
+ * resolved in the service where `householdId` already is — one chokepoint
+ * rather than four.
  */
 @Controller('households/:householdId')
 export class ForecastController {
@@ -20,10 +26,7 @@ export class ForecastController {
     @Param('householdId') householdId: string,
     @Query('horizon_days') horizonDays?: string,
   ) {
-    return this.forecast.forecast(
-      householdId,
-      this.forecast.parseHorizon(horizonDays),
-    );
+    return this.forecast.forecastForRequest(householdId, horizonDays);
   }
 
   @Get('flexible-money')
@@ -31,10 +34,7 @@ export class ForecastController {
     @Param('householdId') householdId: string,
     @Query('horizon_days') horizonDays?: string,
   ) {
-    return this.forecast.flexibleMoney(
-      householdId,
-      this.forecast.parseHorizon(horizonDays),
-    );
+    return this.forecast.flexibleMoneyForRequest(householdId, horizonDays);
   }
 
   @Get('financial-state')
@@ -42,10 +42,7 @@ export class ForecastController {
     @Param('householdId') householdId: string,
     @Query('horizon_days') horizonDays?: string,
   ) {
-    return this.forecast.financialState(
-      householdId,
-      this.forecast.parseHorizon(horizonDays),
-    );
+    return this.forecast.financialStateForRequest(householdId, horizonDays);
   }
 
   /**
@@ -58,10 +55,7 @@ export class ForecastController {
     @Param('householdId') householdId: string,
     @Query('horizon_days') horizonDays?: string,
   ) {
-    return this.forecast.forecastBundle(
-      householdId,
-      this.forecast.parseHorizon(horizonDays),
-    );
+    return this.forecast.forecastBundleForRequest(householdId, horizonDays);
   }
 
   // Writes nothing (see the class doc), so it must not drop the household's

@@ -128,7 +128,7 @@ export class PrismaAssetsRepository
       INSERT INTO assets
         (id, household_id, name, type, valuation_mode, current_value, area_sqm,
          currency, value_updated_at, liquidity, counts_as_flexible, note,
-         created_by, updated_at, holder_member_id)
+         auto_price_enabled, created_by, updated_at, holder_member_id)
       SELECT
         ${asset.id}::uuid,
         h.id,
@@ -142,6 +142,7 @@ export class PrismaAssetsRepository
         ${asset.liquidity}::"AssetLiquidity",
         ${asset.countsAsFlexible ?? null}::boolean,
         ${asset.note},
+        ${asset.autoPriceEnabled ?? true}::boolean,
         h.created_by,
         now(),
         ${this.asUuid(asset.holderMemberId ?? null)}::uuid
@@ -303,6 +304,7 @@ export class PrismaAssetsRepository
         liquidity: asset.liquidity,
         countsAsFlexible: asset.countsAsFlexible ?? null,
         note: asset.note,
+        autoPriceEnabled: asset.autoPriceEnabled ?? true,
         status: asset.status,
         soldAt: asset.soldAt ? new Date(asset.soldAt) : null,
         areaSqm: asset.areaSqm ?? null,
@@ -542,6 +544,46 @@ export class PrismaAssetsRepository
     });
   }
 
+  async countAutoPricedAssets(householdId: string): Promise<number> {
+    return this.prisma.asset.count({
+      where: {
+        householdId,
+        valuationMode: 'market_priced',
+        autoPriceEnabled: true,
+        status: 'active',
+        deletedAt: null,
+      },
+    });
+  }
+
+  async findAutoPricedAssetIds(householdId: string): Promise<string[]> {
+    const rows = await this.prisma.asset.findMany({
+      where: {
+        householdId,
+        valuationMode: 'market_priced',
+        autoPriceEnabled: true,
+        status: 'active',
+        deletedAt: null,
+      },
+      // Oldest first: when one has to give way, it is the one the household
+      // has had longest on automatic, not whichever the database returns.
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  async setAutoPriceEnabled(
+    householdId: string,
+    assetId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.prisma.asset.updateMany({
+      where: { id: assetId, householdId, deletedAt: null },
+      data: { autoPriceEnabled: enabled } as any,
+    });
+  }
+
   async findHouseholdsNeedingMarketValuation(
     valuationDate: string,
     limit: number,
@@ -552,6 +594,11 @@ export class PrismaAssetsRepository
       WHERE a."deleted_at" IS NULL
         AND a."status" = 'active'
         AND a."valuation_mode" = 'market_priced'
+        -- Only the assets the household actually has automation for. A
+        -- market-priced asset over a free plan's ceiling is a real asset the
+        -- household values by hand, and refreshing it would be giving away the
+        -- thing Premium sells.
+        AND a."auto_price_enabled" = true
         AND NOT EXISTS (
           SELECT 1 FROM "asset_valuations" v
           WHERE v."household_id" = a."household_id"

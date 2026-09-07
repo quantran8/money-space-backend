@@ -7,6 +7,22 @@ import type { AssetsRepository } from './repositories/assets.repository.interfac
 import type { MoneyEvent } from '../money-events/entities/money-event.entity';
 import type { PrismaService } from '../../database/prisma/prisma.service';
 import type { MarketDataService } from '../market-data/market-data.service';
+import { premiumEntitlement } from '../billing/test-support/entitlement.fixture';
+
+/**
+ * A stub entitlement service that always answers Premium.
+ *
+ * These specs are about the asset rules; handing them Premium keeps the
+ * auto-price quota out of the way, so a failing quota test means the quota is
+ * wrong rather than that an unrelated fixture drifted.
+ */
+function premiumEntitlements() {
+  return {
+    forHousehold: jest.fn(async () => premiumEntitlement()),
+    assertQuota: jest.fn(),
+  } as never;
+}
+
 
 describe('AssetsService', () => {
   /** Minimal repo/prisma scaffolding for the update + create paths. */
@@ -44,6 +60,8 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
       ),
     };
   }
@@ -105,6 +123,8 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
       );
     }
 
@@ -210,6 +230,8 @@ describe('AssetsService', () => {
       {} as never,
       {} as never,
       {} as never,
+      // Premium: these tests are about the asset rules, not the plan.
+      premiumEntitlements(),
     );
 
     await service.createAsset('household-1', {
@@ -308,6 +330,8 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
       );
       return { service, existing, updateAsset, insertAssetPurchaseEvent };
     }
@@ -437,6 +461,8 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
       );
       return {
         service,
@@ -534,6 +560,8 @@ describe('AssetsService', () => {
       {} as never,
       {} as never,
       {} as never,
+      // Premium: these tests are about the asset rules, not the plan.
+      premiumEntitlements(),
     );
 
     await service.updateAsset('household-1', current.id, {
@@ -809,6 +837,8 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
       );
       return {
         service,
@@ -1019,6 +1049,8 @@ describe('AssetsService', () => {
         {} as never,
         {} as never,
         {} as never,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
       );
       return { service, wallet, points };
     }

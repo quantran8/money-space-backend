@@ -6,6 +6,7 @@ import { PlansController } from './plans.controller';
 import { RedeemController } from './redeem.controller';
 import { RedeemService } from './redeem.service';
 import { SubscriptionService } from './subscription.service';
+import { WhatIfUsageService } from './whatif-usage.service';
 import { BILLING_REPOSITORY } from './repositories/billing.repository.interface';
 import { PrismaBillingRepository } from './repositories/prisma-billing.repository';
 
@@ -24,11 +25,12 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
     EntitlementService,
     SubscriptionService,
     RedeemService,
+    WhatIfUsageService,
     {
       provide: BILLING_REPOSITORY,
       useClass: PrismaBillingRepository,
     },
   ],
-  exports: [EntitlementService, SubscriptionService],
+  exports: [EntitlementService, SubscriptionService, WhatIfUsageService],
 })
 export class BillingModule {}

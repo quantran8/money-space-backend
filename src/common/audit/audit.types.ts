@@ -20,6 +20,7 @@ export type AuditAction =
   | 'asset.deleted'
   | 'asset.value_updated'
   | 'asset.liquidity_changed'
+  | 'asset.auto_price_changed'
   | 'asset.sold'
   // A saving deposit reaching its end and becoming a spendable account. Logged
   // because the household did not ask for it — the money moved on its own, and

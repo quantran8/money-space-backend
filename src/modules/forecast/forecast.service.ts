@@ -11,6 +11,9 @@ import {
 } from '../../common/utils/clock';
 import { runForecast } from './domain/forecast';
 import { CacheService } from '../../common/cache/cache.service';
+import { EntitlementService } from '../billing/entitlement.service';
+import { WhatIfUsageService } from '../billing/whatif-usage.service';
+import { PremiumRequiredException } from '../billing/entitlement.errors';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { computeFlexibleMoney } from './domain/flexible-money';
 import { walletValuesAfterOutflows } from './domain/wallet-values-after-outflows';
@@ -245,9 +248,14 @@ export class ForecastService {
     // not be valued here without it.
     private readonly goalsService: GoalsService,
     private readonly cache: CacheService,
+    private readonly entitlements: EntitlementService,
+    private readonly whatIfUsage: WhatIfUsageService,
   ) {}
 
-  /** Validate + clamp the requested horizon. */
+  /**
+   * Validate the requested horizon. Shape only — this says nothing about which
+   * horizons the household may actually ask for.
+   */
   parseHorizon(raw?: string | number): number {
     if (raw === undefined || raw === null || raw === '') {
       return DEFAULT_HORIZON;
@@ -259,6 +267,39 @@ export class ForecastService {
       );
     }
     return parsed;
+  }
+
+  /**
+   * Validate the horizon AND check the household may have it.
+   *
+   * This moved down from the four controller handlers deliberately. The
+   * controller has no `householdId` in scope at the point it parses the query
+   * string, so gating there would have meant either resolving the household
+   * four times or spreading the check across four call sites. Here it is one
+   * chokepoint, and every forecast route passes through it.
+   *
+   * `@RequirePremium()` is NOT on these routes, for the same reason: they serve
+   * Free perfectly well at horizon 30. It is the VALUE that is gated, never the
+   * endpoint.
+   */
+  private async resolveHorizon(
+    householdId: string,
+    raw?: string | number,
+  ): Promise<number> {
+    const horizonDays = this.parseHorizon(raw);
+    // The horizons every plan includes; no entitlement read needed for them,
+    // which is the common case and the default.
+    if (horizonDays <= DEFAULT_HORIZON) {
+      return horizonDays;
+    }
+
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    if (!entitlement.limits.forecastHorizons.includes(horizonDays)) {
+      throw new PremiumRequiredException('forecast_horizon', entitlement, {
+        requested: horizonDays,
+      });
+    }
+    return horizonDays;
   }
 
   /**
@@ -283,6 +324,44 @@ export class ForecastService {
       horizonDays,
       ...bundle,
     };
+  }
+
+  /**
+   * The HTTP entries: parse the horizon, check the household may HAVE it, then
+   * run the same method the rest of the codebase calls with a number.
+   *
+   * The split exists because `forecast()` and friends are also called
+   * internally — by the snapshot backfill, and by what-if running the engine
+   * twice over one bundle — with a horizon that was never a query string and
+   * has no household choosing it. Gating inside them would have made an
+   * internal caller subject to a paywall it has no way to answer.
+   */
+  async forecastForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.forecast(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
+  }
+
+  async flexibleMoneyForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.flexibleMoney(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
+  }
+
+  async financialStateForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.financialState(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
+  }
+
+  async forecastBundleForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.forecastBundle(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
   }
 
   /**
@@ -421,6 +500,22 @@ export class ForecastService {
     }
     if (!payload.plannedDate) {
       throw new BadRequestException('plannedDate is required');
+    }
+
+    // The quota, checked AFTER the payload is known to be well-formed and
+    // BEFORE any of the expensive work. A malformed request must never spend
+    // one of a household's five runs, and a household that is over its limit
+    // must not pay for a bundle load to be told so.
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    const whatIfLimit = entitlement.limits.whatIfPerMonth;
+    if (whatIfLimit !== null) {
+      const used = await this.whatIfUsage.used(householdId);
+      this.entitlements.assertQuota(
+        entitlement,
+        'whatIfPerMonth',
+        used,
+        'whatif_quota',
+      );
     }
 
     const input = await this.loadInput(householdId, horizonDays);
@@ -866,6 +961,17 @@ export class ForecastService {
             afterGoalResult?.projection ?? null,
           )
         : null;
+
+    // Counted only now, once the run has actually produced an answer. Charging
+    // at the top would spend a slot on a request that then failed validation
+    // or threw — and five a month is few enough that one wrongly-charged run
+    // is something a household would notice.
+    //
+    // Unlimited plans are not counted at all: the number would only ever be
+    // written and never read.
+    if (whatIfLimit !== null) {
+      await this.whatIfUsage.consume(householdId);
+    }
 
     return {
       householdId,

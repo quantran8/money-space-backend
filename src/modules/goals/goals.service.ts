@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { EntitlementService } from '../billing/entitlement.service';
 import {
   FinancialGoal,
   NO_TARGET_DATE,
@@ -98,6 +99,7 @@ export class GoalsService {
     // gain. Cashflow knows nothing about goals, so this direction has no cycle.
     @Inject(CASHFLOW_EVENTS_REPOSITORY)
     private readonly cashflowEventsRepository: CashflowEventsRepository,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   /**
@@ -888,6 +890,21 @@ export class GoalsService {
       this.assetIndex(householdId),
       this.goalsRepository.findFinancialGoalsByHousehold(householdId),
     ]);
+    // The plan ceiling, checked against goals we have ALREADY loaded — the
+    // `Promise.all` above needed `existingGoals` for the wallet-share rule, so
+    // enforcing the quota here costs no extra query.
+    //
+    // Only `active` counts. Counting completed goals would mean a Free
+    // household that reaches two goals can never start a third — punishing
+    // them for succeeding, at the exact moment the app has just worked.
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    this.entitlements.assertQuota(
+      entitlement,
+      'goals',
+      existingGoals.filter((goal) => goal.status === 'active').length,
+      'goal_quota',
+    );
+
     const assetValues = assets.values;
     const seenAssets = new Set<string>();
     const rows: GoalAssetAllocation[] = [];
@@ -990,6 +1007,10 @@ export class GoalsService {
         assetValues,
       ),
       priority: payload.priority,
+      // A new goal is always active — the column's own default. It is set here
+      // rather than left implicit so the object satisfies `FinancialGoal`
+      // without a cast.
+      status: 'active',
       note: payload.note?.trim() ?? '',
       targetDate: payload.targetDate ?? NO_TARGET_DATE,
     };
