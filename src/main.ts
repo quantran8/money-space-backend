@@ -26,6 +26,22 @@ function registerProcessGuards() {
   });
 }
 
+/**
+ * Browser origins allowed to call the API, from `CORS_ORIGINS` (comma-separated).
+ *
+ * Unset means allow everything, which is right for local development and for a
+ * native client — the mobile app is not a browser and sends no `Origin` at all,
+ * so it is never affected either way. Production sets the list.
+ */
+function corsOrigins(): string[] | true {
+  const configured = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : true;
+}
+
 async function bootstrap() {
   registerProcessGuards();
 
@@ -34,7 +50,15 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(PinoLogger));
   app.flushLogs();
-  app.enableCors();
+  app.enableCors({
+    origin: corsOrigins(),
+    // The app authenticates with a bearer token, not cookies. Leaving
+    // credentials off keeps a wildcard origin legal in dev and means a stolen
+    // session cannot ride along on a cross-site request.
+    credentials: false,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
 
   // Every route is served under `/api/v1/*`. The prefix and the version live
   // here rather than in each @Controller so a future v2 is a per-route
