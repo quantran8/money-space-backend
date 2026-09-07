@@ -151,7 +151,8 @@ export class PaymentsService {
     const order = await this.findOwnOrder(householdId, orderCode);
 
     return {
-      orderCode: order.orderCode.toString(),
+      // Non-null: this row was found BY its order code, so it has one.
+      orderCode: String(order.orderCode),
       status: order.status,
       planCode: order.planCode,
       amount: order.amount,
@@ -167,12 +168,19 @@ export class PaymentsService {
 
     return {
       items: orders.map((order) => ({
-        orderCode: order.orderCode.toString(),
+        // An in-app purchase has no order code — it was never handed to PayOS.
+        // The store's transaction id stands in, so every row in the history has
+        // something a household can quote to support.
+        orderCode: order.orderCode ? String(order.orderCode) : (order.providerTxnId ?? order.id),
         status: order.status,
         planCode: order.planCode,
         amount: order.amount,
         createdAt: order.createdAt.toISOString(),
         paidAt: order.paidAt?.toISOString() ?? null,
+        // Which route paid for it. The history says "App Store" rather than
+        // showing a bank transfer that never happened.
+        provider: order.provider ?? 'payos',
+        store: order.store ?? null,
       })),
       total: orders.length,
     };
@@ -188,7 +196,7 @@ export class PaymentsService {
     // The local row first: if PayOS is unreachable, an order nobody can pay
     // for is better than one we believe is dead while the link still works.
     await this.billingRepository.markPaymentOrderClosed(
-      order.orderCode,
+      order.orderCode!,
       'cancelled',
     );
     try {
@@ -305,7 +313,7 @@ export class PaymentsService {
    * between the two writes for a crash to land in.
    */
   private async settle(
-    order: { orderCode: bigint; householdId: string; planCode: string; durationDays: number | null },
+    order: { orderCode: bigint | null; householdId: string; planCode: string; durationDays: number | null },
     reference: string,
     body: PayosWebhookBody,
   ): Promise<void> {
@@ -316,7 +324,8 @@ export class PaymentsService {
         // the second transaction after the first commits. A replay matches no
         // row and this returns false.
         const claimed = await this.billingRepository.markPaymentOrderPaid(
-          order.orderCode,
+          // Non-null on this path: the order was looked up BY its code.
+          order.orderCode!,
           { providerTxnId: reference, paidAt: new Date(), rawPayload: body },
         );
         if (!claimed) return;
@@ -344,7 +353,7 @@ export class PaymentsService {
           entityId: order.householdId,
           details: {
             planCode: order.planCode,
-            orderCode: order.orderCode.toString(),
+            orderCode: String(order.orderCode),
             addedDays: result.addedDays,
             stacked: result.stacked,
           },

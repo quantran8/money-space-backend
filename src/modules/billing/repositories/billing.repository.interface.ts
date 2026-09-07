@@ -1,5 +1,7 @@
 import type {
   PaymentOrderStatus,
+  PaymentProvider,
+  PurchaseStore,
   RedeemCodeStatus,
   RedeemGrantType,
 } from '@prisma/client';
@@ -48,7 +50,8 @@ export interface PaymentOrderRow {
   id: string;
   householdId: string;
   status: PaymentOrderStatus;
-  orderCode: bigint;
+  /** `null` on an in-app purchase: those never get a PayOS order reference. */
+  orderCode: bigint | null;
   planCode: string;
   amount: number;
   durationDays: number | null;
@@ -56,6 +59,40 @@ export interface PaymentOrderRow {
   checkoutUrl: string | null;
   createdAt: Date;
   paidAt: Date | null;
+  provider?: PaymentProvider;
+  store?: PurchaseStore | null;
+  productId?: string | null;
+  storeExpiresAt?: Date | null;
+}
+
+/**
+ * A settled in-app purchase, written in one go.
+ *
+ * Unlike a PayOS order there is no pending step: the store has already taken
+ * the money by the time RevenueCat tells us, so the row is created `paid`.
+ */
+export interface StorePurchaseWrite {
+  id: string;
+  householdId: string;
+  /** NULL for a store-initiated renewal — nobody pressed anything. */
+  createdById: string | null;
+  planCode: string;
+  amount: number;
+  durationDays: number | null;
+  /** The unique idempotency key. A replay violates this and is swallowed. */
+  providerTxnId: string;
+  providerUserId: string;
+  productId: string;
+  store: PurchaseStore | null;
+  storeExpiresAt: Date | null;
+  paidAt: Date;
+  rawPayload: unknown;
+}
+
+export interface RevenuecatSubscriberRow {
+  providerUserId: string;
+  profileId: string | null;
+  householdId: string;
 }
 
 export interface PaymentOrderWrite {
@@ -177,6 +214,34 @@ export interface BillingRepository {
 
   /** Record what arrived when it does not settle the order (an underpayment). */
   recordPaymentPayload(orderCode: bigint, rawPayload: unknown): Promise<void>;
+
+  /**
+   * Insert a settled store purchase.
+   *
+   * Throws a unique violation when `providerTxnId` already exists — that IS the
+   * idempotency barrier for in-app purchases, and the caller is expected to
+   * catch it rather than check first, because two deliveries can race.
+   */
+  insertStorePurchase(write: StorePurchaseWrite): Promise<void>;
+
+  /** The household a RevenueCat subscriber's money pays for. */
+  findRevenuecatSubscriber(
+    providerUserIds: string[],
+  ): Promise<RevenuecatSubscriberRow | null>;
+
+  /**
+   * Remember which household a subscriber pays for.
+   *
+   * The household is only set on INSERT. A person who later joins a different
+   * household must not have their running subscription start paying for the new
+   * one, so an existing row keeps its household and only refreshes the profile
+   * link.
+   */
+  linkRevenuecatSubscriber(link: {
+    providerUserId: string;
+    profileId: string | null;
+    householdId: string;
+  }): Promise<void>;
 
   updateRedemptionOutcome(
     redeemCodeId: string,

@@ -159,6 +159,61 @@ cron, wrong for money.
 A PayOS webhook delivered twice is stopped by two independent barriers: the
 unique `provider_txn_id`, and `status = 'pending'` in the settlement's WHERE.
 
+## In-app purchase (RevenueCat)
+
+Apple and Google reject apps that steer to an outside payment flow for digital
+goods, so the mobile client cannot use the PayOS checkout. It buys through the
+store, and RevenueCat reports the purchase to
+`POST /billing/webhooks/revenuecat`.
+
+It lands in the same place everything else does — `grantOrExtend` — so the
+stacking rules are not restated for IAP.
+
+**Authentication is weaker than PayOS's and the code treats it that way.**
+RevenueCat sends a shared secret in the `Authorization` header rather than
+signing the body, which proves only that the caller knows the secret. So the
+payload is treated as a claim to be checked: the product must be one we sell,
+and the subscriber must already map to a household.
+
+### Mapping a purchase to a household
+
+`revenuecat_subscribers` maps `app_user_id` → household, written by the client
+**before** it opens the store sheet. Without it a renewal could not be settled
+at all: Apple charges the card a year later with no app running, and the webhook
+carries only that id.
+
+The household is set on INSERT and never updated — someone who leaves and joins
+another household must not have their running subscription start paying for the
+new one.
+
+### Idempotency
+
+The unique `provider_txn_id` is the barrier, and the key is `transaction_id`,
+never `original_transaction_id`: the latter is shared by every renewal of a
+subscription, so keying on it would make year two look like a replay of year one
+and grant nothing.
+
+### An IAP only ever ADDS time
+
+- `CANCELLATION` = auto-renew off, not access ended. The household keeps the
+  days it bought; the expiry sweep ends the period when it actually runs out.
+- `EXPIRATION` needs no action for the same reason — two things ending a plan
+  would disagree the first time a household also held a redeem code.
+- `REFUND` / `CHARGEBACK` are logged and left alone. Revoking automatically
+  would have to decide *which* days to remove from a period that may have been
+  stacked with a code, and getting that wrong takes away time somebody owns.
+
+### Store prices are not our prices
+
+`PLAN_CATALOG`'s đồng amounts do not decide what an IAP costs — the store does,
+in the buyer's region and currency. The order row records **what the store
+charged**, not our list price, or the receipt would be a lie. `STORE_PRODUCTS`
+maps product id → plan; a published product id can never be renamed or reused,
+so a new plan means a new id.
+
+A `SANDBOX` receipt is free money: `REVENUECAT_ALLOW_SANDBOX` allows it in
+development for TestFlight, and it is off in production.
+
 ## The expiry sweep (Phase 5)
 
 `BillingExpiryCron`, **09:00 Asia/Ho_Chi_Minh** — not 23:45 like the valuation

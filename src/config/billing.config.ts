@@ -118,4 +118,30 @@ export const billingConfig = {
   get payosOrderTtlMinutes(): number {
     return Number(process.env.PAYOS_ORDER_TTL_MINUTES ?? 30);
   },
+
+  /**
+   * The shared secret in RevenueCat's `Authorization` header. Never logged,
+   * never sent to a client. Empty refuses every delivery — it fails closed.
+   */
+  get revenuecatWebhookSecret(): string {
+    return process.env.REVENUECAT_WEBHOOK_SECRET ?? '';
+  },
+
+  /**
+   * The entitlement id configured in RevenueCat, checked against the event so a
+   * product attached to the wrong one cannot hand out Premium.
+   */
+  get revenuecatEntitlementId(): string {
+    return process.env.REVENUECAT_ENTITLEMENT_ID ?? 'premium';
+  },
+
+  /** A sandbox receipt is free money — on for TestFlight, off in production. */
+  get revenuecatAllowSandbox(): boolean {
+    return process.env.REVENUECAT_ALLOW_SANDBOX === 'true';
+  },
+
+  /** Whether in-app purchase can be offered at all. The mobile paywall asks. */
+  get revenuecatConfigured(): boolean {
+    return Boolean(this.revenuecatWebhookSecret);
+  },
 };

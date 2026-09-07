@@ -53,6 +53,19 @@ enum RedeemCodeStatus {
 /// approval, and charges 1.1–2.2%, which at 39.000đ is the whole margin.
 enum PaymentProvider {
   payos
+  /// Apple / Google in-app purchase, settled through RevenueCat. One value for
+  /// both stores: RevenueCat is the system of record either way, and the store
+  /// itself is recorded in `store` — splitting the enum would mean every query
+  /// that means "an IAP" had to list two values.
+  revenuecat
+}
+
+/// Which store actually took the money. Only set on RevenueCat orders; PayOS
+/// leaves it NULL. Kept because a refund is handled per store, and support
+/// cannot act on "an IAP" without knowing which one.
+enum PurchaseStore {
+  app_store
+  play_store
 }
 
 /// Where an order stands. Deliberately NOT a payment "attempt" log — one row
@@ -455,6 +468,7 @@ model Profile {
   moneyEventsCreated       MoneyEvent[]           @relation("MoneyEventCreatedBy")
   moneyEventsUpdated       MoneyEvent[]           @relation("MoneyEventUpdatedBy")
   auditLogsActed           AuditLog[]             @relation("AuditLogActor")
+  revenuecatSubscribers    RevenuecatSubscriber[] @relation("RevenuecatSubscriberProfile")
   redeemCodesRedeemed      RedeemCodeRedemption[] @relation("RedeemCodeRedeemedBy")
   paymentOrdersCreated     PaymentOrder[]         @relation("PaymentOrderCreatedBy")
 
@@ -497,6 +511,7 @@ model Household {
   subscription            HouseholdSubscription?
   redeemRedemptions       RedeemCodeRedemption[]
   paymentOrders           PaymentOrder[]
+  revenuecatSubscribers   RevenuecatSubscriber[]
 
   @@index([createdById])
   @@index([deletedAt])
@@ -652,7 +667,10 @@ model PaymentOrder {
   /// collision within one second unlikely rather than impossible. The unique
   /// index is what actually decides it; a collision fails the insert and the
   /// caller retries.
-  orderCode BigInt @unique @map("order_code")
+  /// NULL for a RevenueCat order: an IAP is never handed to PayOS, so it needs
+  /// no integer reference, and minting one would imply a checkout that does not
+  /// exist. `providerTxnId` is what identifies those.
+  orderCode BigInt? @unique @map("order_code")
 
   /// Which plan was bought. A plain string, not the PlanCode enum: an order is
   /// a historical record, and retiring a plan must not make an old receipt
@@ -689,22 +707,87 @@ model PaymentOrder {
   /// has to see what actually arrived.
   rawPayload Json? @map("raw_payload")
 
+  /// Which store took the money. NULL on PayOS orders.
+  store PurchaseStore? @map("store")
+
+  /// RevenueCat's identifier for the subscriber, i.e. our `app_user_id`. Kept
+  /// so a webhook that arrives for a household we cannot resolve can still be
+  /// traced back to a person by support.
+  providerUserId String? @map("provider_user_id")
+
+  /// The store product that was bought, e.g. `oursight_premium_yearly`. Stored
+  /// beside `planCode` rather than instead of it: the mapping between the two
+  /// can change, and an old receipt must keep meaning what it meant.
+  productId String? @map("product_id")
+
+  /// When the store's own subscription period ends, as RevenueCat reports it.
+  ///
+  /// NOT what the entitlement is computed from — `grantOrExtend` owns the
+  /// household's expiry, and a store renewal simply extends it. Kept for
+  /// support, and for telling an auto-renewing subscription from a lapsed one.
+  storeExpiresAt DateTime? @map("store_expires_at") @db.Timestamptz(6)
+
   /// Who started the checkout. Any member may pay; the plan is the
   /// household's either way.
-  createdById String    @map("created_by") @db.Uuid
+  ///
+  /// NULL for a store-initiated RENEWAL: Apple charging a card a year later is
+  /// not a person acting, and attributing it to whoever first subscribed would
+  /// be a guess the journal would state as fact.
+  createdById String?   @map("created_by") @db.Uuid
   paidAt      DateTime? @map("paid_at") @db.Timestamptz(6)
   expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy Profile   @relation("PaymentOrderCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  createdBy Profile?  @relation("PaymentOrderCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
 
   /// The subscription page reads a household's orders newest first.
   @@index([householdId, createdAt(sort: Desc)])
   /// The sweep that expires stale pending orders.
   @@index([status, expiresAt])
+  /// Support tracing a RevenueCat subscriber back to their orders.
+  @@index([providerUserId])
   @@map("payment_orders")
+}
+
+/// The link between a RevenueCat subscriber and the household their purchase
+/// pays for.
+///
+/// This table is why a RENEWAL can be settled at all. Apple charges a card a
+/// year later with no app running and no client to tell us who it is for; the
+/// webhook carries only `app_user_id`. Without a stored mapping, that money
+/// would arrive for a household we could not name.
+///
+/// Keyed by `providerUserId` rather than by profile: the two are the same today
+/// (we set `app_user_id` to the profile id at login) but an anonymous purchase
+/// later aliased to an account is a first-class RevenueCat flow, and it would
+/// arrive as a second id for the same person.
+model RevenuecatSubscriber {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// RevenueCat's `app_user_id`. What every webhook carries.
+  providerUserId String @unique @map("provider_user_id")
+
+  /// Who this subscriber is, when we know. NULL for a purchase made before
+  /// sign-in and not yet aliased.
+  profileId String? @map("profile_id") @db.Uuid
+
+  /// The household the purchase pays for.
+  ///
+  /// Recorded when the purchase is registered and NOT re-derived per webhook:
+  /// a person who later leaves and joins another household must not have their
+  /// existing subscription silently start paying for the new one.
+  householdId String @map("household_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  profile   Profile?  @relation("RevenuecatSubscriberProfile", fields: [profileId], references: [id], onDelete: SetNull)
+
+  @@index([householdId])
+  @@map("revenuecat_subscribers")
 }
 
 model HouseholdMember {

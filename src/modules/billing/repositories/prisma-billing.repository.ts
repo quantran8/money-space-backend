@@ -10,6 +10,8 @@ import type {
   PaymentOrderWrite,
   RedeemCodeRow,
   RedemptionWrite,
+  RevenuecatSubscriberRow,
+  StorePurchaseWrite,
   SubscriptionWrite,
 } from './billing.repository.interface';
 
@@ -35,6 +37,10 @@ const PAYMENT_ORDER_FIELDS = {
   checkoutUrl: true,
   createdAt: true,
   paidAt: true,
+  provider: true,
+  store: true,
+  productId: true,
+  storeExpiresAt: true,
 } as const;
 
 @Injectable()
@@ -339,6 +345,62 @@ export class PrismaBillingRepository
     await this.prisma.redeemCodeRedemption.update({
       where: { redeemCodeId_householdId: { redeemCodeId, householdId } },
       data: outcome,
+    });
+  }
+
+  async insertStorePurchase(write: StorePurchaseWrite): Promise<void> {
+    // No `pending` step and no order code: the store has already taken the
+    // money by the time RevenueCat tells us, so the row is born paid.
+    //
+    // A duplicate `providerTxnId` throws here on purpose. The caller catches
+    // the unique violation and treats it as "already handled" — checking first
+    // would leave a window in which two deliveries both pass the check.
+    await this.prisma.paymentOrder.create({
+      data: {
+        id: write.id,
+        householdId: write.householdId,
+        createdById: write.createdById,
+        provider: 'revenuecat',
+        status: 'paid',
+        planCode: write.planCode,
+        amountOriginal: write.amount,
+        discountAmount: 0,
+        amount: write.amount,
+        durationDays: write.durationDays,
+        providerTxnId: write.providerTxnId,
+        providerUserId: write.providerUserId,
+        productId: write.productId,
+        store: write.store,
+        storeExpiresAt: write.storeExpiresAt,
+        paidAt: write.paidAt,
+        rawPayload: write.rawPayload as never,
+      },
+    });
+  }
+
+  async findRevenuecatSubscriber(
+    providerUserIds: string[],
+  ): Promise<RevenuecatSubscriberRow | null> {
+    if (providerUserIds.length === 0) return null;
+
+    return this.prisma.revenuecatSubscriber.findFirst({
+      where: { providerUserId: { in: providerUserIds } },
+      select: { providerUserId: true, profileId: true, householdId: true },
+    });
+  }
+
+  async linkRevenuecatSubscriber(link: {
+    providerUserId: string;
+    profileId: string | null;
+    householdId: string;
+  }): Promise<void> {
+    await this.prisma.revenuecatSubscriber.upsert({
+      where: { providerUserId: link.providerUserId },
+      create: { id: uuidv7(), ...link },
+      // `householdId` is deliberately NOT updated: a member who later joins a
+      // different household must not have their running subscription silently
+      // start paying for the new one.
+      update: { profileId: link.profileId },
     });
   }
 }

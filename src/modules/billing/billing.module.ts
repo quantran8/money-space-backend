@@ -10,6 +10,9 @@ import { PayosGateway } from './gateways/payos.gateway';
 import { PAYMENT_GATEWAY } from './gateways/payment-gateway.interface';
 import { PlansController } from './plans.controller';
 import { RedeemController } from './redeem.controller';
+import { RevenuecatController } from './revenuecat.controller';
+import { RevenuecatService } from './revenuecat.service';
+import { RevenuecatWebhookController } from './revenuecat-webhook.controller';
 import { RedeemService } from './redeem.service';
 import { SubscriptionService } from './subscription.service';
 import { WhatIfUsageService } from './whatif-usage.service';
@@ -32,6 +35,8 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
     RedeemController,
     PaymentsController,
     PaymentsWebhookController,
+    RevenuecatController,
+    RevenuecatWebhookController,
   ],
   providers: [
     EntitlementService,
@@ -41,6 +46,10 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
     RedeemService,
     WhatIfUsageService,
     PaymentsService,
+    // In-app purchase. Not behind PAYMENT_GATEWAY: that token is for gateways we
+    // ASK to create a checkout, and a store purchase is only ever reported to
+    // us after the fact — there is no link to create and nothing to cancel.
+    RevenuecatService,
     // Behind a token so adding VNPay later — once a business licence and its
     // 1.1-2.2% are worth paying — is one new file rather than an edit through
     // PaymentsService.
@@ -58,6 +67,7 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
     SubscriptionService,
     WhatIfUsageService,
     PaymentsService,
+    RevenuecatService,
     BillingExpiryCron,
   ],
 })
