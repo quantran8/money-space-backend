@@ -14,6 +14,13 @@ interface ErrorBody {
   error: string;
   timestamp: string;
   path: string;
+  /**
+   * Only on a 402 from `PremiumRequiredException`: which limit was hit, and
+   * what the current plan allows. Forwarded because the client cannot pick the
+   * right paywall from a status code alone, and parsing `message` for it would
+   * make a copy string load-bearing.
+   */
+  premium?: Record<string, unknown>;
 }
 
 @Catch()
@@ -81,6 +88,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
       error: String(error),
       timestamp: new Date().toISOString(),
       path: request.url,
+      ...(payload.premium
+        ? { premium: payload.premium as Record<string, unknown> }
+        : {}),
     });
   }
 }

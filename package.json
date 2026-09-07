@@ -21,6 +21,7 @@
     "prisma:db:pull": "prisma db pull",
     "db:init": "bash scripts/init-db.sh",
     "db:init:dry": "bash scripts/init-db.sh --dry",
+    "redeem:create": "ts-node -r tsconfig-paths/register scripts/create-redeem-codes.ts",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",

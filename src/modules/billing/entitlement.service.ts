@@ -2,7 +2,14 @@ import { Inject, Injectable } from '@nestjs/common';
 import { CacheService } from '../../common/cache/cache.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { resolveEntitlement, type SubscriptionRow } from './domain/entitlement';
-import type { Entitlement } from './entities/entitlement.entity';
+import {
+  PremiumRequiredException,
+  type PaywallReason,
+} from './entitlement.errors';
+import type {
+  CountableQuota,
+  Entitlement,
+} from './entities/entitlement.entity';
 import {
   BILLING_REPOSITORY,
   type BillingRepository,
@@ -81,6 +88,25 @@ export class EntitlementService {
       // this in when that counter exists.
       usage: { ...counts, whatIfThisMonth: 0 },
     };
+  }
+
+  /**
+   * Enforce a counted quota. `used` is supplied by the caller, which has
+   * already queried it — a guard cannot count without a second round trip,
+   * which is why counted limits are checked here and not in one.
+   *
+   * `null` means unlimited, so premium never reaches the comparison.
+   */
+  assertQuota(
+    entitlement: Entitlement,
+    quota: CountableQuota,
+    used: number,
+    reason: PaywallReason,
+  ): void {
+    const limit = entitlement.limits[quota];
+    if (limit === null || used < limit) return;
+
+    throw new PremiumRequiredException(reason, entitlement, { limit, used });
   }
 
   /**

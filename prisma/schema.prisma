@@ -39,6 +39,21 @@ enum EntitlementSource {
   trial
 }
 
+enum RedeemCodeStatus {
+  active
+  /// Switched off by hand — a leaked code, a cancelled campaign.
+  disabled
+  /// Denormalized from redemption_count so the common filter needs no maths.
+  exhausted
+}
+
+/// What a code grants. `lifetime` absorbs everything after it.
+enum RedeemGrantType {
+  duration_days
+  until_date
+  lifetime
+}
+
 enum MemberStatus {
   active
   invited
@@ -388,36 +403,37 @@ model Currency {
 }
 
 model Profile {
-  id                       String                @id @db.Uuid
-  fullName                 String?               @map("full_name")
-  displayName              String?               @map("display_name")
-  avatarUrl                String?               @map("avatar_url")
+  id                       String                 @id @db.Uuid
+  fullName                 String?                @map("full_name")
+  displayName              String?                @map("display_name")
+  avatarUrl                String?                @map("avatar_url")
   email                    String?
   phone                    String?
-  createdAt                DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  householdsCreated        Household[]           @relation("HouseholdCreatedBy")
-  householdMembers         HouseholdMember[]     @relation("HouseholdMemberUser")
-  invitedHouseholdMembers  HouseholdMember[]     @relation("HouseholdMemberInvitedBy")
-  householdInvitesSent     HouseholdInvite[]     @relation("HouseholdInviteInvitedBy")
-  householdInvitesAccepted HouseholdInvite[]     @relation("HouseholdInviteAcceptedBy")
-  snapshotsCreated         Snapshot[]            @relation("SnapshotCreatedBy")
-  assetsCreated            Asset[]               @relation("AssetCreatedBy")
-  assetsUpdated            Asset[]               @relation("AssetUpdatedBy")
-  assetValuationsCreated   AssetValuation[]      @relation("AssetValuationCreatedBy")
-  assetValuationsUpdated   AssetValuation[]      @relation("AssetValuationUpdatedBy")
-  cashflowEventsCreated    CashflowEvent[]       @relation("CashflowEventCreatedBy")
-  cashflowEventsUpdated    CashflowEvent[]       @relation("CashflowEventUpdatedBy")
-  cashflowEventsCompleted  CashflowEvent[]       @relation("CashflowEventLastCompletedBy")
-  debtsCreated             Debt[]                @relation("DebtCreatedBy")
-  debtsUpdated             Debt[]                @relation("DebtUpdatedBy")
-  financialGoalsCreated    FinancialGoal[]       @relation("FinancialGoalCreatedBy")
-  financialGoalsUpdated    FinancialGoal[]       @relation("FinancialGoalUpdatedBy")
-  goalAllocationsCreated   GoalAssetAllocation[] @relation("GoalAssetAllocationCreatedBy")
-  goalAllocationsUpdated   GoalAssetAllocation[] @relation("GoalAssetAllocationUpdatedBy")
-  moneyEventsCreated       MoneyEvent[]          @relation("MoneyEventCreatedBy")
-  moneyEventsUpdated       MoneyEvent[]          @relation("MoneyEventUpdatedBy")
-  auditLogsActed           AuditLog[]            @relation("AuditLogActor")
+  createdAt                DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  householdsCreated        Household[]            @relation("HouseholdCreatedBy")
+  householdMembers         HouseholdMember[]      @relation("HouseholdMemberUser")
+  invitedHouseholdMembers  HouseholdMember[]      @relation("HouseholdMemberInvitedBy")
+  householdInvitesSent     HouseholdInvite[]      @relation("HouseholdInviteInvitedBy")
+  householdInvitesAccepted HouseholdInvite[]      @relation("HouseholdInviteAcceptedBy")
+  snapshotsCreated         Snapshot[]             @relation("SnapshotCreatedBy")
+  assetsCreated            Asset[]                @relation("AssetCreatedBy")
+  assetsUpdated            Asset[]                @relation("AssetUpdatedBy")
+  assetValuationsCreated   AssetValuation[]       @relation("AssetValuationCreatedBy")
+  assetValuationsUpdated   AssetValuation[]       @relation("AssetValuationUpdatedBy")
+  cashflowEventsCreated    CashflowEvent[]        @relation("CashflowEventCreatedBy")
+  cashflowEventsUpdated    CashflowEvent[]        @relation("CashflowEventUpdatedBy")
+  cashflowEventsCompleted  CashflowEvent[]        @relation("CashflowEventLastCompletedBy")
+  debtsCreated             Debt[]                 @relation("DebtCreatedBy")
+  debtsUpdated             Debt[]                 @relation("DebtUpdatedBy")
+  financialGoalsCreated    FinancialGoal[]        @relation("FinancialGoalCreatedBy")
+  financialGoalsUpdated    FinancialGoal[]        @relation("FinancialGoalUpdatedBy")
+  goalAllocationsCreated   GoalAssetAllocation[]  @relation("GoalAssetAllocationCreatedBy")
+  goalAllocationsUpdated   GoalAssetAllocation[]  @relation("GoalAssetAllocationUpdatedBy")
+  moneyEventsCreated       MoneyEvent[]           @relation("MoneyEventCreatedBy")
+  moneyEventsUpdated       MoneyEvent[]           @relation("MoneyEventUpdatedBy")
+  auditLogsActed           AuditLog[]             @relation("AuditLogActor")
+  redeemCodesRedeemed      RedeemCodeRedemption[] @relation("RedeemCodeRedeemedBy")
 
   @@map("profiles")
 }
@@ -456,6 +472,7 @@ model Household {
   moneyEventCategories    MoneyEventCategory[]
   auditLogs               AuditLog[]
   subscription            HouseholdSubscription?
+  redeemRedemptions       RedeemCodeRedemption[]
 
   @@index([createdById])
   @@index([deletedAt])
@@ -498,6 +515,94 @@ model HouseholdSubscription {
   /// Lifetime rows (NULL) fall outside it with no special case.
   @@index([tier, currentPeriodEnd])
   @@map("household_subscriptions")
+}
+
+/// An activation code, e.g. `OURS8K3M2QYT`.
+///
+/// Stored in PLAINTEXT on purpose: support has to read a code back when a
+/// customer loses the message, which hashing makes impossible. This is not a
+/// password — one leaked code is worth 39k and `maxRedemptions` caps the
+/// damage. Brute force is answered by entropy plus rate limiting; hashing would
+/// slow an attacker working over HTTP by nothing at all.
+model RedeemCode {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Normalized: upper-case, no separators, confusables folded. See
+  /// `domain/redeem-code-format.ts`.
+  code String @unique @db.VarChar(32)
+
+  /// Batch this belongs to: "beta-2026-q1", "shopee-tet", "referral".
+  campaign String @db.VarChar(64)
+
+  status RedeemCodeStatus @default(active)
+
+  grantTier SubscriptionTier @default(premium) @map("grant_tier")
+  grantType RedeemGrantType  @map("grant_type")
+
+  /// Required when grantType = duration_days.
+  grantDurationDays Int? @map("grant_duration_days")
+
+  /// Required when grantType = until_date. A beta code good "until 31/12".
+  grantUntil DateTime? @map("grant_until") @db.Timestamptz(6)
+
+  /// 1 for a retail code, N for a shared campaign. There is deliberately no
+  /// "unlimited": a leaked unlimited code is unbounded lost revenue. Use a
+  /// large number instead, which stays observable.
+  maxRedemptions Int @default(1) @map("max_redemptions")
+
+  /// Denormalized, and incremented by a conditional UPDATE — that statement is
+  /// the race guard itself, not merely a display counter.
+  redemptionCount Int @default(0) @map("redemption_count")
+
+  /// When the CODE stops working, as opposed to what it grants. NULL = never.
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  /// Admin note: which customer, which order. Never shown to the household.
+  note String @default("")
+
+  /// NULL when minted by the CLI script rather than a person.
+  createdById String? @map("created_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  redemptions RedeemCodeRedemption[]
+
+  @@index([campaign, status])
+  @@index([status, expiresAt])
+  @@map("redeem_codes")
+}
+
+/// One redemption. The receipt for a grant.
+model RedeemCodeRedemption {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  redeemCodeId String @map("redeem_code_id") @db.Uuid
+  householdId  String @map("household_id") @db.Uuid
+  /// Whoever pressed the button. Any member may — see memory/subscription.md.
+  redeemedById String @map("redeemed_by") @db.Uuid
+
+  /// Frozen at redemption time. The code can be edited or withdrawn later; what
+  /// this household was actually given cannot change after the fact.
+  grantedDays     Int?      @map("granted_days")
+  /// The expiry BEFORE this code applied. NULL = they were on free.
+  periodEndBefore DateTime? @map("period_end_before") @db.Timestamptz(6)
+  /// The expiry AFTER. NULL = this code granted lifetime.
+  periodEndAfter  DateTime? @map("period_end_after") @db.Timestamptz(6)
+
+  redeemedAt DateTime @default(now()) @map("redeemed_at") @db.Timestamptz(6)
+
+  redeemCode RedeemCode @relation(fields: [redeemCodeId], references: [id], onDelete: Cascade)
+  household  Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  redeemedBy Profile    @relation("RedeemCodeRedeemedBy", fields: [redeemedById], references: [id])
+
+  /// "One household, one code, once" enforced by the DATABASE, not by an app
+  /// check — this is the second race barrier, and it holds even when two
+  /// requests arrive together.
+  @@unique([redeemCodeId, householdId])
+  @@index([householdId, redeemedAt])
+  @@map("redeem_code_redemptions")
 }
 
 model HouseholdMember {
@@ -980,6 +1085,8 @@ model CashflowEvent {
   @@index([ownerMemberId])
   @@index([financialGoalId])
   @@index([plannedAssetId])
+  /// Mirrors `MoneyEvent`'s. Created by the category_id FK migration but never
+  /// declared here, which is what Prisma kept reporting as schema drift.
   @@index([householdId, categoryId])
   @@map("cashflow_events")
 }

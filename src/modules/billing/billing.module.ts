@@ -3,6 +3,9 @@ import { CommonModule } from '../../common/common.module';
 import { EntitlementController } from './entitlement.controller';
 import { EntitlementService } from './entitlement.service';
 import { PlansController } from './plans.controller';
+import { RedeemController } from './redeem.controller';
+import { RedeemService } from './redeem.service';
+import { SubscriptionService } from './subscription.service';
 import { BILLING_REPOSITORY } from './repositories/billing.repository.interface';
 import { PrismaBillingRepository } from './repositories/prisma-billing.repository';
 
@@ -16,14 +19,16 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
  */
 @Module({
   imports: [CommonModule],
-  controllers: [EntitlementController, PlansController],
+  controllers: [EntitlementController, PlansController, RedeemController],
   providers: [
     EntitlementService,
+    SubscriptionService,
+    RedeemService,
     {
       provide: BILLING_REPOSITORY,
       useClass: PrismaBillingRepository,
     },
   ],
-  exports: [EntitlementService],
+  exports: [EntitlementService, SubscriptionService],
 })
 export class BillingModule {}

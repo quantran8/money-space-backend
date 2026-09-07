@@ -1,9 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
+import { uuidv7 } from '../../../common/utils/uuid';
 import type { SubscriptionRow } from '../domain/entitlement';
 import type { EntitlementUsage } from '../entities/entitlement.entity';
-import type { BillingRepository } from './billing.repository.interface';
+import type {
+  BillingRepository,
+  RedeemCodeRow,
+  RedemptionWrite,
+  SubscriptionWrite,
+} from './billing.repository.interface';
+
+const SUBSCRIPTION_FIELDS = {
+  tier: true,
+  status: true,
+  currentPeriodEnd: true,
+  source: true,
+  trialStartedAt: true,
+  trialEndsAt: true,
+} as const;
 
 @Injectable()
 export class PrismaBillingRepository
@@ -17,17 +32,63 @@ export class PrismaBillingRepository
   async findSubscription(householdId: string): Promise<SubscriptionRow | null> {
     const row = await this.prisma.householdSubscription.findUnique({
       where: { householdId },
-      select: {
-        tier: true,
-        status: true,
-        currentPeriodEnd: true,
-        source: true,
-        trialStartedAt: true,
-        trialEndsAt: true,
-      },
+      select: SUBSCRIPTION_FIELDS,
     });
 
     return row ?? null;
+  }
+
+  async lockSubscription(householdId: string): Promise<SubscriptionRow | null> {
+    // Prisma has no FOR UPDATE, so the lock is taken with raw SQL. It only
+    // holds inside a transaction — outside one this degrades to a plain read,
+    // which is why every caller runs it within `runInTransaction`.
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        tier: SubscriptionRow['tier'];
+        status: SubscriptionRow['status'];
+        current_period_end: Date | null;
+        source: SubscriptionRow['source'];
+        trial_started_at: Date | null;
+        trial_ends_at: Date | null;
+      }>
+    >`
+      SELECT tier, status, current_period_end, source, trial_started_at, trial_ends_at
+      FROM household_subscriptions
+      WHERE household_id = ${householdId}::uuid
+      FOR UPDATE
+    `;
+
+    const row = rows[0];
+    if (!row) return null;
+
+    return {
+      tier: row.tier,
+      status: row.status,
+      currentPeriodEnd: row.current_period_end,
+      source: row.source,
+      trialStartedAt: row.trial_started_at,
+      trialEndsAt: row.trial_ends_at,
+    };
+  }
+
+  async upsertSubscription(
+    householdId: string,
+    write: SubscriptionWrite,
+  ): Promise<void> {
+    await this.prisma.householdSubscription.upsert({
+      where: { householdId },
+      create: { id: uuidv7(), householdId, ...write },
+      // Trial stamps are only ever set, never cleared by a later grant: having
+      // used a trial has to survive upgrading to a paid plan.
+      update: {
+        tier: write.tier,
+        status: write.status,
+        currentPeriodEnd: write.currentPeriodEnd,
+        source: write.source,
+        ...(write.trialStartedAt ? { trialStartedAt: write.trialStartedAt } : {}),
+        ...(write.trialEndsAt ? { trialEndsAt: write.trialEndsAt } : {}),
+      },
+    });
   }
 
   async countUsage(
@@ -51,5 +112,94 @@ export class PrismaBillingRepository
     ]);
 
     return { goals, marketPricedAssets };
+  }
+
+  async findHouseholdName(householdId: string): Promise<string> {
+    const row = await this.prisma.household.findUnique({
+      where: { id: householdId },
+      select: { name: true },
+    });
+
+    return row?.name ?? '';
+  }
+
+  async findRedeemCode(code: string): Promise<RedeemCodeRow | null> {
+    const row = await this.prisma.redeemCode.findUnique({
+      where: { code },
+      select: {
+        id: true,
+        code: true,
+        campaign: true,
+        status: true,
+        grantType: true,
+        grantDurationDays: true,
+        grantUntil: true,
+        maxRedemptions: true,
+        redemptionCount: true,
+        expiresAt: true,
+        deletedAt: true,
+      },
+    });
+
+    // A withdrawn code is indistinguishable from one that never existed.
+    if (!row || row.deletedAt) return null;
+
+    const { deletedAt: _deletedAt, ...rest } = row;
+    return rest;
+  }
+
+  async hasRedeemed(redeemCodeId: string, householdId: string): Promise<boolean> {
+    const existing = await this.prisma.redeemCodeRedemption.findUnique({
+      where: {
+        redeemCodeId_householdId: { redeemCodeId, householdId },
+      },
+      select: { id: true },
+    });
+
+    return existing !== null;
+  }
+
+  async claimRedeemCodeSlot(codeId: string): Promise<boolean> {
+    // Every condition sits in the WHERE clause, so Postgres locks the row and
+    // re-evaluates them for a second transaction after the first commits. Two
+    // people redeeming the last slot together: one gets the row, the other gets
+    // zero rows affected. No SELECT ... FOR UPDATE and no advisory lock needed.
+    const affected = await this.prisma.$executeRaw`
+      UPDATE redeem_codes
+      SET redemption_count = redemption_count + 1,
+          status = CASE
+            WHEN redemption_count + 1 >= max_redemptions THEN 'exhausted'::"RedeemCodeStatus"
+            ELSE status
+          END,
+          updated_at = now()
+      WHERE id = ${codeId}::uuid
+        AND status = 'active'
+        AND deleted_at IS NULL
+        AND redemption_count < max_redemptions
+        AND (expires_at IS NULL OR expires_at > now())
+    `;
+
+    return affected === 1;
+  }
+
+  async insertRedemption(write: RedemptionWrite): Promise<void> {
+    await this.prisma.redeemCodeRedemption.create({
+      data: { id: uuidv7(), ...write },
+    });
+  }
+
+  async updateRedemptionOutcome(
+    redeemCodeId: string,
+    householdId: string,
+    outcome: {
+      grantedDays: number;
+      periodEndBefore: Date | null;
+      periodEndAfter: Date | null;
+    },
+  ): Promise<void> {
+    await this.prisma.redeemCodeRedemption.update({
+      where: { redeemCodeId_householdId: { redeemCodeId, householdId } },
+      data: outcome,
+    });
   }
 }
