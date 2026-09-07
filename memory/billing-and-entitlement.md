@@ -84,6 +84,24 @@ which is the opposite of what what-if is for.
 `onSettled` — a run that was refused is exactly when the number on screen is
 most wrong.
 
+### The auto-price quota has two different answers
+
+Creating a market-priced asset is **never** refused — blocking it would block
+the balance sheet a Vietnamese household opens the app for. The first two land
+automatic; everything after lands manual, with a "Cập nhật tay" chip that is the
+honest label rather than a nag.
+
+Turning automation **on** at the ceiling **is** refused, with a 402 carrying
+`auto_price_quota`.
+
+An earlier version swapped instead: it moved automation off the oldest asset and
+returned `turnedOff` so the UI could name it. That was removed — the client never
+rendered the name, so an asset the household had chosen silently stopped
+updating and looked like it had broken on its own. Refusing is the honest
+version: nothing they set up changes without them doing it, and freeing a slot
+is one deliberate switch-off. Turning automation **off** is never gated, which
+is what keeps rearranging possible.
+
 ### A what-if re-run spends another slot
 
 `forecast.service.ts` consumes a slot on **every** successful run, including the

@@ -556,23 +556,6 @@ export class PrismaAssetsRepository
     });
   }
 
-  async findAutoPricedAssetIds(householdId: string): Promise<string[]> {
-    const rows = await this.prisma.asset.findMany({
-      where: {
-        householdId,
-        valuationMode: 'market_priced',
-        autoPriceEnabled: true,
-        status: 'active',
-        deletedAt: null,
-      },
-      // Oldest first: when one has to give way, it is the one the household
-      // has had longest on automatic, not whichever the database returns.
-      orderBy: { createdAt: 'asc' },
-      select: { id: true },
-    });
-    return rows.map((row) => row.id);
-  }
-
   async setAutoPriceEnabled(
     householdId: string,
     assetId: string,

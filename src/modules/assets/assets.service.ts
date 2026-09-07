@@ -2384,14 +2384,12 @@ export class AssetsService {
   /**
    * Turn automatic pricing on or off for one asset.
    *
-   * Turning it ON while already at the ceiling does NOT fail. The oldest asset
-   * currently on automatic gives way instead, and the response says which —
-   * so the household is choosing which two assets are automatic rather than
-   * being told "no" and left to work out what to switch off first.
+   * Turning it ON at the plan's ceiling is REFUSED with a 402. The household
+   * keeps the assets it already automated — nothing is silently moved to manual
+   * behind their back — so switching one off first is a deliberate act, not a
+   * side effect of a switch somewhere else.
    *
-   * A 402 here would be the wrong answer twice over: the household is not
-   * asking for MORE automation, they are asking to move the automation they
-   * already have.
+   * Turning it OFF is never gated: giving up automation must always work.
    */
   async setAutoPrice(
     householdId: string,
@@ -2412,28 +2410,19 @@ export class AssetsService {
       return { assetId, autoPriceEnabled: enabled, turnedOff: null };
     }
 
-    let turnedOff: string | null = null;
-
     if (enabled) {
       const entitlement = await this.entitlements.forHousehold(householdId);
-      const limit = entitlement.limits.marketPricedAssets;
-
-      if (limit !== null) {
-        const current = await this.assetsRepository.findAutoPricedAssetIds(
-          householdId,
-        );
-        // `>=` because this asset is about to join them.
-        if (current.length >= limit) {
-          turnedOff = current[0] ?? null;
-          if (turnedOff) {
-            await this.assetsRepository.setAutoPriceEnabled(
-              householdId,
-              turnedOff,
-              false,
-            );
-          }
-        }
-      }
+      const used = await this.assetsRepository.countAutoPricedAssets(
+        householdId,
+      );
+      // This asset is about to join them, so a household at the ceiling is
+      // already full. `assertQuota` is a no-op on an unlimited plan.
+      this.entitlements.assertQuota(
+        entitlement,
+        'marketPricedAssets',
+        used,
+        'auto_price_quota',
+      );
     }
 
     await this.assetsRepository.setAutoPriceEnabled(
@@ -2450,13 +2439,10 @@ export class AssetsService {
       details: {
         objectName: asset.name,
         autoPriceEnabled: enabled,
-        // Named so the journal can explain why another asset stopped updating
-        // — otherwise that change looks like it happened on its own.
-        replacedAssetId: turnedOff,
       },
     });
 
-    return { assetId, autoPriceEnabled: enabled, turnedOff };
+    return { assetId, autoPriceEnabled: enabled };
   }
 
   private async ensureAsset(householdId: string, assetId: string) {

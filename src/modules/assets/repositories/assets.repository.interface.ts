@@ -140,13 +140,6 @@ export interface AssetsRepository {
    */
   countAutoPricedAssets(householdId: string): Promise<number>;
 
-  /**
-   * The household's automatically-priced assets, oldest first. Used to decide
-   * which one gives way when the household turns automation onto another and
-   * is already at its ceiling.
-   */
-  findAutoPricedAssetIds(householdId: string): Promise<string[]>;
-
   /** Turn automatic pricing on or off for one asset. */
   setAutoPriceEnabled(
     householdId: string,
