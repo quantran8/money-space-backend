@@ -244,16 +244,19 @@ reads. The banned shape is a rule only one consumer knows about. Any future
 "exclude this record from a figure" feature must land in the shared, stored
 value the same way. See `memory/assets.md`.
 
-## Comment style
+## Comment style and commits
 
-**Keep code comments short.** Business logic (nghiệp vụ) rationale — why a rule
-exists, trade-offs weighed, alternatives rejected, the measured numbers behind a
-decision — belongs in `memory/`, not inline. A long explanatory comment
-duplicates the doc, drifts out of sync with it, and buries the code.
-
-In code, say _what_ a line does, or give a one-line caveat when something is
-genuinely surprising, and point at the memory file for the reasoning. When a
-change needs a paragraph of justification, that paragraph is a `memory/` edit.
+- **Code comments are short** — a line or two saying _what_ the line does, or a
+  one-line caveat when something is genuinely surprising. Anything longer about
+  business logic (nghiệp vụ) — why a rule exists, trade-offs weighed,
+  alternatives rejected, the measured numbers behind a decision — goes in
+  `memory/`, never inline, with a pointer from the code
+  (`// … See memory/assets.md.`). A long comment duplicates the doc, drifts out
+  of sync with it, and buries the code. Doc comments on classes and methods are
+  held to the same length.
+- **Commit messages are 1–2 lines.** Say what changed; no body paragraphs, no
+  bullet lists, no rationale — that belongs in `memory/`. **No `Co-Authored-By`
+  trailer** and no "Generated with Claude Code".
 
 ## Business logic memory
 
