@@ -246,17 +246,9 @@ value the same way. See `memory/assets.md`.
 
 ## Comment style and commits
 
-- **Code comments are short** — a line or two saying _what_ the line does, or a
-  one-line caveat when something is genuinely surprising. Anything longer about
-  business logic (nghiệp vụ) — why a rule exists, trade-offs weighed,
-  alternatives rejected, the measured numbers behind a decision — goes in
-  `memory/`, never inline, with a pointer from the code
-  (`// … See memory/assets.md.`). A long comment duplicates the doc, drifts out
-  of sync with it, and buries the code. Doc comments on classes and methods are
-  held to the same length.
-- **Commit messages are 1–2 lines.** Say what changed; no body paragraphs, no
-  bullet lists, no rationale — that belongs in `memory/`. **No `Co-Authored-By`
-  trailer** and no "Generated with Claude Code".
+See [.claude/CLAUDE.md](.claude/CLAUDE.md). Short version: comments are a line
+or two, every longer nghiệp vụ explanation lives in `memory/` with a pointer
+from the code, and commit messages are 1–2 lines with no `Co-Authored-By`.
 
 ## Business logic memory
 
