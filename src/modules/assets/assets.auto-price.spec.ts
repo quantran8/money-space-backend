@@ -1,5 +1,4 @@
 import { AssetsService } from './assets.service';
-import { EntitlementService } from '../billing/entitlement.service';
 import {
   freeEntitlement,
   premiumEntitlement,
@@ -7,31 +6,29 @@ import {
 import type { Entitlement } from '../billing/entities/entitlement.entity';
 
 /**
- * The auto-price quota.
+ * The auto-price quota — decided once, when the asset is created.
  *
- * CREATING a gold, stock or crypto asset is always allowed: blocking it would
+ * Creating a gold, stock or crypto asset is always allowed: blocking it would
  * block the balance sheet a Vietnamese household opens the app for, and they
- * would leave rather than pay. What Premium sells is the AUTOMATION, so an
- * asset over the ceiling is created exactly as asked with automatic pricing
- * off — the first two are automatic, everything after is manual.
+ * would leave rather than pay. What Premium sells is the AUTOMATION, so the
+ * first assets land automatic and everything after lands manual, created
+ * exactly as asked either way.
  *
- * Turning automation ON at the ceiling is a different question, and it IS
- * refused: nothing the household already automated is moved to manual behind
- * their back.
+ * There is no endpoint to move automation between assets. Which ones are
+ * automatic follows from what the household owns and when they added it;
+ * making room means deleting an asset they no longer hold.
  */
 function makeService(
   entitlement: Entitlement,
-  options: { autoPricedIds?: string[]; assetIsAutomatic?: boolean } = {},
+  options: { autoPricedIds?: string[] } = {},
 ) {
   const autoPricedIds = options.autoPricedIds ?? [];
   const insertAsset = jest.fn(async (_asset: { autoPriceEnabled?: boolean; valuationMode?: string }) => undefined);
-  const setAutoPriceEnabled = jest.fn(async () => undefined);
 
   const repository = {
     assertHousehold: jest.fn(async () => ({}) as never),
     createId: () => 'asset-new',
     insertAsset,
-    setAutoPriceEnabled,
     countAutoPricedAssets: jest.fn(async () => autoPricedIds.length),
     findActiveMarketAssetBySymbol: jest.fn(async () => undefined),
     upsertCurrentValuation: jest.fn(async () => undefined),
@@ -47,21 +44,13 @@ function makeService(
       currency: 'VND',
       note: '',
       status: 'active',
-      autoPriceEnabled: options.assetIsAutomatic ?? false,
+      autoPriceEnabled: false,
     })),
     getFxRates: jest.fn(async () => []),
   } as never;
 
-  // `assertQuota` is the real implementation, not a stub: what these cases are
-  // about is whether the ceiling is enforced, so a mock that always passed
-  // would assert nothing.
   const entitlements = {
     forHousehold: jest.fn(async () => entitlement),
-    assertQuota: new EntitlementService(
-      {} as never,
-      {} as never,
-      {} as never,
-    ).assertQuota,
   } as never;
 
   const service = new AssetsService(
@@ -76,7 +65,7 @@ function makeService(
     entitlements,
   );
 
-  return { service, insertAsset, setAutoPriceEnabled };
+  return { service, insertAsset };
 }
 
 const goldPayload = {
@@ -93,9 +82,9 @@ const goldPayload = {
 };
 
 describe('auto-price quota', () => {
-  it('creates the third market asset anyway, with automation OFF', async () => {
+  it('creates a market asset over the ceiling anyway, with automation OFF', async () => {
     const { service, insertAsset } = makeService(freeEntitlement(), {
-      autoPricedIds: ['asset-1', 'asset-2'],
+      autoPricedIds: ['asset-1'],
     });
 
     await service.createAsset('hh-1', goldPayload);
@@ -108,9 +97,11 @@ describe('auto-price quota', () => {
     });
   });
 
+  // Also covers getting a slot back: the ceiling counts live automatic assets,
+  // so deleting one frees it for the next asset created.
   it('creates it WITH automation while the household is under its ceiling', async () => {
     const { service, insertAsset } = makeService(freeEntitlement(), {
-      autoPricedIds: ['asset-1'],
+      autoPricedIds: [],
     });
 
     await service.createAsset('hh-1', goldPayload);
@@ -124,65 +115,5 @@ describe('auto-price quota', () => {
 
     await service.createAsset('hh-1', goldPayload);
     expect(insertAsset.mock.calls[0]![0]).toMatchObject({ autoPriceEnabled: true });
-  });
-
-  describe('turning automation on', () => {
-    it('is refused at the ceiling, and moves nothing to manual', async () => {
-      const { service, setAutoPriceEnabled } = makeService(freeEntitlement(), {
-        autoPricedIds: ['asset-1', 'asset-2'],
-      });
-
-      await expect(service.setAutoPrice('hh-1', 'asset-3', true)).rejects.toThrow();
-      // The two the household already automated are untouched — that is the
-      // whole point of refusing rather than swapping.
-      expect(setAutoPriceEnabled).not.toHaveBeenCalled();
-    });
-
-    it('carries the paywall reason so the client opens the right sheet', async () => {
-      const { service } = makeService(freeEntitlement(), {
-        autoPricedIds: ['asset-1', 'asset-2'],
-      });
-
-      await expect(
-        service.setAutoPrice('hh-1', 'asset-3', true),
-      ).rejects.toMatchObject({
-        response: expect.objectContaining({
-          premium: expect.objectContaining({ reason: 'auto_price_quota' }),
-        }),
-      });
-    });
-
-    it('is allowed while under the ceiling', async () => {
-      const { service, setAutoPriceEnabled } = makeService(freeEntitlement(), {
-        autoPricedIds: ['asset-1'],
-      });
-
-      const result = await service.setAutoPrice('hh-1', 'asset-3', true);
-
-      expect(result).toMatchObject({ autoPriceEnabled: true });
-      expect(setAutoPriceEnabled).toHaveBeenCalledWith('hh-1', 'asset-3', true);
-    });
-
-    it('is never gated for a premium household', async () => {
-      const { service, setAutoPriceEnabled } = makeService(premiumEntitlement(), {
-        autoPricedIds: ['a', 'b', 'c', 'd', 'e'],
-      });
-
-      await service.setAutoPrice('hh-1', 'asset-3', true);
-      expect(setAutoPriceEnabled).toHaveBeenCalledWith('hh-1', 'asset-3', true);
-    });
-  });
-
-  // Giving up automation must always work, or a household at its ceiling
-  // could never rearrange which two assets are automatic.
-  it('turning automation OFF is never gated', async () => {
-    const { service, setAutoPriceEnabled } = makeService(freeEntitlement(), {
-      autoPricedIds: ['asset-1', 'asset-2', 'asset-3'],
-      // Already automatic, or there would be nothing to turn off.
-      assetIsAutomatic: true,
-    });
-
-    await service.setAutoPrice('hh-1', 'asset-3', false);
-    expect(setAutoPriceEnabled).toHaveBeenCalledWith('hh-1', 'asset-3', false);
   });
 });

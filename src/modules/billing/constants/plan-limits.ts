@@ -15,14 +15,18 @@ import type {
  *   for: priority (low/high) and "which goal gives way" in a what-if are both
  *   meaningless with one. A real couple usually has three or more, so the
  *   ceiling is met naturally rather than as an artificial wall.
- * - **5 what-ifs a month.** Enough to reach the Consequence Moment several
- *   times over. Anyone actually using the app before decisions passes it in
- *   the first month, which is exactly the household worth charging.
- * - **2 auto-priced assets.** The one limit with a real marginal cost behind it
- *   (CoinMarketCap, Twelve Data). Note what is NOT limited: recording gold,
- *   stocks or crypto at all. Blocking that would block the balance sheet a
- *   Vietnamese household opens the app for — they would leave rather than pay.
- *   What Premium sells is the automation.
+ * - **3 what-ifs a month.** Enough to reach the Consequence Moment and feel
+ *   what it answers. Anyone actually using the app before decisions passes it
+ *   in the first month, which is exactly the household worth charging. Note
+ *   each RUN counts, and re-running with an asset sale is another one — so a
+ *   question explored through the funding step can cost all three.
+ * - **1 auto-priced asset.** The one limit with a real marginal cost behind it
+ *   (CoinMarketCap, Twelve Data). One is enough to show what automation feels
+ *   like — a household holding gold AND stocks meets the ceiling on their
+ *   second asset, which is where the value of automating is easiest to see.
+ *   Note what is NOT limited: recording gold, stocks or crypto at all. Blocking
+ *   that would block the balance sheet a Vietnamese household opens the app for
+ *   — they would leave rather than pay. What Premium sells is the automation.
  * - **7/30-day horizon.** 30 days answers "will we make it to payday", which is
  *   the question that drives adoption. 60/90 is planning, which is what
  *   foresight is worth paying for.
@@ -33,8 +37,8 @@ import type {
 export const PLAN_LIMITS: Record<SubscriptionTier, PlanLimits> = {
   free: {
     goals: 2,
-    whatIfPerMonth: 5,
-    marketPricedAssets: 2,
+    whatIfPerMonth: 3,
+    marketPricedAssets: 1,
     forecastHorizons: [7, 30],
     historyMonths: 3,
     exportData: false,

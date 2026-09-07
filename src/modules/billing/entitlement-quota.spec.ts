@@ -1,6 +1,7 @@
 import { EntitlementService } from './entitlement.service';
 import { PremiumRequiredException } from './entitlement.errors';
 import { freeEntitlement, premiumEntitlement } from './test-support/entitlement.fixture';
+import { PLAN_LIMITS } from './constants/plan-limits';
 
 /**
  * `assertQuota` — where every COUNTED limit is enforced.
@@ -38,8 +39,18 @@ describe('EntitlementService.assertQuota', () => {
   });
 
   it('carries the limit, the usage and the reason to the client', () => {
+    // Read from PLAN_LIMITS rather than typed here: the ceilings are explicitly
+    // a hypothesis to revise, and a test that hardcodes one turns a pricing
+    // change into a test failure that says nothing.
+    const limit = PLAN_LIMITS.free.whatIfPerMonth!;
+
     try {
-      service.assertQuota(freeEntitlement(), 'whatIfPerMonth', 5, 'whatif_quota');
+      service.assertQuota(
+        freeEntitlement(),
+        'whatIfPerMonth',
+        limit,
+        'whatif_quota',
+      );
       throw new Error('expected a 402');
     } catch (error) {
       const body = (error as PremiumRequiredException).getResponse() as {
@@ -51,8 +62,8 @@ describe('EntitlementService.assertQuota', () => {
       expect(body.message).toBe('premium_required');
       expect(body.premium).toMatchObject({
         reason: 'whatif_quota',
-        limit: 5,
-        used: 5,
+        limit,
+        used: limit,
       });
     }
   });

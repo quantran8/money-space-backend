@@ -16,7 +16,7 @@ Two tiers, priced per household — both people, never per seat:
 39.000đ / tháng     299.000đ / năm     699.000đ trọn đời
 ```
 
-**Free**: 2 active goals · 5 what-ifs/month · 2 auto-priced assets · 7/30-day
+**Free**: 2 active goals · 3 what-ifs/month · 1 auto-priced asset · 7/30-day
 horizon · 3 months of history · 14-day trial on signup.
 
 **Never gated**: inviting a partner, sharing levels, the activity log, the
@@ -84,36 +84,48 @@ which is the opposite of what what-if is for.
 `onSettled` — a run that was refused is exactly when the number on screen is
 most wrong.
 
-### The auto-price quota has two different answers
+### The auto-price quota is decided once, at creation
 
 Creating a market-priced asset is **never** refused — blocking it would block
-the balance sheet a Vietnamese household opens the app for. The first two land
-automatic; everything after lands manual, with a "Cập nhật tay" chip that is the
-honest label rather than a nag.
+the balance sheet a Vietnamese household opens the app for. Assets created while
+the household is under its ceiling land automatic; everything after lands manual,
+with a "Cập nhật tay" chip that is the honest label rather than a nag.
 
-Turning automation **on** at the ceiling **is** refused, with a 402 carrying
-`auto_price_quota`.
+**There is no endpoint to move automation between assets, and no switch in the
+UI.** Which assets are automatic follows from what the household owns and when
+they added it. Making room means deleting an asset they no longer hold — at
+which point the slot is free for the next one created.
 
-An earlier version swapped instead: it moved automation off the oldest asset and
-returned `turnedOff` so the UI could name it. That was removed — the client never
-rendered the name, so an asset the household had chosen silently stopped
-updating and looked like it had broken on its own. Refusing is the honest
-version: nothing they set up changes without them doing it, and freeing a slot
-is one deliberate switch-off. Turning automation **off** is never gated, which
-is what keeps rearranging possible.
+Two earlier designs were removed:
+
+- A **swap**: turning automation on at the ceiling moved it off the oldest asset
+  and returned `turnedOff` so the UI could name it. No screen ever rendered that
+  name, so an asset the household had chosen silently stopped updating and
+  looked broken.
+- A **402 refusal** on the same switch. Honest, but it left a control on screen
+  whose only purpose was to be refused, and the "turn one off to make room"
+  answer asked the household to perform a shuffle to stay within a limit.
+
+The switch is gone with them. `setAutoPrice`, its route, and
+`setAutoPriceEnabled` / `findAutoPricedAssetIds` in the repository are all
+deleted; `countAutoPricedAssets` remains, since creation still counts.
 
 ### A what-if re-run spends another slot
 
 `forecast.service.ts` consumes a slot on **every** successful run, including the
-re-run that adds an asset sale and the one that removes it. So a single question
-explored through the funding step can cost three of five.
+re-run that adds an asset sale and the one that removes it.
 
-That is defensible — each run is a real engine execution against a freshly
-loaded bundle — but it is invisible to the household, and it became visible the
-moment the UI started counting. Worth revisiting if the funding step turns out
-to be where the free quota actually goes; the fix would be to charge per
-question rather than per execution, which needs a scenario id the API does not
-have today.
+**At 3 runs a month this is now sharp**: one question explored through the
+funding step — run, add a sale, remove it — spends the household's whole month.
+The funding step is also the case that appears exactly when a household is short
+on money, which is when they most need the answer.
+
+Each run is a real engine execution against a freshly loaded bundle, so charging
+for it is defensible in isolation. Charging three times for one question is
+harder to defend. The fix is to charge per QUESTION rather than per execution,
+which needs a scenario id the API does not have today. Worth doing before the
+free tier is measured, or the funding step will look like the thing that burns
+the quota.
 
 ## Granting
 

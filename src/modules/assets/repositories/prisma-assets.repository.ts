@@ -556,17 +556,6 @@ export class PrismaAssetsRepository
     });
   }
 
-  async setAutoPriceEnabled(
-    householdId: string,
-    assetId: string,
-    enabled: boolean,
-  ): Promise<void> {
-    await this.prisma.asset.updateMany({
-      where: { id: assetId, householdId, deletedAt: null },
-      data: { autoPriceEnabled: enabled } as any,
-    });
-  }
-
   async findHouseholdsNeedingMarketValuation(
     valuationDate: string,
     limit: number,

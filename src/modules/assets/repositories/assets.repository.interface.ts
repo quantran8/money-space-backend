@@ -140,13 +140,6 @@ export interface AssetsRepository {
    */
   countAutoPricedAssets(householdId: string): Promise<number>;
 
-  /** Turn automatic pricing on or off for one asset. */
-  setAutoPriceEnabled(
-    householdId: string,
-    assetId: string,
-    enabled: boolean,
-  ): Promise<void>;
-
   findHouseholdsNeedingMarketValuation(
     valuationDate: string,
     limit: number,

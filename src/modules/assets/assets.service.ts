@@ -142,7 +142,6 @@ export class AssetsService {
     return used < limit;
   }
 
-
   async listAssets(householdId: string) {
     // `assertHousehold` only guards; it does not feed `getAssetRecords`. Running
     // it serially made every request pay an extra Singapore round-trip before
@@ -2379,70 +2378,6 @@ export class AssetsService {
   async getActiveAssetRecords(householdId: string) {
     const records = await this.getAssetRecords(householdId);
     return records.filter((asset) => asset.status === 'active');
-  }
-
-  /**
-   * Turn automatic pricing on or off for one asset.
-   *
-   * Turning it ON at the plan's ceiling is REFUSED with a 402. The household
-   * keeps the assets it already automated — nothing is silently moved to manual
-   * behind their back — so switching one off first is a deliberate act, not a
-   * side effect of a switch somewhere else.
-   *
-   * Turning it OFF is never gated: giving up automation must always work.
-   */
-  async setAutoPrice(
-    householdId: string,
-    assetId: string,
-    enabled: boolean,
-    actorId?: string,
-  ) {
-    const asset = await this.ensureAsset(householdId, assetId);
-
-    // Nothing to automate on a manual asset — there is no price to fetch.
-    if (asset.valuationMode !== 'market_priced') {
-      throw new BadRequestException(
-        `Asset "${assetId}" is not priced from the market`,
-      );
-    }
-
-    if (asset.autoPriceEnabled === enabled) {
-      return { assetId, autoPriceEnabled: enabled, turnedOff: null };
-    }
-
-    if (enabled) {
-      const entitlement = await this.entitlements.forHousehold(householdId);
-      const used = await this.assetsRepository.countAutoPricedAssets(
-        householdId,
-      );
-      // This asset is about to join them, so a household at the ceiling is
-      // already full. `assertQuota` is a no-op on an unlimited plan.
-      this.entitlements.assertQuota(
-        entitlement,
-        'marketPricedAssets',
-        used,
-        'auto_price_quota',
-      );
-    }
-
-    await this.assetsRepository.setAutoPriceEnabled(
-      householdId,
-      assetId,
-      enabled,
-    );
-
-    await this.audit.record(householdId, {
-      actorId,
-      action: 'asset.auto_price_changed',
-      entityType: 'asset',
-      entityId: assetId,
-      details: {
-        objectName: asset.name,
-        autoPriceEnabled: enabled,
-      },
-    });
-
-    return { assetId, autoPriceEnabled: enabled };
   }
 
   private async ensureAsset(householdId: string, assetId: string) {
