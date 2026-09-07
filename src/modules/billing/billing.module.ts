@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
+import { BillingExpiryCron } from './billing-expiry.cron';
 import { EntitlementController } from './entitlement.controller';
 import { EntitlementService } from './entitlement.service';
 import { PaymentsController } from './payments.controller';
@@ -35,6 +36,8 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
   providers: [
     EntitlementService,
     SubscriptionService,
+    // The 09:00 sweep that ends lapsed plans and unpaid checkouts.
+    BillingExpiryCron,
     RedeemService,
     WhatIfUsageService,
     PaymentsService,
@@ -55,6 +58,7 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
     SubscriptionService,
     WhatIfUsageService,
     PaymentsService,
+    BillingExpiryCron,
   ],
 })
 export class BillingModule {}

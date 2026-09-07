@@ -158,6 +158,17 @@ export interface BillingRepository {
     },
   ): Promise<boolean>;
 
+  /**
+   * Flip lapsed premium subscriptions to `expired`, returning the households
+   * touched so their entitlement caches can be dropped. Only `status` moves —
+   * `tier` stays `premium`. Lifetime rows (`currentPeriodEnd IS NULL`) fall
+   * outside the comparison with no special case.
+   */
+  expireLapsedSubscriptions(now: Date, limit: number): Promise<string[]>;
+
+  /** Close pending orders nobody ever paid. Returns how many were closed. */
+  expireStalePaymentOrders(now: Date, limit: number): Promise<number>;
+
   /** Close an order without granting anything. */
   markPaymentOrderClosed(
     orderCode: bigint,

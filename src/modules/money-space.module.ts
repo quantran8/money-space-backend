@@ -16,6 +16,7 @@ import { AttentionModule } from './attention/attention.module';
 import { InvitesModule } from './invites/invites.module';
 import { ActivityModule } from './activity/activity.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
+import { ExportModule } from './export/export.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MarketDataModule,
     SnapshotsModule,
     ActivityModule,
+    ExportModule,
   ],
   exports: [
     AuthModule,
@@ -55,6 +57,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MarketDataModule,
     SnapshotsModule,
     ActivityModule,
+    ExportModule,
   ],
 })
 export class MoneySpaceModule {}

@@ -66,3 +66,5 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [sharing-levels.md](sharing-levels.md) — everything counts; `detail` vs `summary_only` is presentation only
 - [activity-log.md](activity-log.md) — the journal: what is logged, what deliberately is not
 - [auth.md](auth.md) — authentication & session gating
+- [billing-and-entitlement.md](billing-and-entitlement.md) — tiers, limits, granting, the expiry sweep
+- [data-export.md](data-export.md) — taking the household's data out (JSON + CSV)

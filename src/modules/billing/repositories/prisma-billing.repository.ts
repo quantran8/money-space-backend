@@ -261,6 +261,50 @@ export class PrismaBillingRepository
     return result.count === 1;
   }
 
+  async expireLapsedSubscriptions(now: Date, limit: number): Promise<string[]> {
+    // Select and flip in one statement: RETURNING gives back exactly the rows
+    // this run changed, which is what the cron invalidates. LIMIT chunks it;
+    // leftovers wait for the next run. See memory/billing-and-entitlement.md.
+    const rows = await this.prisma.$queryRaw<Array<{ household_id: string }>>`
+      UPDATE household_subscriptions
+      SET status = 'expired'::"SubscriptionStatus",
+          updated_at = now()
+      WHERE id IN (
+        SELECT id FROM household_subscriptions
+        WHERE tier = 'premium'::"SubscriptionTier"
+          AND status = 'active'::"SubscriptionStatus"
+          AND current_period_end < ${now}
+        ORDER BY current_period_end ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING household_id
+    `;
+
+    return rows.map((row) => row.household_id);
+  }
+
+  async expireStalePaymentOrders(now: Date, limit: number): Promise<number> {
+    // `status = 'pending'` in the WHERE: an order the webhook settles mid-sweep
+    // is re-checked by Postgres and left alone.
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      UPDATE payment_orders
+      SET status = 'expired'::"PaymentOrderStatus",
+          updated_at = now()
+      WHERE id IN (
+        SELECT id FROM payment_orders
+        WHERE status = 'pending'::"PaymentOrderStatus"
+          AND expires_at < ${now}
+        ORDER BY expires_at ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id
+    `;
+
+    return rows.length;
+  }
+
   async markPaymentOrderClosed(
     orderCode: bigint,
     status: 'cancelled' | 'expired',
