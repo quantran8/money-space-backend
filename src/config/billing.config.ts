@@ -68,4 +68,54 @@ export const billingConfig = {
   get trialDays(): number {
     return Number(process.env.BILLING_TRIAL_DAYS ?? 14);
   },
+
+  /**
+   * PayOS credentials.
+   *
+   * Three separate secrets with three different jobs: the client id and api key
+   * authenticate US to PayOS when creating a link, while the CHECKSUM key
+   * verifies that a webhook came from PayOS. Only the last one is a signing
+   * secret, and leaking it means anyone can grant themselves Premium — it is
+   * never logged and never sent to a client.
+   *
+   * All default to empty. `payosConfigured` is what every caller checks, so a
+   * deploy without them refuses to create orders rather than failing halfway
+   * through a checkout.
+   */
+  get payosClientId(): string {
+    return process.env.PAYOS_CLIENT_ID ?? '';
+  },
+  get payosApiKey(): string {
+    return process.env.PAYOS_API_KEY ?? '';
+  },
+  get payosChecksumKey(): string {
+    return process.env.PAYOS_CHECKSUM_KEY ?? '';
+  },
+
+  /** Where PayOS sends the browser back to. */
+  get payosReturnUrl(): string {
+    return process.env.PAYOS_RETURN_URL ?? '';
+  },
+  get payosCancelUrl(): string {
+    return process.env.PAYOS_CANCEL_URL ?? '';
+  },
+
+  /**
+   * Whether payment can be offered at all. Checked before an order is created
+   * so a misconfigured deploy fails at the button rather than at the bank.
+   */
+  get payosConfigured(): boolean {
+    return Boolean(
+      this.payosClientId && this.payosApiKey && this.payosChecksumKey,
+    );
+  },
+
+  /**
+   * How long a checkout link stays open, in minutes. Short on purpose: an
+   * abandoned order holds its `orderCode` and its price, and a household that
+   * comes back tomorrow should get today's price, not last week's.
+   */
+  get payosOrderTtlMinutes(): number {
+    return Number(process.env.PAYOS_ORDER_TTL_MINUTES ?? 30);
+  },
 };

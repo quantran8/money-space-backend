@@ -47,6 +47,28 @@ enum RedeemCodeStatus {
   exhausted
 }
 
+/// Who processed the money. PayOS first — 0đ per transaction, a hosted
+/// checkout with the QR already on it, and a real HMAC-SHA256 webhook
+/// signature. VNPay is deferred: it needs a business licence, 2–4 weeks of
+/// approval, and charges 1.1–2.2%, which at 39.000đ is the whole margin.
+enum PaymentProvider {
+  payos
+}
+
+/// Where an order stands. Deliberately NOT a payment "attempt" log — one row
+/// per checkout, moved through its states.
+enum PaymentOrderStatus {
+  /// Created, checkout opened, nothing received yet. Also where an
+  /// UNDERPAYMENT stays: the money arrived but not the amount owed, so the
+  /// order is neither paid nor dead, and a human decides.
+  pending
+  paid
+  /// The household backed out on the hosted page.
+  cancelled
+  /// PayOS expired the link before anything was paid.
+  expired
+}
+
 /// What a code grants. `lifetime` absorbs everything after it.
 enum RedeemGrantType {
   duration_days
@@ -434,6 +456,7 @@ model Profile {
   moneyEventsUpdated       MoneyEvent[]           @relation("MoneyEventUpdatedBy")
   auditLogsActed           AuditLog[]             @relation("AuditLogActor")
   redeemCodesRedeemed      RedeemCodeRedemption[] @relation("RedeemCodeRedeemedBy")
+  paymentOrdersCreated     PaymentOrder[]         @relation("PaymentOrderCreatedBy")
 
   @@map("profiles")
 }
@@ -473,6 +496,7 @@ model Household {
   auditLogs               AuditLog[]
   subscription            HouseholdSubscription?
   redeemRedemptions       RedeemCodeRedemption[]
+  paymentOrders           PaymentOrder[]
 
   @@index([createdById])
   @@index([deletedAt])
@@ -603,6 +627,84 @@ model RedeemCodeRedemption {
   @@unique([redeemCodeId, householdId])
   @@index([householdId, redeemedAt])
   @@map("redeem_code_redemptions")
+}
+
+/// One checkout. Created when the household picks a plan, closed by the
+/// webhook.
+///
+/// It records the money as WELL as the plan, because a plan's price is a
+/// constant in code that will change: without `amount` frozen here, an order
+/// created at 299.000đ and paid after a price rise could not be reconciled
+/// against what actually arrived in the bank. All three of original, discount
+/// and final are kept for the same reason — the discount is a campaign that
+/// expires, and the receipt has to survive it.
+model PaymentOrder {
+  id          String @id @default(uuid(7)) @db.Uuid
+  householdId String @map("household_id") @db.Uuid
+
+  provider PaymentProvider    @default(payos)
+  status   PaymentOrderStatus @default(pending)
+
+  /// PayOS requires an INTEGER order reference, unique per merchant — a string
+  /// ref is not accepted. Generated as
+  /// `(epochSeconds % 100_000_000) * 100 + random(0..99)`: ordered by time,
+  /// short enough for the integer field, and with 100 slots a second to make a
+  /// collision within one second unlikely rather than impossible. The unique
+  /// index is what actually decides it; a collision fails the insert and the
+  /// caller retries.
+  orderCode BigInt @unique @map("order_code")
+
+  /// Which plan was bought. A plain string, not the PlanCode enum: an order is
+  /// a historical record, and retiring a plan must not make an old receipt
+  /// unreadable.
+  planCode String @map("plan_code")
+
+  /// Full price, the campaign discount, and what was actually charged. Integer
+  /// đồng — VND has no minor unit, and a Decimal here would invite fractions
+  /// that no bank transfer can settle.
+  amountOriginal Int @map("amount_original")
+  discountAmount Int @default(0) @map("discount_amount")
+  amount         Int
+
+  /// How many days this order grants once paid. NULL = lifetime, matching
+  /// `PLAN_CATALOG`. Frozen at creation so changing a plan's duration later
+  /// cannot retroactively alter what an unpaid order is worth.
+  durationDays Int? @map("duration_days")
+
+  /// PayOS's own reference for the settled transaction.
+  ///
+  /// **The primary idempotency barrier.** A webhook delivered twice violates
+  /// this unique index on the second insert, which is caught and swallowed —
+  /// so a replay cannot extend a household's period a second time. It is a
+  /// database constraint rather than an app-level check precisely because two
+  /// deliveries can arrive at once.
+  providerTxnId String? @unique @map("provider_txn_id")
+
+  /// The hosted checkout the household was sent to, and PayOS's own id for it.
+  checkoutUrl     String? @map("checkout_url")
+  providerOrderId String? @map("provider_order_id")
+
+  /// The webhook body, verbatim, once it has been verified. Kept for the cases
+  /// a status column cannot answer — chiefly an underpayment, where somebody
+  /// has to see what actually arrived.
+  rawPayload Json? @map("raw_payload")
+
+  /// Who started the checkout. Any member may pay; the plan is the
+  /// household's either way.
+  createdById String    @map("created_by") @db.Uuid
+  paidAt      DateTime? @map("paid_at") @db.Timestamptz(6)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy Profile   @relation("PaymentOrderCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  /// The subscription page reads a household's orders newest first.
+  @@index([householdId, createdAt(sort: Desc)])
+  /// The sweep that expires stale pending orders.
+  @@index([status, expiresAt])
+  @@map("payment_orders")
 }
 
 model HouseholdMember {

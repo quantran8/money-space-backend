@@ -19,7 +19,7 @@ function makeService(
   options: { autoPricedIds?: string[] } = {},
 ) {
   const autoPricedIds = options.autoPricedIds ?? [];
-  const insertAsset = jest.fn(async () => undefined);
+  const insertAsset = jest.fn(async (_asset: { autoPriceEnabled?: boolean; valuationMode?: string }) => undefined);
   const setAutoPriceEnabled = jest.fn(async () => undefined);
 
   const repository = {

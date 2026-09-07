@@ -6,6 +6,8 @@ import type { SubscriptionRow } from '../domain/entitlement';
 import type { EntitlementUsage } from '../entities/entitlement.entity';
 import type {
   BillingRepository,
+  PaymentOrderRow,
+  PaymentOrderWrite,
   RedeemCodeRow,
   RedemptionWrite,
   SubscriptionWrite,
@@ -18,6 +20,21 @@ const SUBSCRIPTION_FIELDS = {
   source: true,
   trialStartedAt: true,
   trialEndsAt: true,
+} as const;
+
+
+const PAYMENT_ORDER_FIELDS = {
+  id: true,
+  householdId: true,
+  status: true,
+  orderCode: true,
+  planCode: true,
+  amount: true,
+  durationDays: true,
+  providerTxnId: true,
+  checkoutUrl: true,
+  createdAt: true,
+  paidAt: true,
 } as const;
 
 @Injectable()
@@ -185,6 +202,84 @@ export class PrismaBillingRepository
   async insertRedemption(write: RedemptionWrite): Promise<void> {
     await this.prisma.redeemCodeRedemption.create({
       data: { id: uuidv7(), ...write },
+    });
+  }
+
+  async insertPaymentOrder(write: PaymentOrderWrite): Promise<void> {
+    await this.prisma.paymentOrder.create({ data: write });
+  }
+
+  async attachCheckout(
+    orderCode: bigint,
+    checkout: { checkoutUrl: string; providerOrderId: string },
+  ): Promise<void> {
+    await this.prisma.paymentOrder.update({
+      where: { orderCode },
+      data: checkout,
+    });
+  }
+
+  async findPaymentOrderByCode(
+    orderCode: bigint,
+  ): Promise<PaymentOrderRow | null> {
+    return this.prisma.paymentOrder.findUnique({
+      where: { orderCode },
+      select: PAYMENT_ORDER_FIELDS,
+    });
+  }
+
+  async listPaymentOrders(
+    householdId: string,
+    limit: number,
+  ): Promise<PaymentOrderRow[]> {
+    return this.prisma.paymentOrder.findMany({
+      where: { householdId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: PAYMENT_ORDER_FIELDS,
+    });
+  }
+
+  async markPaymentOrderPaid(
+    orderCode: bigint,
+    settlement: { providerTxnId: string; paidAt: Date; rawPayload: unknown },
+  ): Promise<boolean> {
+    // `status: 'pending'` in the WHERE, not an app-level `if`: Postgres
+    // re-evaluates it for the second transaction after the first commits, so
+    // two simultaneous deliveries cannot both match. `updateMany` rather than
+    // `update` because a miss must be a count of 0, not a thrown NotFound.
+    const result = await this.prisma.paymentOrder.updateMany({
+      where: { orderCode, status: 'pending' },
+      data: {
+        status: 'paid',
+        providerTxnId: settlement.providerTxnId,
+        paidAt: settlement.paidAt,
+        rawPayload: settlement.rawPayload as never,
+      },
+    });
+
+    return result.count === 1;
+  }
+
+  async markPaymentOrderClosed(
+    orderCode: bigint,
+    status: 'cancelled' | 'expired',
+  ): Promise<void> {
+    // Only a pending order can be closed — a paid one must never be walked
+    // back by a late cancellation callback.
+    await this.prisma.paymentOrder.updateMany({
+      where: { orderCode, status: 'pending' },
+      data: { status },
+    });
+  }
+
+  async recordPaymentPayload(
+    orderCode: bigint,
+    rawPayload: unknown,
+  ): Promise<void> {
+    await this.prisma.paymentOrder.updateMany({
+      where: { orderCode },
+      data: { rawPayload: rawPayload as never },
     });
   }
 

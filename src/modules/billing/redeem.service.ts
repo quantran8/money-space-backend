@@ -27,6 +27,7 @@ import {
   type BillingRepository,
   type RedeemCodeRow,
 } from './repositories/billing.repository.interface';
+import { isUniqueViolation } from '../../common/repositories/prisma-errors';
 
 /** Failures per hour, per user and per household, before the door closes. */
 const MAX_FAILURES_PER_HOUR = 10;
@@ -293,10 +294,3 @@ export class RedeemService {
   }
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { code?: string }).code === 'P2002'
-  );
-}

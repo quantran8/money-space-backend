@@ -47,7 +47,17 @@ async function bootstrap() {
 
   // `bufferLogs` holds bootstrap output until useLogger() swaps in Pino, so
   // even the startup lines come out as JSON instead of Nest's text format.
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // `rawBody` keeps the unparsed Buffer at `request.rawBody` for handlers that
+  // need the exact bytes. Nest 11 STILL parses JSON alongside it, so no
+  // existing route is affected — every controller keeps receiving a parsed
+  // body. PayOS actually signs the `data` object rather than the raw bytes, so
+  // its webhook does not need this; it is enabled because a gateway that signs
+  // raw bytes is the norm, and finding this out after taking a payment is
+  // worse than one flag now.
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
   app.useLogger(app.get(PinoLogger));
   app.flushLogs();
   app.enableCors({

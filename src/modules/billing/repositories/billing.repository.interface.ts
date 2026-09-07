@@ -1,4 +1,8 @@
-import type { RedeemCodeStatus, RedeemGrantType } from '@prisma/client';
+import type {
+  PaymentOrderStatus,
+  RedeemCodeStatus,
+  RedeemGrantType,
+} from '@prisma/client';
 import type { SubscriptionRow } from '../domain/entitlement';
 import type {
   EntitlementSource,
@@ -38,6 +42,33 @@ export interface RedemptionWrite {
   grantedDays: number | null;
   periodEndBefore: Date | null;
   periodEndAfter: Date | null;
+}
+
+export interface PaymentOrderRow {
+  id: string;
+  householdId: string;
+  status: PaymentOrderStatus;
+  orderCode: bigint;
+  planCode: string;
+  amount: number;
+  durationDays: number | null;
+  providerTxnId: string | null;
+  checkoutUrl: string | null;
+  createdAt: Date;
+  paidAt: Date | null;
+}
+
+export interface PaymentOrderWrite {
+  id: string;
+  householdId: string;
+  createdById: string;
+  orderCode: bigint;
+  planCode: string;
+  amountOriginal: number;
+  discountAmount: number;
+  amount: number;
+  durationDays: number | null;
+  expiresAt: Date;
 }
 
 export interface BillingRepository {
@@ -94,6 +125,48 @@ export interface BillingRepository {
    * constraint that decides whether this household may redeem at all, and that
    * has to be settled before any period is computed.
    */
+  insertPaymentOrder(write: PaymentOrderWrite): Promise<void>;
+
+  /** Attach the hosted checkout once the gateway has issued it. */
+  attachCheckout(
+    orderCode: bigint,
+    checkout: { checkoutUrl: string; providerOrderId: string },
+  ): Promise<void>;
+
+  findPaymentOrderByCode(orderCode: bigint): Promise<PaymentOrderRow | null>;
+
+  /** The household's orders, newest first. */
+  listPaymentOrders(
+    householdId: string,
+    limit: number,
+  ): Promise<PaymentOrderRow[]>;
+
+  /**
+   * Settle an order, atomically and exactly once.
+   *
+   * Returns false when the order was already settled — the UPDATE carries
+   * `status = 'pending'` in its WHERE clause, so a second webhook delivery
+   * matches no row rather than granting a second period. Combined with the
+   * unique `provider_txn_id`, a replay cannot pay twice by any route.
+   */
+  markPaymentOrderPaid(
+    orderCode: bigint,
+    settlement: {
+      providerTxnId: string;
+      paidAt: Date;
+      rawPayload: unknown;
+    },
+  ): Promise<boolean>;
+
+  /** Close an order without granting anything. */
+  markPaymentOrderClosed(
+    orderCode: bigint,
+    status: 'cancelled' | 'expired',
+  ): Promise<void>;
+
+  /** Record what arrived when it does not settle the order (an underpayment). */
+  recordPaymentPayload(orderCode: bigint, rawPayload: unknown): Promise<void>;
+
   updateRedemptionOutcome(
     redeemCodeId: string,
     householdId: string,

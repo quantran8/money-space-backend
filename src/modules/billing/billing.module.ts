@@ -2,6 +2,11 @@ import { Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { EntitlementController } from './entitlement.controller';
 import { EntitlementService } from './entitlement.service';
+import { PaymentsController } from './payments.controller';
+import { PaymentsService } from './payments.service';
+import { PaymentsWebhookController } from './payments-webhook.controller';
+import { PayosGateway } from './gateways/payos.gateway';
+import { PAYMENT_GATEWAY } from './gateways/payment-gateway.interface';
 import { PlansController } from './plans.controller';
 import { RedeemController } from './redeem.controller';
 import { RedeemService } from './redeem.service';
@@ -20,17 +25,36 @@ import { PrismaBillingRepository } from './repositories/prisma-billing.repositor
  */
 @Module({
   imports: [CommonModule],
-  controllers: [EntitlementController, PlansController, RedeemController],
+  controllers: [
+    EntitlementController,
+    PlansController,
+    RedeemController,
+    PaymentsController,
+    PaymentsWebhookController,
+  ],
   providers: [
     EntitlementService,
     SubscriptionService,
     RedeemService,
     WhatIfUsageService,
+    PaymentsService,
+    // Behind a token so adding VNPay later — once a business licence and its
+    // 1.1-2.2% are worth paying — is one new file rather than an edit through
+    // PaymentsService.
+    {
+      provide: PAYMENT_GATEWAY,
+      useClass: PayosGateway,
+    },
     {
       provide: BILLING_REPOSITORY,
       useClass: PrismaBillingRepository,
     },
   ],
-  exports: [EntitlementService, SubscriptionService, WhatIfUsageService],
+  exports: [
+    EntitlementService,
+    SubscriptionService,
+    WhatIfUsageService,
+    PaymentsService,
+  ],
 })
 export class BillingModule {}
