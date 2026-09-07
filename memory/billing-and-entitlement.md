@@ -110,22 +110,28 @@ The switch is gone with them. `setAutoPrice`, its route, and
 `setAutoPriceEnabled` / `findAutoPricedAssetIds` in the repository are all
 deleted; `countAutoPricedAssets` remains, since creation still counts.
 
-### A what-if re-run spends another slot
+### A slot is one QUESTION, not one engine run
 
-`forecast.service.ts` consumes a slot on **every** successful run, including the
-re-run that adds an asset sale and the one that removes it.
+One slot = the household entered input, pressed "Xem thử", and got an answer.
+Exploring that answer through the asset-sale funding step re-runs the engine
+twice more, and those are free: it is still the same question, and the funding
+step appears exactly when a household is short of money — which is when they can
+least afford to be charged three times for asking once.
 
-**At 3 runs a month this is now sharp**: one question explored through the
-funding step — run, add a sale, remove it — spends the household's whole month.
-The funding step is also the case that appears exactly when a household is short
-on money, which is when they most need the answer.
+The client says which is which, with `rerun: true` on the request. Two things
+follow from that, both deliberate:
 
-Each run is a real engine execution against a freshly loaded bundle, so charging
-for it is defensible in isolation. Charging three times for one question is
-harder to defend. The fix is to charge per QUESTION rather than per execution,
-which needs a scenario id the API does not have today. Worth doing before the
-free tier is measured, or the funding step will look like the thing that burns
-the quota.
+- **The server does not infer it by comparing payloads.** Typing the same amount
+  and asking again IS a new question. A content hash would silently make the
+  second one free, which is not what "3 lượt một tháng" means to anyone reading
+  it.
+- **A re-run is still checked against the ceiling**, just not counted. The limit
+  is about how much engine work a free household gets, and a client that could
+  set `rerun` freely would otherwise be ungated entirely.
+
+`handleRun` in the sheet is the only call that spends a slot; `handleApplySale`
+and `handleRemoveSale` both pass `rerun`. "Thử khoản khác" only resets the form,
+so the next "Xem thử" goes through `handleRun` and counts.
 
 ## Granting
 

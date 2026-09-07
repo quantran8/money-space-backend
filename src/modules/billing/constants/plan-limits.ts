@@ -17,9 +17,9 @@ import type {
  *   ceiling is met naturally rather than as an artificial wall.
  * - **3 what-ifs a month.** Enough to reach the Consequence Moment and feel
  *   what it answers. Anyone actually using the app before decisions passes it
- *   in the first month, which is exactly the household worth charging. Note
- *   each RUN counts, and re-running with an asset sale is another one — so a
- *   question explored through the funding step can cost all three.
+ *   in the first month, which is exactly the household worth charging. A slot
+ *   is one QUESTION, not one engine run: exploring the answer through the
+ *   asset-sale step is free (see memory/billing-and-entitlement.md).
  * - **1 auto-priced asset.** The one limit with a real marginal cost behind it
  *   (CoinMarketCap, Twelve Data). One is enough to show what automation feels
  *   like — a household holding gold AND stocks meets the ceiling on their

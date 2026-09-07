@@ -504,8 +504,12 @@ export class ForecastService {
 
     // The quota, checked AFTER the payload is known to be well-formed and
     // BEFORE any of the expensive work. A malformed request must never spend
-    // one of a household's five runs, and a household that is over its limit
-    // must not pay for a bundle load to be told so.
+    // one of a household's runs, and a household that is over its limit must
+    // not pay for a bundle load to be told so.
+    //
+    // A re-run is checked too, not waved through: the ceiling is about how much
+    // engine work a free household gets, and a client that could set `rerun`
+    // freely would otherwise have none.
     const entitlement = await this.entitlements.forHousehold(householdId);
     const whatIfLimit = entitlement.limits.whatIfPerMonth;
     if (whatIfLimit !== null) {
@@ -963,13 +967,19 @@ export class ForecastService {
         : null;
 
     // Counted only now, once the run has actually produced an answer. Charging
-    // at the top would spend a slot on a request that then failed validation
-    // or threw — and five a month is few enough that one wrongly-charged run
-    // is something a household would notice.
+    // at the top would spend a slot on a request that then failed validation or
+    // threw — and three a month is few enough that one wrongly-charged run is
+    // something a household would notice.
+    //
+    // A slot is one QUESTION, not one execution. Adding an asset sale to the
+    // answer on screen, or taking it away, re-runs the engine but is still the
+    // same question — and the funding step appears exactly when a household is
+    // short of money, which is when they can least afford to be charged three
+    // times for asking once.
     //
     // Unlimited plans are not counted at all: the number would only ever be
     // written and never read.
-    if (whatIfLimit !== null) {
+    if (whatIfLimit !== null && payload.rerun !== true) {
       await this.whatIfUsage.consume(householdId);
     }
 

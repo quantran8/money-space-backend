@@ -47,4 +47,16 @@ export interface WhatIfRequestDto {
   horizonDays?: number;
   /** Optional step 2. Absent = the simulation behaves exactly as before. */
   assetSale?: WhatIfAssetSaleDto;
+  /**
+   * `true` when this re-runs the question already on screen — the household
+   * added an asset sale to it, or took one away — rather than asking a new one.
+   *
+   * A quota slot is one QUESTION: input entered, "Xem thử" pressed, an answer
+   * shown. Exploring that answer through the funding step is part of the same
+   * question, so a re-run is still checked against the ceiling but does not
+   * spend another slot. Re-entering the same amount and asking again IS a new
+   * question, which is why this is a flag from the client and not something the
+   * server infers by comparing payloads.
+   */
+  rerun?: boolean;
 }
