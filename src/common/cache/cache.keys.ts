@@ -19,6 +19,17 @@ export const cacheKeys = {
     `hh:${householdId}:forecast:${horizonMonths}`,
 
   /**
+   * The household's plan. Also deliberately OUTSIDE the `hh:` prefix, for the
+   * opposite reason to market data: every household write calls
+   * `delByPrefix(household(id))`, and recording an expense has not changed what
+   * anyone is subscribed to. Under that prefix, adding a transaction would
+   * evict the entitlement and make the next request re-query it.
+   *
+   * Only `SubscriptionService` invalidates this, when a plan actually changes.
+   */
+  entitlement: (householdId: string) => `billing:entitlement:${householdId}`,
+
+  /**
    * Provider quotes. Deliberately NOT under the `hh:` prefix: market data is
    * global, identical for every household, and must survive the per-household
    * invalidation that fires after each write — a household editing an asset has
@@ -60,6 +71,14 @@ export const cacheTtl = {
    * mechanism. Hence minutes rather than seconds.
    */
   household: 300,
+
+  /**
+   * The household's plan. Long, and safely so: what is cached is the stored
+   * ROW, while `resolveEntitlement` compares `currentPeriodEnd` against `now`
+   * on every call. A plan therefore stops working the second it expires, not
+   * fifteen minutes later. Redeeming or paying invalidates explicitly.
+   */
+  entitlement: 900,
 
   /**
    * Quotes. Short: this is live market data, and the figure drives what the

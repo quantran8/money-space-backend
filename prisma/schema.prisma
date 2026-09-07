@@ -21,6 +21,24 @@ enum InviteStatus {
   cancelled
 }
 
+enum SubscriptionTier {
+  free
+  premium
+}
+
+enum SubscriptionStatus {
+  active
+  expired
+}
+
+/// What granted the current plan. Display and analytics only.
+enum EntitlementSource {
+  redeem_code
+  payment
+  manual_grant
+  trial
+}
+
 enum MemberStatus {
   active
   invited
@@ -312,7 +330,6 @@ enum FinancialManagementMode {
   unsure
 }
 
-
 /// ISO-4217 currency reference. Every `currency`/`baseCurrency`/`quoteCurrency`
 /// column across the schema is a 3-letter code validated against this table at
 /// the app layer (and by a DB FK added in the migration). Not exposed as a
@@ -438,10 +455,49 @@ model Household {
   moneyEvents             MoneyEvent[]
   moneyEventCategories    MoneyEventCategory[]
   auditLogs               AuditLog[]
+  subscription            HouseholdSubscription?
 
   @@index([createdById])
   @@index([deletedAt])
   @@map("households")
+}
+
+/// The household's plan. One row per household, created on first grant —
+/// a missing row and `tier: free` mean the same thing, so no backfill.
+model HouseholdSubscription {
+  id          String @id @default(uuid(7)) @db.Uuid
+  householdId String @unique @map("household_id") @db.Uuid
+
+  tier   SubscriptionTier   @default(free)
+  status SubscriptionStatus @default(active)
+
+  /// NULL + premium = lifetime. NULL + free = never purchased.
+  /// `tier` is what tells the two apart, so there is no isLifetime column.
+  currentPeriodEnd DateTime? @map("current_period_end") @db.Timestamptz(6)
+
+  source EntitlementSource?
+
+  /// Vietnamese gateways have no real recurring billing at this price, so the
+  /// model is prepaid. Kept so the column exists when that changes.
+  autoRenew Boolean @default(false) @map("auto_renew")
+
+  /// Separate from currentPeriodEnd so a household that has used its trial
+  /// cannot be granted a second one after expiry.
+  trialStartedAt DateTime? @map("trial_started_at") @db.Timestamptz(6)
+  trialEndsAt    DateTime? @map("trial_ends_at") @db.Timestamptz(6)
+
+  /// Internal note for manual grants. Never shown to the household.
+  note String @default("")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  /// The expiry sweep: WHERE tier = premium AND currentPeriodEnd < now().
+  /// Lifetime rows (NULL) fall outside it with no special case.
+  @@index([tier, currentPeriodEnd])
+  @@map("household_subscriptions")
 }
 
 model HouseholdMember {
@@ -1077,56 +1133,56 @@ model GoalAssetAllocation {
 }
 
 model MoneyEvent {
-  id              String           @id @default(uuid(7)) @db.Uuid
-  householdId     String           @map("household_id") @db.Uuid
+  id              String             @id @default(uuid(7)) @db.Uuid
+  householdId     String             @map("household_id") @db.Uuid
   description     String?
-  eventType       MoneyEventType   @map("event_type")
+  eventType       MoneyEventType     @map("event_type")
   // A real FK to `money_event_categories`, not the free code string it used to
   // be. `code` is only unique per household SCOPE (system rows share
   // household_id NULL), so it could never be an FK target; `id` is a global PK
   // and can. Adding a category is still a data insert, not a migration.
-  categoryId      String           @map("category_id") @db.Uuid
-  amount          Decimal          @default(0) @db.Decimal(14, 2)
-  feeAmount       Decimal          @default(0) @map("fee_amount") @db.Decimal(14, 2)
-  soldQuantity    Decimal?         @map("sold_quantity") @db.Decimal(20, 8)
-  soldValue       Decimal?         @map("sold_value") @db.Decimal(14, 2)
+  categoryId      String             @map("category_id") @db.Uuid
+  amount          Decimal            @default(0) @db.Decimal(14, 2)
+  feeAmount       Decimal            @default(0) @map("fee_amount") @db.Decimal(14, 2)
+  soldQuantity    Decimal?           @map("sold_quantity") @db.Decimal(20, 8)
+  soldValue       Decimal?           @map("sold_value") @db.Decimal(14, 2)
   // The position held on each side of an event that MOVES quantity (a purchase
   // into an existing position, a sale, a quantity adjustment). They make the
   // quantity series replayable: `buildMarketValueHistory` currently rebuilds it
   // by adding back `sold_quantity`, which silently assumes only sales ever
   // changed the holding. Recording both sides drops that assumption.
-  quantityBefore  Decimal?         @map("quantity_before") @db.Decimal(20, 8)
-  quantityAfter   Decimal?         @map("quantity_after") @db.Decimal(20, 8)
-  currency        String           @default("VND")
-  eventDate       DateTime         @map("event_date") @db.Date
+  quantityBefore  Decimal?           @map("quantity_before") @db.Decimal(20, 8)
+  quantityAfter   Decimal?           @map("quantity_after") @db.Decimal(20, 8)
+  currency        String             @default("VND")
+  eventDate       DateTime           @map("event_date") @db.Date
   direction       MoneyDirection
-  fromAssetId     String?          @map("from_asset_id") @db.Uuid
-  toAssetId       String?          @map("to_asset_id") @db.Uuid
-  cashflowEventId String?          @map("cashflow_event_id") @db.Uuid
-  debtId          String?          @map("debt_id") @db.Uuid
-  financialGoalId String?          @map("financial_goal_id") @db.Uuid
-  snapshotId      String?          @map("snapshot_id") @db.Uuid
+  fromAssetId     String?            @map("from_asset_id") @db.Uuid
+  toAssetId       String?            @map("to_asset_id") @db.Uuid
+  cashflowEventId String?            @map("cashflow_event_id") @db.Uuid
+  debtId          String?            @map("debt_id") @db.Uuid
+  financialGoalId String?            @map("financial_goal_id") @db.Uuid
+  snapshotId      String?            @map("snapshot_id") @db.Uuid
   // is_large_event / is_attention_needed dropped: an overdraft is a property of
   // the WALLET's running balance, not of one row, so a flag here would need
   // rewriting across every later event on every edit. Attention is derived at
   // read time instead — see backend memory/attention-items.md.
   // Who owns the privacy right (spec §30) — distinct from `createdById`.
-  status          MoneyEventStatus @default(recorded)
-  createdById     String           @map("created_by") @db.Uuid
-  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById     String?          @map("updated_by") @db.Uuid
-  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt       DateTime?        @map("deleted_at") @db.Timestamptz(6)
-  household       Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  fromAsset       Asset?           @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
-  toAsset         Asset?           @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
-  cashflowEvent   CashflowEvent?   @relation("MoneyEventCashflowEvent", fields: [cashflowEventId], references: [id])
-  debt            Debt?            @relation(fields: [debtId], references: [id])
-  financialGoal   FinancialGoal?   @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
-  snapshot        Snapshot?        @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
-  createdBy       Profile          @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
-  updatedBy       Profile?         @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
-  valueHistory    AssetValuation[] @relation("MoneyEventValueHistory")
+  status          MoneyEventStatus   @default(recorded)
+  createdById     String             @map("created_by") @db.Uuid
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById     String?            @map("updated_by") @db.Uuid
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime?          @map("deleted_at") @db.Timestamptz(6)
+  household       Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromAsset       Asset?             @relation("MoneyEventFromAsset", fields: [fromAssetId], references: [id])
+  toAsset         Asset?             @relation("MoneyEventToAsset", fields: [toAssetId], references: [id])
+  cashflowEvent   CashflowEvent?     @relation("MoneyEventCashflowEvent", fields: [cashflowEventId], references: [id])
+  debt            Debt?              @relation(fields: [debtId], references: [id])
+  financialGoal   FinancialGoal?     @relation("MoneyEventFinancialGoal", fields: [financialGoalId], references: [id])
+  snapshot        Snapshot?          @relation("MoneyEventSnapshot", fields: [snapshotId], references: [id])
+  createdBy       Profile            @relation("MoneyEventCreatedBy", fields: [createdById], references: [id])
+  updatedBy       Profile?           @relation("MoneyEventUpdatedBy", fields: [updatedById], references: [id])
+  valueHistory    AssetValuation[]   @relation("MoneyEventValueHistory")
   category        MoneyEventCategory @relation("MoneyEventCategoryRef", fields: [categoryId], references: [id])
 
   @@index([householdId, eventDate(sort: Desc)])
@@ -1142,26 +1198,26 @@ model MoneyEvent {
 }
 
 model MoneyEventCategory {
-  id          String     @id @default(uuid(7)) @db.Uuid
+  id             String          @id @default(uuid(7)) @db.Uuid
   // NULL householdId = system/global category shared by everyone; a non-null
   // householdId is a household's own custom category.
-  householdId String?    @map("household_id") @db.Uuid
-  code        String
-  label       String
+  householdId    String?         @map("household_id") @db.Uuid
+  code           String
+  label          String
   // Glyph key the client maps to an icon component. On the ROW, not derived from
   // `code`, so a household's custom category can pick a glyph too. NULL = none
   // chosen; the client falls back.
-  iconKey     String?    @map("icon_key")
+  iconKey        String?         @map("icon_key")
   // Fill the disc renders as (a hex string, e.g. "#3B82F6"). NULL = the
   // client's neutral default. The glyph itself is always drawn white over it.
-  iconColor   String?    @map("icon_color")
-  isSystem    Boolean    @default(false) @map("is_system")
-  sortOrder   Int        @default(0) @map("sort_order")
-  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  deletedAt   DateTime?  @map("deleted_at") @db.Timestamptz(6)
-  household   Household? @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  moneyEvents     MoneyEvent[]    @relation("MoneyEventCategoryRef")
-  cashflowEvents  CashflowEvent[] @relation("CashflowEventCategoryRef")
+  iconColor      String?         @map("icon_color")
+  isSystem       Boolean         @default(false) @map("is_system")
+  sortOrder      Int             @default(0) @map("sort_order")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  deletedAt      DateTime?       @map("deleted_at") @db.Timestamptz(6)
+  household      Household?      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  moneyEvents    MoneyEvent[]    @relation("MoneyEventCategoryRef")
+  cashflowEvents CashflowEvent[] @relation("CashflowEventCategoryRef")
 
   // A code is unique within its scope (global rows share householdId = NULL);
   // Postgres treats NULLs as distinct, so a partial unique index in the
@@ -1170,7 +1226,6 @@ model MoneyEventCategory {
   @@index([householdId, deletedAt])
   @@map("money_event_categories")
 }
-
 
 model AuditLog {
   id          String    @id @default(uuid(7)) @db.Uuid

@@ -144,6 +144,38 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Atomically increments a counter, returning its new value.
+   *
+   * The TTL is set only when the key is created (`EXPIRE … NX`), so a window
+   * that is counting down is never extended by another increment inside it.
+   *
+   * Returns `undefined` when the cache is off or Redis is unreachable — the
+   * same fail-open contract as every other method here. A caller enforcing a
+   * quota must read that as "could not count", never as zero: refusing a paying
+   * household because Redis blinked is a worse failure than letting a few extra
+   * requests through.
+   */
+  async incr(key: string, ttlSeconds: number): Promise<number | undefined> {
+    if (!this.client) return undefined;
+
+    try {
+      const results = await this.withTimeout(
+        this.client
+          .multi()
+          .incr(key)
+          .expire(key, ttlSeconds, 'NX')
+          .exec(),
+      );
+
+      const value = results?.[0]?.[1];
+      return typeof value === 'number' ? value : undefined;
+    } catch (error) {
+      this.markDegraded(error);
+      return undefined;
+    }
+  }
+
   async del(...keys: string[]): Promise<void> {
     if (!this.client || keys.length === 0) return;
 
