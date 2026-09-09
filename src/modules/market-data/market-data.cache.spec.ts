@@ -495,6 +495,213 @@ describe('MarketDataService.getQuote (asset-create)', () => {
   });
 });
 
+describe('MarketDataService.getMarketPrices for crypto', () => {
+  /**
+   * Positions store `quoteCurrency: 'VND'`, so the universe alone would only
+   * ever fetch đồng and a holding could never show the USD price beside it.
+   */
+  it('also asks for USD on a đồng-quoted crypto position', async () => {
+    const cache = fakeCache();
+    const getLatestPrices = jest.fn().mockResolvedValue([]);
+    const service = new MarketDataService(
+      {
+        getFxRates: jest.fn().mockResolvedValue([]),
+        getMarketSymbolUniverse: jest.fn().mockResolvedValue([
+          { assetClass: 'crypto', symbol: 'BTC', quoteCurrency: 'VND' },
+          { assetClass: 'stock', symbol: 'VNM', quoteCurrency: 'VND' },
+        ]),
+      },
+      { getLatestPrices },
+      { listSymbols: jest.fn().mockResolvedValue([]) },
+      {
+        getGoldPrices: jest.fn().mockResolvedValue([]),
+        getFxCounterRates: jest.fn().mockResolvedValue([]),
+      },
+      cache,
+    );
+
+    await service.getMarketPrices();
+
+    expect(getLatestPrices).toHaveBeenCalledWith([
+      expect.objectContaining({ symbol: 'BTC', quoteCurrency: 'VND' }),
+      expect.objectContaining({ symbol: 'BTC', quoteCurrency: 'USD' }),
+      // A đồng-quoted equity is asked for once, as before.
+      expect.objectContaining({ symbol: 'VNM', quoteCurrency: 'VND' }),
+    ]);
+  });
+});
+
+describe('MarketDataService.getQuote for crypto', () => {
+  const BTC_USD = {
+    assetClass: 'crypto' as const,
+    symbol: 'BTC',
+    price: 65_000,
+    unit: 'BTC',
+    quoteCurrency: 'USD',
+    priceTime: '2026-01-01T00:00:00.000Z',
+    source: 'coinmarketcap',
+  };
+
+  const USD_RATE = {
+    currencyCode: 'USD',
+    currencyName: 'US DOLLAR',
+    buyCash: 25_900,
+    buyTransfer: 26_000,
+    sell: 26_300,
+    source: 'vnstock',
+  };
+
+  const BTC_VND = {
+    ...BTC_USD,
+    price: 1_690_000_000,
+    quoteCurrency: 'VND',
+  };
+
+  /** CMC allows one `convert` per call, so the provider answers per currency. */
+  function buildCryptoService(
+    cache: CacheService,
+    fx = [USD_RATE],
+    available = [BTC_VND, BTC_USD],
+  ) {
+    const getLatestPrices = jest
+      .fn()
+      .mockImplementation((requests: Array<{ quoteCurrency: string }>) =>
+        Promise.resolve(
+          requests
+            .map((r) =>
+              available.find((q) => q.quoteCurrency === r.quoteCurrency),
+            )
+            .filter(Boolean),
+        ),
+      );
+    const getFxCounterRates = jest.fn().mockResolvedValue(fx);
+    const service = new MarketDataService(
+      {
+        getFxRates: jest.fn().mockResolvedValue([]),
+        getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+      },
+      { getLatestPrices },
+      { listSymbols: jest.fn().mockResolvedValue([]) },
+      { getGoldPrices: jest.fn().mockResolvedValue([]), getFxCounterRates },
+      cache,
+    );
+    return { service, getLatestPrices, getFxCounterRates };
+  }
+
+  it('asks the upstream for both đồng and USD', async () => {
+    const cache = fakeCache();
+    const { service, getLatestPrices } = buildCryptoService(cache);
+
+    await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'VND',
+    });
+
+    expect(getLatestPrices).toHaveBeenCalledWith([
+      expect.objectContaining({ symbol: 'BTC', quoteCurrency: 'VND' }),
+      expect.objectContaining({ symbol: 'BTC', quoteCurrency: 'USD' }),
+    ]);
+  });
+
+  /**
+   * Both figures come from the exchange itself, so the USD price shown beside
+   * the đồng one is not a number we derived — no rate of ours can drift.
+   */
+  it('serves the upstream đồng price with USD alongside it', async () => {
+    const cache = fakeCache();
+    const { service, getFxCounterRates } = buildCryptoService(cache);
+
+    const quote = await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'VND',
+    });
+
+    expect(quote?.price).toBe(1_690_000_000);
+    expect(quote?.quoteCurrency).toBe('VND');
+    expect(quote?.nativePrice).toEqual({ price: 65_000, quoteCurrency: 'USD' });
+    // The upstream quoted đồng itself, so no counter rate is needed.
+    expect(getFxCounterRates).not.toHaveBeenCalled();
+    expect(quote?.source).toBe('coinmarketcap');
+  });
+
+  /** Only when the upstream will not quote đồng at all. */
+  it('falls back to converting the USD quote at the bank counter rate', async () => {
+    const cache = fakeCache();
+    const { service } = buildCryptoService(cache, [USD_RATE], [BTC_USD]);
+
+    const quote = await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'VND',
+    });
+
+    // Buy-transfer, not sell: this converts a holding the household would sell.
+    expect(quote?.price).toBe(65_000 * 26_000);
+    expect(quote?.quoteCurrency).toBe('VND');
+    expect(quote?.source).toBe('coinmarketcap+vnstock');
+    expect(quote?.nativePrice).toEqual({ price: 65_000, quoteCurrency: 'USD' });
+  });
+
+  /**
+   * Every money field downstream is đồng, so the currency the caller names
+   * cannot change what it gets back — only whether the round trip is wasted.
+   */
+  it('serves đồng even when the caller asks for USD', async () => {
+    const cache = fakeCache();
+    const { service } = buildCryptoService(cache);
+
+    const quote = await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'USD',
+    });
+
+    expect(quote?.quoteCurrency).toBe('VND');
+    expect(quote?.price).toBe(65_000 * 26_000);
+    expect(quote?.nativePrice).toEqual({ price: 65_000, quoteCurrency: 'USD' });
+  });
+
+  /**
+   * Inventing a rate would put a number 26.000× wrong into a đồng field. The
+   * unconverted figure is honestly labelled by its `quoteCurrency`, and callers
+   * already check that before prefilling.
+   */
+  it('serves the unconverted USD quote when no counter rate is published', async () => {
+    const cache = fakeCache();
+    const { service } = buildCryptoService(cache, [], [BTC_USD]);
+
+    const quote = await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'VND',
+    });
+
+    expect(quote?.quoteCurrency).toBe('USD');
+    expect(quote?.price).toBe(65_000);
+  });
+
+  it('shares one cache entry however the currency was spelled', async () => {
+    const cache = fakeCache();
+    const { service, getLatestPrices } = buildCryptoService(cache);
+
+    await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'VND',
+    });
+    await service.getQuote({
+      assetClass: 'crypto',
+      symbol: 'BTC',
+      quoteCurrency: 'USD',
+    });
+
+    // Both spellings mean the same đồng answer, so the upstream is asked once.
+    expect(getLatestPrices).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('MarketDataService.getQuote for gold and foreign currency', () => {
   const SJC: GoldPrice = {
     name: 'VÀNG MIẾNG SJC',

@@ -16,4 +16,9 @@ export interface MarketPrice {
    * is quoted in the one unit it trades in.
    */
   unitPrices?: Record<string, number>;
+  /**
+   * The quote before conversion, set only when `price` IS a conversion — crypto
+   * is checked against USD exchanges. See memory/market-data.md.
+   */
+  nativePrice?: { price: number; quoteCurrency: string };
 }
