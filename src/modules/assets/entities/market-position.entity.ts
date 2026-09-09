@@ -39,4 +39,10 @@ export interface MarketPosition {
   marketPriceCurrency?: string;
   /** ISO timestamp the upstream observed `marketPrice`. */
   marketPriceAt?: string;
+  /**
+   * The same price in the currency the instrument is really quoted in, when
+   * `marketPrice` above is đồng — crypto is checked against USD exchanges.
+   * Read-only, filled per response like `marketPrice`.
+   */
+  nativeMarketPrice?: { price: number; quoteCurrency: string };
 }

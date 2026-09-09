@@ -177,20 +177,31 @@ export class AssetsService {
   private withMarketPrice(asset: Asset, marketPrices: MarketPrice[]): Asset {
     if (!asset.marketPosition || marketPrices.length === 0) return asset;
 
-    const quote = quoteFor(
-      marketPrices,
-      asset.marketPosition.assetClass,
-      asset.marketPosition.symbol,
-    );
+    const { assetClass, symbol, unit, quoteCurrency } = asset.marketPosition;
+    const quote = quoteFor(marketPrices, assetClass, symbol, quoteCurrency);
     if (!quote) return asset;
+
+    // Crypto is also cached in USD — the currency it is really quoted in — so a
+    // đồng-priced holding can show both. See memory/market-data.md.
+    const native =
+      quote.quoteCurrency.toUpperCase() === 'USD'
+        ? undefined
+        : quoteFor(marketPrices, assetClass, symbol, 'USD');
 
     return {
       ...asset,
       marketPosition: {
         ...asset.marketPosition,
-        marketPrice: priceInPositionUnit(quote, asset.marketPosition.unit),
+        marketPrice: priceInPositionUnit(quote, unit),
         marketPriceCurrency: quote.quoteCurrency,
         marketPriceAt: quote.priceTime,
+        nativeMarketPrice:
+          native && native.quoteCurrency.toUpperCase() === 'USD'
+            ? {
+                price: priceInPositionUnit(native, unit),
+                quoteCurrency: native.quoteCurrency,
+              }
+            : undefined,
       },
     };
   }

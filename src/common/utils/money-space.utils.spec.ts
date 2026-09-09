@@ -4,6 +4,7 @@ import {
   liquidityForAssetType,
   marketUnitForAssetType,
   normalizeCountsAsFlexible,
+  quoteFor,
 } from './money-space.utils';
 
 describe('liquidityForAssetType', () => {
@@ -103,5 +104,39 @@ describe('deriveDirection', () => {
 
   it('keeps an explicit direction over the type default', () => {
     expect(deriveDirection('payment_paid', 'neutral')).toBe('neutral');
+  });
+});
+
+describe('quoteFor', () => {
+  const price = (quoteCurrency: string, value: number) => ({
+    assetClass: 'crypto' as const,
+    symbol: 'BTC',
+    price: value,
+    unit: 'BTC',
+    quoteCurrency,
+    priceTime: '2026-09-09T00:00:00.000Z',
+    source: 'coinmarketcap',
+  });
+
+  /**
+   * Crypto is cached in both currencies, so a caller that does not name one
+   * would price a position in whichever landed first — off by ~26.000x.
+   */
+  it('picks the quote matching the currency asked for', () => {
+    const prices = [price('USD', 65_000), price('VND', 1_690_000_000)];
+
+    expect(quoteFor(prices, 'crypto', 'BTC', 'VND')?.price).toBe(1_690_000_000);
+    expect(quoteFor(prices, 'crypto', 'BTC', 'USD')?.price).toBe(65_000);
+  });
+
+  it('falls back to the first match when the currency is absent', () => {
+    const prices = [price('USD', 65_000)];
+
+    expect(quoteFor(prices, 'crypto', 'BTC', 'VND')?.price).toBe(65_000);
+    expect(quoteFor(prices, 'crypto', 'BTC')?.price).toBe(65_000);
+  });
+
+  it('returns undefined when nothing matches the symbol', () => {
+    expect(quoteFor([price('VND', 1)], 'crypto', 'ETH', 'VND')).toBeUndefined();
   });
 });
