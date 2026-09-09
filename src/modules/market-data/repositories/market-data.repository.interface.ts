@@ -10,4 +10,9 @@ export interface MarketDataRepository {
    * (assetClass, symbol) held by any household. Feeds the batched provider call.
    */
   getMarketSymbolUniverse(): Promise<SymbolRequest[]>;
+  /**
+   * Record today's reference rates. Deduped on
+   * (base, quote, source, rate_time), so re-running a day is a no-op.
+   */
+  saveFxRates(rates: FxRate[]): Promise<number>;
 }

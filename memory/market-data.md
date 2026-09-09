@@ -205,6 +205,63 @@ instrument and returns `{ quote: MarketPrice | null }`.
 - Cached at `market:quote:<class>:<symbol>:<market>:<currency>` for the same
   5 minutes as the batch quotes.
 
+## Crypto is quoted, stored and priced in USD
+
+`asset_market_positions.quote_currency = 'USD'` for crypto, with `purchase_price`
+a real USD figure. `computeCurrentValue` multiplies by `fxRateToVnd`, so every
+household total stays đồng.
+
+- **Both currencies come from the exchange.** `getQuote` asks the provider for
+  `VND` and `USD` in one `getLatestPrices` call; CMC allows one `convert` per
+  HTTP call, so `CoinMarketCapPriceProvider` splits it into two batched requests.
+  CMC quotes VND directly — the earlier "paid tier only" belief was wrong; the
+  400 is `convert=USD,VND` ("limited to 1 convert options"). Do NOT "optimize"
+  this into one call plus multiplication: a derived rate drifts from the
+  exchange's and the two figures on screen stop agreeing.
+- `fetchPrices` adds a USD request for every crypto row in the symbol universe,
+  which stores `VND`; without it the batch cache held đồng only.
+- **`quoteFor` takes a `quoteCurrency`.** With two cached entries per crypto
+  symbol, the old first-match would price a position in whichever landed first
+  (~26.000x out).
+- **`withMarketPrice` always returns đồng in `marketPrice`**, whatever the
+  position stores, with USD alongside in `nativeMarketPrice`.
+- **Fallback only**: when the upstream will not quote đồng, `toVnd` converts its
+  USD figure with the vnstock counter rate (buy-transfer — the household would
+  realise a holding by selling it). `source` then reads `coinmarketcap+vnstock`.
+- **`assets.currency` stays `'VND'`.** It labels the COMPUTED value, which is
+  what `asset_valuations` and `snapshot_asset_values` store and what net worth
+  sums. `computeCurrentValue` always returns đồng, and `computeLiquidityTotals`
+  is a bare `+=` with no currency awareness — stamping `'USD'` there would make a
+  32 triệu holding get added as 32 triệu USD.
+- **Money moves in đồng.** `resolvePurchaseCost` and `addPurchase` convert
+  `quantity × purchasePrice` through `toVndCost` before debiting a wallet, and
+  throw rather than debiting 2.400đ for a $2.400 buy. Sales already carry
+  `soldValue` in đồng from the form.
+
+### `fx_rates` is the hard prerequisite
+
+It was empty with nothing writing to it, so `fxRateToVnd('USD')` returned `null`
+and a USD position valued at **0** everywhere.
+
+- `MarketDataService.captureFxRates()` writes the vnstock counter rates and runs
+  at the top of `AssetsValuationCron.captureAll()`, before any asset is valued.
+  A failure there is logged and the run continues on yesterday's rate.
+- `saveFxRates` filters to codes present in `currencies`: the bank feed quotes
+  ~20 currencies against a 10-row catalog, and the FK would fail the batch.
+
+### Legacy đồng-quoted crypto
+
+`20260909040000_crypto_positions_to_usd` divides `purchase_price`/`last_price` by
+the latest USD/VND rate and flips `quote_currency`. Value-preserving — the same
+đồng cost basis comes back out. The purchase-day rate is not recorded, so the
+latest is the honest approximation; leaving the two conventions mixed is worse,
+since a đồng cost basis then gets multiplied by a USD rate on the detail page.
+
+It **seeds a bootstrap rate when `fx_rates` is empty**, because a migration that
+skipped would still be recorded as applied — leaving those rows in đồng forever
+with nothing to retry them. It returns early when there is nothing to convert, so
+a database with no legacy rows gets no seeded rate.
+
 ## Daily capture of market asset values
 
 Two paths write the same daily point, both funnelling into

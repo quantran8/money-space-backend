@@ -353,6 +353,47 @@ export class MarketDataService {
   }
 
   /**
+   * Persist today's VND reference rates from the bank counter feed.
+   *
+   * `fx_rates` is what `fxRateToVnd` reads, and an empty table means every
+   * non-VND holding values at 0 — so this is what makes a USD-quoted position
+   * possible at all. The **buy-transfer** side, matching `toVnd`: the household
+   * would realise a foreign holding by selling it to the bank.
+   * See memory/market-data.md.
+   */
+  async captureFxRates(): Promise<number> {
+    const counterRates = await this.cache.wrap(
+      cacheKeys.fxCounterRates(),
+      () => this.commodityProvider.getFxCounterRates(),
+      cacheTtl.commodity,
+    );
+
+    const asOf = new Date().toISOString();
+    const rates = counterRates.flatMap((rate) => {
+      const value = rate.buyTransfer ?? rate.buyCash ?? rate.sell;
+      if (!value || value <= 0) return [];
+      return [
+        {
+          baseCurrency: rate.currencyCode,
+          quoteCurrency: 'VND',
+          rate: value,
+          asOf,
+          source: rate.source,
+        },
+      ];
+    });
+
+    if (rates.length === 0) {
+      this.logger.warn('No counter rates to persist — fx_rates left unchanged');
+      return 0;
+    }
+
+    const saved = await this.marketDataRepository.saveFxRates(rates);
+    this.logger.log(`Captured ${saved} FX rate(s) into fx_rates`);
+    return saved;
+  }
+
+  /**
    * Persisted reference rates from `fx_rates`, cached so a page showing them
    * does not re-query Postgres on every request. The list is small and global,
    * so it is cached whole and filtered in memory.

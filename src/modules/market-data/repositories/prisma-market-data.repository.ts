@@ -31,6 +31,36 @@ export class PrismaMarketDataRepository
     super(prisma);
   }
 
+  async saveFxRates(rates: FxRate[]): Promise<number> {
+    if (rates.length === 0) return 0;
+    // `fx_rates.base_currency` has a FK onto `currencies`, and the bank feed
+    // quotes ~20 currencies against a 10-row catalog. Filtering here keeps one
+    // unseeded code (CAD, CHF, …) from failing the whole batch.
+    const catalog = new Set(
+      (
+        await this.prisma.currency.findMany({ select: { code: true } })
+      ).map((row) => row.code.trim().toUpperCase()),
+    );
+    const known = rates.filter((rate) =>
+      catalog.has(rate.baseCurrency.trim().toUpperCase()),
+    );
+    if (known.length === 0) return 0;
+
+    const result = await this.prisma.fxRate.createMany({
+      data: known.map((rate) => ({
+        baseCurrency: rate.baseCurrency.toUpperCase(),
+        quoteCurrency: rate.quoteCurrency.toUpperCase(),
+        rate: rate.rate,
+        rateTime: new Date(rate.asOf),
+        source: rate.source,
+      })),
+      // `fx_rates_dedup_unique` covers (base, quote, source, rate_time), so a
+      // re-run inside the same day writes nothing rather than failing.
+      skipDuplicates: true,
+    });
+    return result.count;
+  }
+
   async getFxRates(): Promise<FxRate[]> {
     const rates = await this.findLatestFxRates();
     return rates.map((rate) => mapFxRate(rate));

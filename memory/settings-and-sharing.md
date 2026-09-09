@@ -16,6 +16,16 @@ Household config plus the sharing controls that let the money-holder avoid feeli
   column has a DB FK to `currencies(code)`. This replaced the three conflicting
   hardcoded enum sets across onboarding/settings. Snapshot totals are in
   `household.currency`.
+  - Those FKs cannot be expressed in `schema.prisma` (`Currency` is deliberately
+    not a Prisma relation — it would add ~11 back-relations for a static lookup
+    table), so they exist only via hand-written SQL migrations and `migrate dev`
+    will never regenerate them. `20260812102000_restore_currency_fks` was
+    recorded with `applied_steps_count: 0` — baselined, never executed — so for a
+    long while there were ZERO such FKs and every currency column was free text.
+    `20260909040000_apply_currency_fks` re-applies them idempotently and
+    VALIDATEs. After any DB reset, verify with a `pg_constraint` query rather
+    than trusting `migrate status`, which reports the migration applied whether
+    or not its SQL ran.
 - `updateFrequency = weekly | biweekly | monthly`.
 - App language.
 
