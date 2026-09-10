@@ -140,7 +140,16 @@ export class MarketDataService {
   /** One provider round-trip over the whole distinct symbol universe. */
   private async fetchPrices(): Promise<MarketPrice[]> {
     const universe = await this.marketDataRepository.getMarketSymbolUniverse();
-    return this.priceProvider.getLatestPrices(universe);
+    // Crypto positions store `quoteCurrency: 'VND'`, so the universe alone would
+    // only ever fetch đồng. Ask for USD as well — the currency the coin is really
+    // quoted in — so a holding can show both. See memory/market-data.md.
+    const withUsd = universe.flatMap((request) =>
+      request.assetClass === 'crypto' &&
+      request.quoteCurrency.toUpperCase() !== 'USD'
+        ? [request, { ...request, quoteCurrency: 'USD' }]
+        : [request],
+    );
+    return this.priceProvider.getLatestPrices(withUsd);
   }
 
   async listMarketPrices(query: ListMarketPricesQuery) {
@@ -191,9 +200,14 @@ export class MarketDataService {
         market: query.market,
         quoteCurrency: '',
       });
-    const quoteCurrency = (
+    const requested = (
       query.quoteCurrency?.trim() || (isVnd ? 'VND' : 'USD')
     ).toUpperCase();
+    // Crypto is served in đồng however it was asked for — every money field
+    // downstream is VND — with the USD figure alongside as `nativePrice`. See
+    // memory/market-data.md.
+    const isCrypto = assetClass === 'crypto';
+    const quoteCurrency = isCrypto ? 'VND' : requested;
 
     // Gold is quoted per lượng but held in chỉ/lượng/gram. A gold quote carries
     // every unit's price in `unitPrices`, so a caller that switches units needs
@@ -203,11 +217,13 @@ export class MarketDataService {
     const unit = normalizeGoldUnit(query.unit);
 
     return this.cache.wrap(
+      // Crypto is served in đồng however it was asked for, so both spellings
+      // share one entry rather than fetching the same quote twice.
       cacheKeys.quote(
         assetClass,
         symbol.toUpperCase(),
         market,
-        quoteCurrency,
+        isCrypto ? 'VND' : requested,
         unit,
       ),
       async () => {
@@ -216,18 +232,70 @@ export class MarketDataService {
         if (assetClass === 'gold' || assetClass === 'foreign_currency') {
           return this.commodityQuote(assetClass, symbol, unit);
         }
-        const quotes = await this.priceProvider.getLatestPrices([
-          {
+        // Crypto asks for đồng AND USD, so both figures are the exchange's own
+        // rather than one derived from the other. See memory/market-data.md.
+        const quotes = await this.priceProvider.getLatestPrices(
+          [quoteCurrency, ...(isCrypto ? ['USD'] : [])].map((currency) => ({
             assetClass,
             symbol,
             market: query.market,
-            quoteCurrency,
-          },
-        ]);
-        return quotes[0] ?? null;
+            quoteCurrency: currency,
+          })),
+        );
+        const quote = quotes.find((q) => q.quoteCurrency === quoteCurrency);
+        if (!quote) {
+          // The upstream would not quote đồng. Convert whatever it did give us
+          // rather than reporting the symbol unpriceable.
+          const fallback = quotes[0];
+          return isCrypto && fallback ? this.toVnd(fallback) : null;
+        }
+        const native = quotes.find((q) => q.quoteCurrency !== quoteCurrency);
+        return native
+          ? {
+              ...quote,
+              nativePrice: {
+                price: native.price,
+                quoteCurrency: native.quoteCurrency,
+              },
+            }
+          : quote;
       },
       cacheTtl.marketPrices,
     );
+  }
+
+  /**
+   * Restate a foreign-currency quote in đồng at the bank counter rate — the
+   * buy side, since this converts a holding the household would sell. Left
+   * untouched when no rate is published. See memory/market-data.md.
+   */
+  private async toVnd(quote: MarketPrice): Promise<MarketPrice> {
+    const currency = quote.quoteCurrency.toUpperCase();
+    if (currency === 'VND') return quote;
+
+    const rates = await this.cache.wrap(
+      cacheKeys.fxCounterRates(),
+      () => this.commodityProvider.getFxCounterRates(),
+      cacheTtl.commodity,
+    );
+    const match = rates.find((rate) => rate.currencyCode === currency);
+    const rate = match?.buyTransfer ?? match?.buyCash ?? match?.sell;
+    if (!match || !rate) {
+      this.logger.warn(
+        `No ${currency}/VND counter rate; serving ${quote.symbol} in ${currency}`,
+      );
+      return quote;
+    }
+
+    return {
+      ...quote,
+      price: quote.price * rate,
+      quoteCurrency: 'VND',
+      // The USD figure rides along so the form can show both.
+      nativePrice: { price: quote.price, quoteCurrency: currency },
+      // Both upstreams named: the price is a product of the two.
+      source: `${quote.source}+${match.source}`,
+    };
   }
 
   /**

@@ -233,12 +233,25 @@ export function quoteFor(
   marketPrices: MarketPrice[],
   assetClass: string,
   symbol: string,
+  quoteCurrency?: string,
 ) {
-  return marketPrices.find(
+  const matches = marketPrices.filter(
     (price) =>
       price.assetClass === assetClass &&
       price.symbol.toUpperCase() === symbol.toUpperCase(),
   );
+  if (matches.length === 0) return undefined;
+  // Crypto is cached in both đồng and USD, so a caller that needs a specific
+  // currency must say so — taking the first match would price a position in
+  // whichever landed first. See memory/market-data.md.
+  if (quoteCurrency) {
+    const wanted = quoteCurrency.toUpperCase();
+    const exact = matches.find(
+      (price) => price.quoteCurrency.toUpperCase() === wanted,
+    );
+    if (exact) return exact;
+  }
+  return matches[0];
 }
 
 /**
@@ -311,6 +324,7 @@ export function computeCurrentValue(
       marketPrices,
       asset.marketPosition.assetClass,
       asset.marketPosition.symbol,
+      quoteCurrency,
     );
     if (quote) {
       const fx = fxRateToVnd(fxRates, quote.quoteCurrency);
