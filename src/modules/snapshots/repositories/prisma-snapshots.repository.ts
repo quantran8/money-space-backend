@@ -491,4 +491,12 @@ export class PrismaSnapshotsRepository
       items,
     };
   }
+
+  async findAllHouseholdIds(): Promise<string[]> {
+    const rows = await this.prisma.household.findMany({
+      where: { deletedAt: null },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
 }

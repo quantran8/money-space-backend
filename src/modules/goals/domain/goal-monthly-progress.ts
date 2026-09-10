@@ -95,6 +95,14 @@ export interface GoalMonthProgress {
   isEstimate: boolean;
 }
 
+/** What the month-end close came to for one goal, summed over its wallets. */
+export interface GoalMonthClose {
+  /** `closing - opening`: what actually went in. Negative when spent into. */
+  actual: number;
+  /** Where the contribution ledgers stood once the month closed. */
+  closing: number;
+}
+
 /** `YYYY-MM-DD` → `YYYY-MM`. */
 function monthOf(date: string): string {
   return date.slice(0, 7);
@@ -130,6 +138,12 @@ function monthOf(date: string): string {
  *   against: the month is not over, so what the panel can honestly offer is what
  *   the household is on track to manage, not a verdict. Closed months always use
  *   the observed difference and ignore this entirely.
+ * @param options.settledByMonth
+ *   Per month (`YYYY-MM`), what the month-end close came to for this goal —
+ *   summed over its wallets. Takes precedence over the snapshot difference for
+ *   any CLOSED month: it is measured from the wallet's own closing balance
+ *   rather than inferred from two snapshots that may not exist. A month appears
+ *   in the output on the strength of a close alone.
  * @param options.baselineContribution
  *   What the goal OPENED with, frozen at creation. Stands in as the previous
  *   point for the FIRST month on record, which otherwise has nothing to be
@@ -147,6 +161,7 @@ export function buildGoalMonthlyProgress(
     conversionCreditByMonth?: ReadonlyMap<string, number>;
     baselineContribution?: number | null;
     monthlyHeadroom?: number | null;
+    settledByMonth?: ReadonlyMap<string, GoalMonthClose>;
   },
 ): GoalMonthProgress[] {
   const current = options?.current;
@@ -172,10 +187,17 @@ export function buildGoalMonthlyProgress(
       : null;
 
   const liveMonth = current ? monthOf(current.date) : null;
-  const months = [...lastOfMonth.keys()].sort();
+  // A settled month counts as a month on record even with no snapshot behind
+  // it. Snapshots are taken when somebody presses a button; the close runs on a
+  // schedule, so requiring both would drop months the job did measure.
+  const months = [
+    ...new Set([
+      ...lastOfMonth.keys(),
+      ...(options?.settledByMonth?.keys() ?? []),
+    ]),
+  ].sort();
   return months.map((month, index) => {
     const point = lastOfMonth.get(month);
-    const endAmount = point?.progressAmount ?? 0;
     const contribution = point?.contributionAmount ?? null;
     // Compare against the previous month PRESENT in the data, not the calendar
     // month before: a gap in snapshots would otherwise report the whole catch-up
@@ -217,6 +239,16 @@ export function buildGoalMonthlyProgress(
           previousContribution +
           (options?.conversionCreditByMonth?.get(month) ?? 0);
 
+    // A month the settlement job closed reports what that close came to. It is
+    // the better figure by construction: it is the ledger difference the job
+    // computed from the wallet's own closing balance, priority order and all,
+    // where `observedDelta` can only subtract two snapshots — and snapshots are
+    // taken when somebody presses a button, so a month with none reports
+    // nothing at all. Never consulted for the running month: it has not closed.
+    const settled = inProgress
+      ? undefined
+      : options?.settledByMonth?.get(month);
+
     // The running month is not a verdict — it is not over. When there is no real
     // close behind it, the observed difference is 0 for a goal just created and
     // says nothing useful, so the estimate takes over: what the wallets can
@@ -224,7 +256,16 @@ export function buildGoalMonthlyProgress(
     // it; by then the difference between two closes is the truth.
     const usesHeadroom =
       inProgress && index === 0 && options?.monthlyHeadroom !== undefined;
-    const delta = usesHeadroom ? options.monthlyHeadroom! : observedDelta;
+    const delta = usesHeadroom
+      ? options.monthlyHeadroom!
+      : (settled?.actual ?? observedDelta);
+
+    // A month closed with no snapshot behind it knows what the CONTRIBUTION
+    // ledgers came to, and nothing about the holdings — a close never looks at
+    // gold. Reporting the ledger alone is the honest total for such a month;
+    // reporting 0 would claim the goal held nothing.
+    const closedContribution = point ? null : (settled?.closing ?? null);
+    const endAmount = point?.progressAmount ?? closedContribution ?? 0;
 
     return {
       month,
@@ -232,7 +273,14 @@ export function buildGoalMonthlyProgress(
       // Whatever is not contribution money is value being held. Floored at 0:
       // a legacy point with no contribution figure reports all of it as held,
       // which is the honest reading of "we do not know how it got there".
-      holdingsAmount: Math.max(0, endAmount - (contribution ?? 0)),
+      //
+      // A close-only month has no holdings figure at all, and its whole total IS
+      // the contribution ledger, so this lands at 0 — correct rather than a
+      // guess: the job that wrote it never valued the gold.
+      holdingsAmount: Math.max(
+        0,
+        endAmount - (contribution ?? closedContribution ?? 0),
+      ),
       delta,
       planned,
       gap: delta === null || planned === null ? null : delta - planned,

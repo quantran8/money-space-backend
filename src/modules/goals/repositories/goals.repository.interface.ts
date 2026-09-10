@@ -92,4 +92,75 @@ export interface GoalsRepository {
    * to recompute. See `AssetsService.deleteAsset`.
    */
   deleteAllocationsByAsset(householdId: string, assetId: string): Promise<void>;
+
+  /**
+   * Every household with at least one live contribution share — the work list
+   * for the month-end close.
+   */
+  findHouseholdIdsWithContributionShares(): Promise<string[]>;
+  /**
+   * Contribution shares to close, with the goal priority the waterfall orders
+   * them by. Live goals only: a completed or cancelled goal has stopped saving.
+   */
+  findContributionSharesForSettlement(
+    householdId: string,
+  ): Promise<SettlementShareRow[]>;
+  /**
+   * `YYYY-MM` of the last month closed for this household, or undefined when
+   * none ever was. Drives the catch-up when the job has not run for a while.
+   */
+  findLastSettledMonth(householdId: string): Promise<string | undefined>;
+  /**
+   * Write one month's closes and move the ledgers they belong to.
+   *
+   * Skips shares already settled for that month rather than restating them, and
+   * returns how many were actually written. Callers wrap this in a transaction.
+   */
+  insertSettlementsAndAdvanceLedgers(
+    householdId: string,
+    month: string,
+    rows: SettlementWrite[],
+  ): Promise<number>;
+  /**
+   * One goal's closed months, oldest first — what the pace panel reports for
+   * every month that has ended.
+   */
+  findSettlementsByGoal(
+    householdId: string,
+    goalId: string,
+  ): Promise<GoalMonthSettlement[]>;
+}
+
+/** One goal's close for one month, summed over its wallets. */
+export interface GoalMonthSettlement {
+  month: string;
+  actual: number;
+  closing: number;
+  shortOnWallet: boolean;
+  needsShareDecision: boolean;
+}
+
+/** One contribution share as the settlement job reads it. */
+export interface SettlementShareRow {
+  allocationId: string;
+  goalId: string;
+  assetId: string;
+  allocatedAmount: number;
+  monthlyContribution: number | null;
+  sharePercent: number | null;
+  priority: 'low' | 'medium' | 'high';
+}
+
+/** One settled share, ready to store. */
+export interface SettlementWrite {
+  allocationId: string;
+  goalId: string;
+  assetId: string;
+  opening: number;
+  target: number;
+  closing: number;
+  actual: number;
+  walletBalance: number;
+  shortOnWallet: boolean;
+  needsShareDecision: boolean;
 }

@@ -37,9 +37,9 @@ export class PrismaMarketDataRepository
     // quotes ~20 currencies against a 10-row catalog. Filtering here keeps one
     // unseeded code (CAD, CHF, …) from failing the whole batch.
     const catalog = new Set(
-      (
-        await this.prisma.currency.findMany({ select: { code: true } })
-      ).map((row) => row.code.trim().toUpperCase()),
+      (await this.prisma.currency.findMany({ select: { code: true } })).map(
+        (row) => row.code.trim().toUpperCase(),
+      ),
     );
     const known = rates.filter((rate) =>
       catalog.has(rate.baseCurrency.trim().toUpperCase()),

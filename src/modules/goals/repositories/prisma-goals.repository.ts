@@ -13,7 +13,12 @@ import {
   GoalAssetAllocation,
 } from '../entities/financial-goal.entity';
 import { Household } from '../../households/entities/household.entity';
-import { GoalsRepository } from './goals.repository.interface';
+import {
+  GoalMonthSettlement,
+  GoalsRepository,
+  SettlementShareRow,
+  SettlementWrite,
+} from './goals.repository.interface';
 
 @Injectable()
 export class PrismaGoalsRepository
@@ -359,5 +364,138 @@ export class PrismaGoalsRepository
       where: { householdId, assetId, deletedAt: null },
       data: { deletedAt: new Date() },
     });
+  }
+
+  async findHouseholdIdsWithContributionShares(): Promise<string[]> {
+    const rows = await this.prisma.goalAssetAllocation.findMany({
+      where: { role: 'contribution', deletedAt: null },
+      distinct: ['householdId'],
+      select: { householdId: true },
+    });
+    return rows.map((row) => row.householdId);
+  }
+
+  async findContributionSharesForSettlement(
+    householdId: string,
+  ): Promise<SettlementShareRow[]> {
+    const rows = await this.prisma.goalAssetAllocation.findMany({
+      where: {
+        householdId,
+        role: 'contribution',
+        deletedAt: null,
+        // A paused goal is deliberately still settled: the household stopped
+        // adding to it, not saving what it holds. Only a finished or abandoned
+        // goal drops out.
+        financialGoal: {
+          deletedAt: null,
+          status: { in: ['active', 'paused'] },
+        },
+      },
+      select: {
+        id: true,
+        financialGoalId: true,
+        assetId: true,
+        allocatedAmount: true,
+        monthlyContribution: true,
+        sharePercent: true,
+        financialGoal: { select: { priority: true } },
+      },
+    });
+    return rows.map((row) => ({
+      allocationId: row.id,
+      goalId: row.financialGoalId,
+      assetId: row.assetId,
+      allocatedAmount: Number(row.allocatedAmount ?? 0),
+      monthlyContribution:
+        row.monthlyContribution == null
+          ? null
+          : Number(row.monthlyContribution),
+      sharePercent: row.sharePercent == null ? null : Number(row.sharePercent),
+      priority: row.financialGoal.priority,
+    }));
+  }
+
+  async findLastSettledMonth(householdId: string): Promise<string | undefined> {
+    const row = await this.prisma.goalContributionSettlement.findFirst({
+      where: { householdId },
+      orderBy: { month: 'desc' },
+      select: { month: true },
+    });
+    return row?.month;
+  }
+
+  async insertSettlementsAndAdvanceLedgers(
+    householdId: string,
+    month: string,
+    rows: SettlementWrite[],
+  ): Promise<number> {
+    if (rows.length === 0) return 0;
+    // `skipDuplicates` against the (allocation_id, month) unique index is what
+    // makes a re-run a no-op instead of doubling the month.
+    const inserted = await this.prisma.goalContributionSettlement.createMany({
+      data: rows.map((row) => ({
+        id: uuidv7(),
+        householdId,
+        financialGoalId: row.goalId,
+        allocationId: row.allocationId,
+        assetId: row.assetId,
+        month,
+        openingAmount: row.opening,
+        targetAmount: row.target,
+        closingAmount: row.closing,
+        actualAmount: row.actual,
+        walletBalance: row.walletBalance,
+        shortOnWallet: row.shortOnWallet,
+        needsShareDecision: row.needsShareDecision,
+      })),
+      skipDuplicates: true,
+    });
+    // Nothing new stored means the month was already closed; the ledgers moved
+    // with it then, and moving them again would advance them twice.
+    if (inserted.count === 0) return 0;
+    for (const row of rows) {
+      await this.prisma.goalAssetAllocation.updateMany({
+        where: { id: row.allocationId, householdId, deletedAt: null },
+        data: { allocatedAmount: row.closing },
+      });
+    }
+    return inserted.count;
+  }
+
+  async findSettlementsByGoal(
+    householdId: string,
+    goalId: string,
+  ): Promise<GoalMonthSettlement[]> {
+    const rows = await this.prisma.goalContributionSettlement.findMany({
+      where: { householdId, financialGoalId: goalId },
+      orderBy: { month: 'asc' },
+      select: {
+        month: true,
+        actualAmount: true,
+        closingAmount: true,
+        shortOnWallet: true,
+        needsShareDecision: true,
+      },
+    });
+    // A goal fed by two wallets closes as two rows per month; the month's
+    // contribution is their sum.
+    const byMonth = new Map<string, GoalMonthSettlement>();
+    for (const row of rows) {
+      const found = byMonth.get(row.month);
+      const entry = found ?? {
+        month: row.month,
+        actual: 0,
+        closing: 0,
+        shortOnWallet: false,
+        needsShareDecision: false,
+      };
+      entry.actual += Number(row.actualAmount);
+      entry.closing += Number(row.closingAmount);
+      entry.shortOnWallet = entry.shortOnWallet || row.shortOnWallet;
+      entry.needsShareDecision =
+        entry.needsShareDecision || row.needsShareDecision;
+      byMonth.set(row.month, entry);
+    }
+    return [...byMonth.values()];
   }
 }
