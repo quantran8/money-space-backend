@@ -41,6 +41,7 @@ export function resolveEntitlement(
   householdId: string,
   row: SubscriptionRow | null,
   now: Date,
+  trialDays = 0,
 ): Entitlement {
   if (!row) {
     return {
@@ -53,6 +54,7 @@ export function resolveEntitlement(
       source: null,
       isTrial: false,
       trialUsed: false,
+      trialDays,
       limits: PLAN_LIMITS.free,
     };
   }
@@ -85,6 +87,7 @@ export function resolveEntitlement(
     // Having started one at any point is what disqualifies a second, so this
     // stays true long after the trial itself has ended.
     trialUsed: row.trialStartedAt !== null,
+    trialDays,
     limits: isPremium ? PLAN_LIMITS.premium : PLAN_LIMITS.free,
   };
 }

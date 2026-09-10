@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { billingConfig } from '../../config/billing.config';
 import { CacheService } from '../../common/cache/cache.service';
 import { WhatIfUsageService } from './whatif-usage.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
@@ -67,7 +68,7 @@ export class EntitlementService {
   /** Never throws: a household with no row is simply on the free plan. */
   async forHousehold(householdId: string, now = new Date()): Promise<Entitlement> {
     const row = await this.loadRow(householdId);
-    return resolveEntitlement(householdId, row, now);
+    return resolveEntitlement(householdId, row, now, billingConfig.trialDays);
   }
 
   /**

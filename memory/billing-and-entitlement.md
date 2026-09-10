@@ -17,7 +17,7 @@ Two tiers, priced per household — both people, never per seat:
 ```
 
 **Free**: 2 active goals · 3 what-ifs/month · 1 auto-priced asset · 7/30-day
-horizon · 3 months of history · 14-day trial on signup.
+horizon · 3 months of history · a 14-day trial the household starts itself.
 
 **Never gated**: inviting a partner, sharing levels, the activity log, the
 what-if asset-sale funding step, and recording gold/stocks/crypto on the balance
@@ -136,15 +136,48 @@ so the next "Xem thử" goes through `handleRun` and counts.
 ## Granting
 
 `SubscriptionService.grantOrExtend` is the only writer of
-`household_subscriptions`. Codes, payments, manual grants and the signup trial
-all come through it, so the stacking rules exist once and the entitlement cache
-is dropped in exactly one place.
+`household_subscriptions` for codes, payments and manual grants, so the stacking
+rules exist once and the entitlement cache is dropped in exactly one place.
 
 It takes `SELECT … FOR UPDATE` first: without the lock, two grants arriving
 together both read the old expiry and one is silently lost.
 
-The trial is disqualified by `trialStartedAt`, which outlives the trial itself —
-so a household cannot get a second one after expiry.
+### The trial is an action in the paywall, not a signup default
+
+`createHousehold` writes **no** subscription row. A new household is on Free,
+and a missing row IS Free — so there is nothing to write and nothing to fail.
+
+It used to be granted automatically as the household was created, which spent
+the fortnight on someone who had not yet entered a wallet. Most of it burnt down
+during setup, against a product they had no figures in yet — so the trial ran
+out before it could ever show what Premium does, and `trialStartedAt` had
+already disqualified them from another. The strongest fortnight is the one that
+starts at the moment a household hits a wall and wants past it.
+
+`SubscriptionService.startTrial` is what the paywall's "Dùng thử N ngày" button
+calls (`POST /households/:id/entitlement/trial`). It takes the same
+`FOR UPDATE` lock — two taps must not both pass the check — and every refusal
+throws `TrialUnavailableException` (409) rather than returning false: the caller
+is a button, and one that silently does nothing is worse than one that says why.
+
+Three refusals, all codes rather than sentences:
+
+| Code | When |
+|---|---|
+| `trial_already_used` | `trialStartedAt` is set — it outlives the trial, so this refuses a second one long after the first expired |
+| `already_premium` | never downgrade someone who paid |
+| `trial_disabled` | `BILLING_TRIAL_DAYS` is 0 or less |
+
+That last one is the reason the check exists at all: zero days used to grant a
+trial that had already expired, burning `trialStartedAt` for nothing.
+
+**The clients never hardcode 14.** `trialDays` rides on the entitlement beside
+`trialUsed`, so the button says the real number and `BILLING_TRIAL_DAYS=0`
+removes it everywhere without an app release. `useStartTrial` hides the button
+unless `trialUsed` is false and `trialDays > 0` — and unlike the gates, it does
+**not** fail open while the entitlement loads: this button spends something, so
+it waits for a real answer. A 409 anyway (the other partner took it first)
+refetches rather than insists.
 
 ## Money is settled in the WHERE clause, not in an `if`
 

@@ -1,7 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { EntitlementService } from './entitlement.service';
 import { extendPeriod, type Grant } from './domain/extend-period';
-import type { EntitlementSource } from './entities/entitlement.entity';
+import type {
+  Entitlement,
+  EntitlementSource,
+} from './entities/entitlement.entity';
+import { TrialUnavailableException } from './entitlement.errors';
 import {
   BILLING_REPOSITORY,
   type BillingRepository,
@@ -20,7 +24,7 @@ export interface GrantResult {
  * The only writer of `household_subscriptions`.
  *
  * Everything that can hand a household Premium — a code, a payment, a manual
- * grant, the signup trial — comes through `grantOrExtend`, so the stacking
+ * grant — comes through `grantOrExtend`, so the stacking
  * rules exist once and the entitlement cache is dropped in exactly one place.
  */
 @Injectable()
@@ -76,19 +80,29 @@ export class SubscriptionService {
   }
 
   /**
-   * The signup trial. Skipped silently when the household has ever had one —
-   * `trialStartedAt` is what disqualifies a second, and it outlives the trial
-   * itself.
+   * Start the free trial. Chosen by the household in the paywall, never granted
+   * for them. See memory/billing-and-entitlement.md.
    */
-  async startTrialIfEligible(
+  async startTrial(
     householdId: string,
     days: number,
     now = new Date(),
-  ): Promise<boolean> {
-    const current = await this.billingRepository.findSubscription(householdId);
-    if (current?.trialStartedAt) return false;
+  ): Promise<Entitlement> {
+    if (!Number.isFinite(days) || days <= 0) {
+      throw new TrialUnavailableException('trial_disabled');
+    }
+
+    // FOR UPDATE: two taps arriving together must not both pass the check.
+    const current = await this.billingRepository.lockSubscription(householdId);
+
+    // `trialStartedAt` outlives the trial, so this refuses a second one too.
+    if (current?.trialStartedAt) {
+      throw new TrialUnavailableException('trial_already_used');
+    }
     // Never downgrade someone who already paid.
-    if (current?.tier === 'premium') return false;
+    if (current?.tier === 'premium') {
+      throw new TrialUnavailableException('already_premium');
+    }
 
     const endsAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
 
@@ -101,6 +115,8 @@ export class SubscriptionService {
       trialEndsAt: endsAt,
     });
     await this.entitlements.invalidate(householdId);
-    return true;
+
+    // The fresh entitlement, so the client re-renders from the server's answer.
+    return this.entitlements.forHousehold(householdId, now);
   }
 }

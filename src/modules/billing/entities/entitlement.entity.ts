@@ -64,6 +64,8 @@ export interface Entitlement {
   isTrial: boolean;
   /** A household that has used its trial is never offered another. */
   trialUsed: boolean;
+  /** How long the trial on offer lasts. 0 when trials are switched off. */
+  trialDays: number;
   limits: PlanLimits;
   /**
    * Present only on `GET /entitlement`, which queries for it. Left out of the

@@ -1,7 +1,5 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
-import { billingConfig } from '../../config/billing.config';
-import { SubscriptionService } from '../billing/subscription.service';
 import type { CreateHouseholdDto } from './dto/create-household.dto';
 import { HOUSEHOLDS_REPOSITORY } from './repositories/households.repository.interface';
 import type { HouseholdsRepository } from './repositories/households.repository.interface';
@@ -16,10 +14,7 @@ export class HouseholdsService {
   constructor(
     @Inject(HOUSEHOLDS_REPOSITORY)
     private readonly householdsRepository: HouseholdsRepository,
-    private readonly subscriptions: SubscriptionService,
   ) {}
-
-  private readonly logger = new Logger(HouseholdsService.name);
 
   /** Households the given user belongs to. Drives onboarding gating on the client. */
   async listMyHouseholds(user: AuthUser) {
@@ -104,27 +99,10 @@ export class HouseholdsService {
       inviteEmail: inviteEmail || null,
     });
 
-    // Every new household starts on the full product for a fortnight. It is
-    // granted here rather than lazily on first read so `trialEndsAt` is a fixed
-    // date from the moment the household exists — a trial that silently starts
-    // when someone first opens a gated screen would end on a different day for
-    // each household, and could not be spoken about in the UI.
-    //
-    // Deliberately NOT fatal: a household that exists without a trial row is a
-    // household on the free plan, which works. Failing the create over it would
-    // lose the household itself, which is the one thing that must not happen at
-    // signup.
-    try {
-      await this.subscriptions.startTrialIfEligible(
-        household.id,
-        billingConfig.trialDays,
-      );
-    } catch (error) {
-      this.logger.error(
-        `Could not start the trial for household ${household.id}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
+    // No plan row is written here on purpose: a new household is on Free, and
+    // a missing row IS Free. The trial is a choice the household makes in the
+    // paywall, not something spent for them before they have seen what Premium
+    // does — see `SubscriptionService.startTrial`.
 
     return household;
   }

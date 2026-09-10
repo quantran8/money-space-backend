@@ -21,6 +21,7 @@ export function premiumEntitlement(
     source: 'manual_grant',
     isTrial: false,
     trialUsed: false,
+    trialDays: 14,
     limits: PLAN_LIMITS.premium,
     ...over,
   };
@@ -38,6 +39,7 @@ export function freeEntitlement(over: Partial<Entitlement> = {}): Entitlement {
     source: null,
     isTrial: false,
     trialUsed: false,
+    trialDays: 14,
     limits: PLAN_LIMITS.free,
     ...over,
   };
