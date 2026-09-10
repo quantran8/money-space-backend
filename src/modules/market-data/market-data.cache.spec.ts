@@ -314,8 +314,11 @@ describe('MarketDataService commodity + fx caching', () => {
     };
     const getFxRates = jest.fn().mockResolvedValue([rate]);
     const service = new MarketDataService(
-      { getFxRates, getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
-        saveFxRates: jest.fn().mockResolvedValue(0) },
+      {
+        getFxRates,
+        getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
+      },
       { getLatestPrices: jest.fn().mockResolvedValue([]) },
       { listSymbols: jest.fn().mockResolvedValue([]) },
       {

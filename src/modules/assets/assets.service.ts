@@ -741,7 +741,10 @@ export class AssetsService {
    * actually holds. Throws rather than guessing when no rate is published: a
    * silent 1:1 would debit 2.400đ for a $2.400 purchase.
    */
-  private async toVndCost(cost: number, quoteCurrency: string): Promise<number> {
+  private async toVndCost(
+    cost: number,
+    quoteCurrency: string,
+  ): Promise<number> {
     if (!cost || quoteCurrency.toUpperCase() === 'VND') return cost;
     const fxRates = await this.assetsRepository.getFxRates();
     const rate = fxRateToVnd(fxRates, quoteCurrency);

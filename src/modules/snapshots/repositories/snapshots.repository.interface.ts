@@ -122,4 +122,12 @@ export interface SnapshotsRepository {
     householdId: string,
     snapshotId: string,
   ): Promise<SnapshotDetail | undefined>;
+  /**
+   * Every live household — the work list for the month-end snapshot.
+   *
+   * Deliberately not narrowed to households with goals: a snapshot is the whole
+   * financial picture, and a household with no goal at all still has assets,
+   * debts and a forecast worth a monthly record.
+   */
+  findAllHouseholdIds(): Promise<string[]>;
 }

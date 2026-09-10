@@ -911,7 +911,10 @@ export class GoalsService {
       if (assetValue === undefined || assetType === undefined) {
         throw new NotFoundException(`Asset "${entry.assetId}" was not found`);
       }
-      const shape = normalizeAllocationShape(entry.kind, entry);
+      // Resolved BEFORE the shape: a contribution share may only be `fixed`, so
+      // the shape check needs to know which role this row is taking.
+      const role = entry.role ?? defaultRoleForType(assetType);
+      const shape = normalizeAllocationShape(entry.kind, entry, role);
       this.assertWithinAssetValue(
         existing,
         entry.assetId,
@@ -922,7 +925,6 @@ export class GoalsService {
       );
       pending.push({ assetId: entry.assetId, ...shape });
 
-      const role = entry.role ?? defaultRoleForType(assetType);
       this.assertShareWithinWallet(
         existing,
         existingGoals,
@@ -1115,10 +1117,13 @@ export class GoalsService {
     // goal even when the bill fits inside unassigned money.
     const walletShares = resolveWalletShareByGoal(claims, liveAssetValues);
     const share = walletShares.get(goalId);
-    const conversions = await this.goalsRepository.findGoalConversionPurchases(
-      householdId,
-      allocations.map((allocation) => allocation.assetId),
-    );
+    const [conversions, settlements] = await Promise.all([
+      this.goalsRepository.findGoalConversionPurchases(
+        householdId,
+        allocations.map((allocation) => allocation.assetId),
+      ),
+      this.goalsRepository.findSettlementsByGoal(householdId, goalId),
+    ]);
 
     return {
       householdId,
@@ -1141,6 +1146,14 @@ export class GoalsService {
             (input) => input.role === 'contribution',
           ),
           conversionCreditByMonth: buildConversionCredit(conversions),
+          // What the month-end close came to, for every month it has run. Beats
+          // the snapshot difference wherever it exists — see memory/goals.md.
+          settledByMonth: new Map(
+            settlements.map((row) => [
+              row.month,
+              { actual: row.actual, closing: row.closing },
+            ]),
+          ),
           baselineContribution: goal.baselineContributionAmount,
           // Null when this goal has no contribution wallet at all: nothing to
           // estimate, which the panel reads as "no target" rather than as a
@@ -1385,8 +1398,6 @@ export class GoalsService {
     if (!payload.assetId) {
       throw new BadRequestException('assetId is required');
     }
-    const shape = normalizeAllocationShape(payload.kind, payload);
-
     const [existing, assets, existingGoals] = await Promise.all([
       this.goalsRepository.findAllocationsByHousehold(householdId),
       this.assetIndex(householdId),
@@ -1410,6 +1421,11 @@ export class GoalsService {
       );
     }
 
+    // Both resolved before the value check: a contribution share may only be
+    // `fixed`, so the shape cannot be settled until the role is known.
+    const role = payload.role ?? defaultRoleForType(assetType);
+    const shape = normalizeAllocationShape(payload.kind, payload, role);
+
     this.assertWithinAssetValue(
       existing,
       payload.assetId,
@@ -1418,7 +1434,6 @@ export class GoalsService {
       undefined,
     );
 
-    const role = payload.role ?? defaultRoleForType(assetType);
     this.assertShareWithinWallet(
       existing,
       existingGoals,
@@ -1476,19 +1491,26 @@ export class GoalsService {
       throw new NotFoundException(`Allocation "${allocationId}" was not found`);
     }
 
+    // Resolved first: the role decides which kinds are even legal, and both a
+    // role change and a kind change can arrive in the same request.
+    const role = payload.role ?? current.role;
     // The kind may change; when it does, the value for the NEW kind must be
     // supplied, because the column the old kind used is cleared on write.
     const kind = payload.kind ?? current.kind;
-    const shape = normalizeAllocationShape(kind, {
-      allocatedAmount:
-        payload.allocatedAmount ??
-        (kind === current.kind
-          ? (current.allocatedAmount ?? undefined)
-          : undefined),
-      percent:
-        payload.percent ??
-        (kind === current.kind ? (current.percent ?? undefined) : undefined),
-    });
+    const shape = normalizeAllocationShape(
+      kind,
+      {
+        allocatedAmount:
+          payload.allocatedAmount ??
+          (kind === current.kind
+            ? (current.allocatedAmount ?? undefined)
+            : undefined),
+        percent:
+          payload.percent ??
+          (kind === current.kind ? (current.percent ?? undefined) : undefined),
+      },
+      role,
+    );
 
     const [existing, assets, existingGoals] = await Promise.all([
       this.goalsRepository.findAllocationsByHousehold(householdId),
@@ -1509,7 +1531,6 @@ export class GoalsService {
       allocationId,
     );
 
-    const role = payload.role ?? current.role;
     this.assertShareWithinWallet(
       existing,
       existingGoals,
@@ -1760,7 +1781,33 @@ interface AllocationShape {
 function normalizeAllocationShape(
   kind: 'fixed' | 'percent' | undefined,
   value: { allocatedAmount?: number; percent?: number },
+  /**
+   * The role this share is taking. A `contribution` share may only ever be
+   * `fixed`.
+   *
+   * `kind` answers "does this claim track the asset's price?" — a question only
+   * a holding can be asked. A contribution wallet has no market price: its
+   * balance moves when money is paid in or spent, so "50% of this wallet" is not
+   * a standing arrangement that follows a price, it is a figure that re-derives
+   * itself every time the household buys groceries.
+   *
+   * Allowing it broke the pace panel, which is the whole reason the role exists.
+   * `resolveContributionProgressAmount` reads a percent share as the wallet's
+   * WHOLE balance, so the month's delta became "how much did this wallet move"
+   * rather than "how much went into the goal" — spending 2tr of unrelated money
+   * reported the household as 2tr behind on a pace they had in fact kept.
+   *
+   * Omitted by callers that have no role to hand (a legacy path, a shape check
+   * before the role is known); those get the old behaviour and are checked
+   * again once the role is resolved.
+   */
+  role?: GoalAllocationRole | null,
 ): AllocationShape {
+  if (kind === 'percent' && role === 'contribution') {
+    throw new BadRequestException(
+      'A monthly contribution share is always a fixed amount. A wallet has no market price for a percent to track — state what the goal already has in it as an amount, and the monthly pace separately.',
+    );
+  }
   if (kind === 'percent') {
     const percent = value.percent;
     if (percent == null || !Number.isFinite(percent)) {
