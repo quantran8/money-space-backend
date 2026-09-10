@@ -7,6 +7,7 @@ import { Inject } from '@nestjs/common';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { withAdvisoryLock } from '../../common/utils/advisory-lock';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { MarketDataService } from '../market-data/market-data.service';
 
 /** Kept below the DB pool budget so the job never starves live requests. */
 const DEFAULT_CONCURRENCY = 3;
@@ -34,6 +35,7 @@ export class AssetsValuationCron {
     @Inject(ASSETS_REPOSITORY)
     private readonly assetsRepository: AssetsRepository,
     private readonly prisma: PrismaService,
+    private readonly marketDataService: MarketDataService,
   ) {}
 
   /** 23:45 VN: end of day for every asset class, still the same date. */
@@ -73,6 +75,19 @@ export class AssetsValuationCron {
   /** The actual batch, once this instance holds the lock. */
   private async captureAll(): Promise<{ households: number; assets: number }> {
     const startedAt = Date.now();
+
+    // Rates first: `fxRateToVnd` reads `fx_rates`, and a missing rate values
+    // every non-VND holding at 0. A failure here must not abandon the run —
+    // yesterday's rate still prices today.
+    try {
+      await this.marketDataService.captureFxRates();
+    } catch (error) {
+      this.logger.error(
+        `FX capture failed, continuing with stored rates: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
 
     // Resolved once: a batch crossing midnight must not split across two dates.
     const valuationDate = todayInTimeZone();

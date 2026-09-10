@@ -77,6 +77,7 @@ function build(
     {
       getFxRates: jest.fn().mockResolvedValue([]),
       getMarketSymbolUniverse,
+      saveFxRates: jest.fn().mockResolvedValue(0),
     },
     { getLatestPrices },
     { listSymbols },
@@ -313,7 +314,8 @@ describe('MarketDataService commodity + fx caching', () => {
     };
     const getFxRates = jest.fn().mockResolvedValue([rate]);
     const service = new MarketDataService(
-      { getFxRates, getMarketSymbolUniverse: jest.fn().mockResolvedValue([]) },
+      { getFxRates, getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0) },
       { getLatestPrices: jest.fn().mockResolvedValue([]) },
       { listSymbols: jest.fn().mockResolvedValue([]) },
       {
@@ -355,6 +357,7 @@ describe('MarketDataService.getQuote (asset-create)', () => {
       {
         getFxRates: jest.fn().mockResolvedValue([]),
         getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
       },
       { getLatestPrices },
       { listSymbols: jest.fn().mockResolvedValue([]) },
@@ -378,6 +381,7 @@ describe('MarketDataService.getQuote (asset-create)', () => {
       {
         getFxRates: jest.fn().mockResolvedValue([]),
         getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
       },
       { getLatestPrices: jest.fn().mockResolvedValue([]) },
       { listSymbols: jest.fn().mockResolvedValue([]) },
@@ -510,6 +514,7 @@ describe('MarketDataService.getMarketPrices for crypto', () => {
           { assetClass: 'crypto', symbol: 'BTC', quoteCurrency: 'VND' },
           { assetClass: 'stock', symbol: 'VNM', quoteCurrency: 'VND' },
         ]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
       },
       { getLatestPrices },
       { listSymbols: jest.fn().mockResolvedValue([]) },
@@ -579,6 +584,7 @@ describe('MarketDataService.getQuote for crypto', () => {
       {
         getFxRates: jest.fn().mockResolvedValue([]),
         getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
       },
       { getLatestPrices },
       { listSymbols: jest.fn().mockResolvedValue([]) },
@@ -733,6 +739,7 @@ describe('MarketDataService.getQuote for gold and foreign currency', () => {
       {
         getFxRates: jest.fn().mockResolvedValue([]),
         getMarketSymbolUniverse: jest.fn().mockResolvedValue([]),
+        saveFxRates: jest.fn().mockResolvedValue(0),
       },
       { getLatestPrices },
       { listSymbols: jest.fn().mockResolvedValue([]) },
