@@ -602,6 +602,60 @@ describe('GoalsService — allocations', () => {
 describe('GoalsService — the goal pace mirror', () => {
   // The stored column exists so every goal surface can show a pace without
   // reading allocations. That is only safe while the two are written together.
+  // `kind` asks whether a claim tracks the asset's price. A wallet has none, so
+  // a percent there does not follow anything — it re-reads itself against the
+  // balance every time the household spends. That would be measured by the pace
+  // panel as money leaving the goal, reporting a shortfall against a pace the
+  // household actually kept.
+  it('refuses a contribution share stated as a percent', async () => {
+    const { service } = setup();
+    await expect(
+      service.createAllocation('hh-1', 'goal-car', {
+        assetId: 'vcb',
+        kind: 'percent',
+        percent: 100,
+        role: 'contribution',
+        monthlyContribution: 7 * M,
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  // The same combination reached by editing rather than creating: a holding
+  // share stated as a percent, then switched to being a contribution.
+  it('refuses to turn a percent share into a contribution', async () => {
+    const { service } = setup({
+      allocations: [
+        allocation({
+          id: 'alloc-stocks',
+          assetId: 'stocks',
+          role: 'holding',
+          kind: 'percent',
+          percent: 50,
+          allocatedAmount: null,
+        }),
+      ],
+    });
+    await expect(
+      service.updateAllocation('hh-1', 'goal-car', 'alloc-stocks', {
+        role: 'contribution',
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  // The rule is about the pair, not about percents: a holding may still be one.
+  it('still allows a holding share stated as a percent', async () => {
+    const { service, insertAllocation } = setup();
+    await service.createAllocation('hh-1', 'goal-car', {
+      assetId: 'stocks',
+      kind: 'percent',
+      percent: 50,
+      role: 'holding',
+    });
+    expect(insertAllocation).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'percent', percent: 50 }),
+    );
+  });
+
   it('rewrites the goal pace when a wallet share is added', async () => {
     const { service, updatePlannedMonthlyContribution } = setup();
     await service.createAllocation('hh-1', 'goal-car', {

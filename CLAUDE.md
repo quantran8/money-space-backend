@@ -120,11 +120,21 @@ Operator setup (Grafana Cloud credentials, importing the dashboard):
 
 ## Scheduled jobs
 
-`ScheduleModule.forRoot()` is registered in `AppModule`. One job today:
-`AssetsValuationCron` (23:45 Asia/Ho_Chi_Minh) captures every market asset's
-end-of-day value, so history holds settled days while today stays live — see
-`memory/market-data.md`. It is the only writer of that series; nothing
-re-prices per page visit.
+`ScheduleModule.forRoot()` is registered in `AppModule`. Jobs today:
+
+- `AssetsValuationCron` (23:45 Asia/Ho_Chi_Minh) captures every market asset's
+  end-of-day value, so history holds settled days while today stays live — see
+  `memory/market-data.md`. It is the only writer of that series; nothing
+  re-prices per page visit.
+- `SavingDepositCron` (01:15) credits interest that has fallen due, then settles
+  matured deposits — in that order, within one job.
+- `MonthEndCron` (00:20 on the 1st) does everything a month's end requires, in
+  two phases within ONE job: snapshot the household, then close its contribution
+  ledgers — see `memory/goals.md`. The order is load-bearing (the settle phase
+  rewrites `allocated_amount`, which the snapshot has to freeze first), which is
+  why it is one job and not two crons at the same minute. It runs AFTER midnight
+  on purpose: a month is only closed once it is over. Idempotent via a unique
+  `(allocation_id, month)`, and it catches up months it missed.
 
 Two rules any new job must follow, both learned from that one:
 

@@ -401,6 +401,142 @@ describe('buildGoalMonthlyProgress', () => {
    * The reason the contribution figure is frozen separately at all: a pace built
    * on the total answered "did we keep our 10tr?" with the gold price.
    */
+  describe('months closed by the settlement job', () => {
+    // The close is measured from the wallet's own closing balance; the snapshot
+    // difference is inferred from whatever days somebody happened to save.
+    it('prefers the close over the snapshot difference', () => {
+      const rows = buildGoalMonthlyProgress(
+        [point('2026-01-31', 10 * M), point('2026-02-28', 12 * M)],
+        10 * M,
+        {
+          settledByMonth: new Map([
+            ['2026-02', { actual: 10 * M, closing: 0 }],
+          ]),
+        },
+      );
+      const february = rows.find((row) => row.month === '2026-02');
+      expect(february?.delta).toBe(10 * M);
+      expect(february?.gap).toBe(0);
+    });
+
+    // Snapshots are taken when somebody presses a button; the close runs on a
+    // schedule. A month with a close and no snapshot is still a month measured.
+    it('reports a month that has a close but no snapshot', () => {
+      const rows = buildGoalMonthlyProgress(
+        [point('2026-01-31', 10 * M)],
+        10 * M,
+        {
+          settledByMonth: new Map([
+            ['2026-02', { actual: 8 * M, closing: 18 * M }],
+          ]),
+        },
+      );
+      const february = rows.find((row) => row.month === '2026-02');
+      expect(february?.delta).toBe(8 * M);
+      expect(february?.gap).toBe(-2 * M);
+    });
+
+    // Without a snapshot there is no total to report, and 0 would claim the goal
+    // held nothing. The closing ledger is what the close does know.
+    it('reports the closing ledger as the total when no snapshot exists', () => {
+      const rows = buildGoalMonthlyProgress(
+        [point('2026-01-31', 10 * M)],
+        10 * M,
+        {
+          settledByMonth: new Map([
+            ['2026-02', { actual: 8 * M, closing: 18 * M }],
+          ]),
+        },
+      );
+      const february = rows.find((row) => row.month === '2026-02');
+      expect(february?.endAmount).toBe(18 * M);
+      // A close never values gold, so it claims no holdings rather than
+      // inventing a figure for them.
+      expect(february?.holdingsAmount).toBe(0);
+    });
+
+    // With a snapshot, the total keeps coming from it: only that knows what the
+    // holdings are worth.
+    it('keeps the snapshot total when both exist', () => {
+      const rows = buildGoalMonthlyProgress(
+        [
+          {
+            date: '2026-01-31',
+            progressAmount: 50 * M,
+            contributionAmount: 10 * M,
+          },
+          {
+            date: '2026-02-28',
+            progressAmount: 70 * M,
+            contributionAmount: 20 * M,
+          },
+        ],
+        10 * M,
+        {
+          settledByMonth: new Map([
+            ['2026-02', { actual: 10 * M, closing: 20 * M }],
+          ]),
+        },
+      );
+      const february = rows.find((row) => row.month === '2026-02');
+      expect(february?.endAmount).toBe(70 * M);
+      expect(february?.holdingsAmount).toBe(50 * M);
+      expect(february?.delta).toBe(10 * M);
+    });
+
+    // Never clamped: the close reports spending that ate into the goal, and the
+    // panel has to show it.
+    it('carries a negative close through', () => {
+      const rows = buildGoalMonthlyProgress(
+        [point('2026-01-31', 20 * M)],
+        10 * M,
+        {
+          settledByMonth: new Map([
+            ['2026-02', { actual: -2 * M, closing: 0 }],
+          ]),
+        },
+      );
+      expect(rows.find((row) => row.month === '2026-02')?.delta).toBe(-2 * M);
+    });
+
+    // The running month has not closed. Its figure stays the live one, and a
+    // stale close must not overwrite it.
+    it('never applies a close to the month still running', () => {
+      const rows = buildGoalMonthlyProgress(
+        [point('2026-01-31', 10 * M)],
+        10 * M,
+        {
+          current: point('2026-02-15', 15 * M),
+          settledByMonth: new Map([
+            ['2026-02', { actual: 99 * M, closing: 0 }],
+          ]),
+        },
+      );
+      const february = rows.find((row) => row.month === '2026-02');
+      expect(february?.inProgress).toBe(true);
+      expect(february?.delta).toBe(5 * M);
+    });
+
+    // Months the job has not reached fall back to the old behaviour.
+    it('leaves unsettled months on the snapshot difference', () => {
+      const rows = buildGoalMonthlyProgress(
+        [
+          point('2026-01-31', 10 * M),
+          point('2026-02-28', 18 * M),
+          point('2026-03-31', 30 * M),
+        ],
+        10 * M,
+        {
+          settledByMonth: new Map([
+            ['2026-03', { actual: 12 * M, closing: 0 }],
+          ]),
+        },
+      );
+      expect(rows.find((row) => row.month === '2026-02')?.delta).toBe(8 * M);
+      expect(rows.find((row) => row.month === '2026-03')?.delta).toBe(12 * M);
+    });
+  });
+
   describe('market movement stays out of the pace', () => {
     it('ignores a holding repricing', () => {
       const rows = buildGoalMonthlyProgress(

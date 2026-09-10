@@ -476,12 +476,12 @@ model Profile {
 }
 
 model Household {
-  id                      String                  @id @default(uuid(7)) @db.Uuid
-  name                    String
-  currency                String                  @default("VND")
-  updateFrequency         UpdateFrequency         @default(weekly) @map("update_frequency")
+  id                          String                       @id @default(uuid(7)) @db.Uuid
+  name                        String
+  currency                    String                       @default("VND")
+  updateFrequency             UpdateFrequency              @default(weekly) @map("update_frequency")
   // Personalization/analytics only — NEVER an input to permission checks.
-  financialManagementMode FinancialManagementMode @default(unsure) @map("financial_management_mode")
+  financialManagementMode     FinancialManagementMode      @default(unsure) @map("financial_management_mode")
   // Per-household config bag (jsonb). Holds household-scoped settings that don't
   // warrant their own column, e.g. `{ "defaultEventCategoryCode": "housing" }`
   // — the code auto-selected in the money-event form. Nullable / defaults to {}.
@@ -508,6 +508,7 @@ model Household {
   moneyEvents             MoneyEvent[]
   moneyEventCategories    MoneyEventCategory[]
   auditLogs               AuditLog[]
+  goalContributionSettlements GoalContributionSettlement[]
   subscription            HouseholdSubscription?
   redeemRedemptions       RedeemCodeRedemption[]
   paymentOrders           PaymentOrder[]
@@ -1301,13 +1302,13 @@ model CashflowEvent {
 /// `GoalsService` — the rule spans `goal_asset_allocations` and `assets`, which
 /// no CHECK can see.
 model FinancialGoal {
-  id                         String                @id @default(uuid(7)) @db.Uuid
-  householdId                String                @map("household_id") @db.Uuid
+  id                         String                       @id @default(uuid(7)) @db.Uuid
+  householdId                String                       @map("household_id") @db.Uuid
   name                       String
-  category                   GoalCategory          @default(other)
-  targetAmount               Decimal               @default(0) @map("target_amount") @db.Decimal(14, 2)
+  category                   GoalCategory                 @default(other)
+  targetAmount               Decimal                      @default(0) @map("target_amount") @db.Decimal(14, 2)
   // Renamed from `deadline` (spec §20).
-  targetDate                 DateTime?             @map("target_date") @db.Date
+  targetDate                 DateTime?                    @map("target_date") @db.Date
   // The declared pace, and a MAINTAINED MIRROR: never sent by a client, always
   // the sum of `monthly_contribution` over this goal's wallet shares (see
   // `GoalAssetAllocation`). `GoalsService` rewrites it in the same transaction
@@ -1321,7 +1322,7 @@ model FinancialGoal {
   // NULL means "no wallet declared an amount": show progress only, and never a
   // monthly verdict. NULL or <= 0 also means "no projected completion date" —
   // never divide by it without checking.
-  plannedMonthlyContribution Decimal?              @map("planned_monthly_contribution") @db.Decimal(14, 2)
+  plannedMonthlyContribution Decimal?                     @map("planned_monthly_contribution") @db.Decimal(14, 2)
   /// What the goal OPENED with — the contribution shares' fixed amounts at the
   /// moment it was created, frozen once and never rewritten.
   ///
@@ -1336,26 +1337,27 @@ model FinancialGoal {
   ///
   /// NULL for goals created before this existed whose first month has already
   /// closed — those have a real previous point and need no substitute.
-  baselineContributionAmount Decimal?              @map("baseline_contribution_amount") @db.Decimal(14, 2)
-  priority                   GoalPriority          @default(medium)
-  status                     GoalStatus            @default(active)
+  baselineContributionAmount Decimal?                     @map("baseline_contribution_amount") @db.Decimal(14, 2)
+  priority                   GoalPriority                 @default(medium)
+  status                     GoalStatus                   @default(active)
   // No source wallet on the goal. An `earmark` contribution names no wallet at
   // all (nothing is debited — the money is already the household's and stays
   // where it is); an `asset_backed` goal names its assets through
   // `allocations`, with a share each, not a single owning wallet.
   note                       String?
-  createdById                String                @map("created_by") @db.Uuid
-  createdAt                  DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById                String?               @map("updated_by") @db.Uuid
-  updatedAt                  DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt                  DateTime?             @map("deleted_at") @db.Timestamptz(6)
-  household                  Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  createdBy                  Profile               @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
-  updatedBy                  Profile?              @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
-  moneyEvents                MoneyEvent[]          @relation("MoneyEventFinancialGoal")
-  cashflowEvents             CashflowEvent[]       @relation("CashflowEventFinancialGoal")
+  createdById                String                       @map("created_by") @db.Uuid
+  createdAt                  DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById                String?                      @map("updated_by") @db.Uuid
+  updatedAt                  DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt                  DateTime?                    @map("deleted_at") @db.Timestamptz(6)
+  household                  Household                    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy                  Profile                      @relation("FinancialGoalCreatedBy", fields: [createdById], references: [id])
+  updatedBy                  Profile?                     @relation("FinancialGoalUpdatedBy", fields: [updatedById], references: [id])
+  moneyEvents                MoneyEvent[]                 @relation("MoneyEventFinancialGoal")
+  cashflowEvents             CashflowEvent[]              @relation("CashflowEventFinancialGoal")
   allocations                GoalAssetAllocation[]
   snapshotValues             SnapshotGoalValue[]
+  settlements                GoalContributionSettlement[]
 
   @@index([householdId, status])
   @@index([householdId, targetDate])
@@ -1378,14 +1380,14 @@ model FinancialGoal {
 /// `resolveGoalProgressAmount` caps a `fixed` claim at the asset's current
 /// value, so a goal can never report more money than actually exists.
 model GoalAssetAllocation {
-  id                  String             @id @default(uuid(7)) @db.Uuid
-  householdId         String             @map("household_id") @db.Uuid
-  financialGoalId     String             @map("financial_goal_id") @db.Uuid
-  assetId             String             @map("asset_id") @db.Uuid
+  id                  String                       @id @default(uuid(7)) @db.Uuid
+  householdId         String                       @map("household_id") @db.Uuid
+  financialGoalId     String                       @map("financial_goal_id") @db.Uuid
+  assetId             String                       @map("asset_id") @db.Uuid
   kind                GoalAllocationKind
   /// Whether this share is money being contributed (a wallet) or value already
   /// held (gold, stocks). Only `contribution` feeds the monthly pace.
-  role                GoalAllocationRole @default(holding)
+  role                GoalAllocationRole           @default(holding)
   /// The monthly pace this wallet is meant to feed the goal at, in VND.
   ///
   /// Only a `contribution` share may carry one — enforced by the
@@ -1396,7 +1398,7 @@ model GoalAssetAllocation {
   /// The goal's declared pace is the SUM of these. "10tr a month" is really "6tr
   /// out of the salary account and 4tr in cash", and saying it per wallet is what
   /// lets the plan be read against the wallets it is supposed to come from.
-  monthlyContribution Decimal?           @map("monthly_contribution") @db.Decimal(14, 2)
+  monthlyContribution Decimal?                     @map("monthly_contribution") @db.Decimal(14, 2)
   /// This goal's share of the wallet's remaining monthly room, used ONLY when
   /// the goals tied at the same priority cannot all be paid in full.
   ///
@@ -1412,22 +1414,23 @@ model GoalAssetAllocation {
   /// NULL means "never asked", NOT 100 — a tie among rows without a share falls
   /// back to splitting in proportion to the declared paces, which the UI flags
   /// as still the household's to decide.
-  sharePercent        Decimal?           @map("share_percent") @db.Decimal(5, 2)
+  sharePercent        Decimal?                     @map("share_percent") @db.Decimal(5, 2)
   /// Set when `kind = fixed`. A declared VND amount, unmoved by repricing.
-  allocatedAmount     Decimal?           @map("allocated_amount") @db.Decimal(14, 2)
+  allocatedAmount     Decimal?                     @map("allocated_amount") @db.Decimal(14, 2)
   /// Set when `kind = percent`. 0 < percent <= 100, tracks the asset's value.
-  percent             Decimal?           @db.Decimal(5, 2)
+  percent             Decimal?                     @db.Decimal(5, 2)
   note                String?
-  createdById         String             @map("created_by") @db.Uuid
-  createdAt           DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedById         String?            @map("updated_by") @db.Uuid
-  updatedAt           DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt           DateTime?          @map("deleted_at") @db.Timestamptz(6)
-  household           Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  financialGoal       FinancialGoal      @relation(fields: [financialGoalId], references: [id], onDelete: Cascade)
-  asset               Asset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
-  createdBy           Profile            @relation("GoalAssetAllocationCreatedBy", fields: [createdById], references: [id])
-  updatedBy           Profile?           @relation("GoalAssetAllocationUpdatedBy", fields: [updatedById], references: [id])
+  createdById         String                       @map("created_by") @db.Uuid
+  createdAt           DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedById         String?                      @map("updated_by") @db.Uuid
+  updatedAt           DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt           DateTime?                    @map("deleted_at") @db.Timestamptz(6)
+  household           Household                    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  financialGoal       FinancialGoal                @relation(fields: [financialGoalId], references: [id], onDelete: Cascade)
+  asset               Asset                        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  settlements         GoalContributionSettlement[]
+  createdBy           Profile                      @relation("GoalAssetAllocationCreatedBy", fields: [createdById], references: [id])
+  updatedBy           Profile?                     @relation("GoalAssetAllocationUpdatedBy", fields: [updatedById], references: [id])
 
   // One LIVE claim per (goal, asset) — a second row would be two answers to one
   // question. Partial (`WHERE deleted_at IS NULL`) so a soft-deleted claim never
@@ -1436,6 +1439,56 @@ model GoalAssetAllocation {
   @@index([financialGoalId])
   @@index([assetId])
   @@map("goal_asset_allocations")
+}
+
+/// One month's close on one contribution share.
+///
+/// `goal_asset_allocations.allocated_amount` is a sub-ledger: it moves as money
+/// moves, and the month-end job REWRITES it. That makes it a running figure with
+/// no memory, so without this table a closed month would be unrecoverable the
+/// moment the next one closed — and the pace panel would have nothing to read
+/// but the difference between two snapshots, which cannot tell money the goal
+/// kept from money the market moved.
+///
+/// Append-only. A row is the household's record of what a month came to, and a
+/// re-run of the job for a month already closed must leave the original alone
+/// rather than restate history — see the unique index on
+/// `(allocation_id, month)`.
+model GoalContributionSettlement {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  householdId        String              @map("household_id") @db.Uuid
+  financialGoalId    String              @map("financial_goal_id") @db.Uuid
+  allocationId       String              @map("allocation_id") @db.Uuid
+  assetId            String              @map("asset_id") @db.Uuid
+  /// `YYYY-MM` — the month being closed, in the household's own time zone.
+  month              String              @db.VarChar(7)
+  /// Where the ledger stood when the month opened.
+  openingAmount      Decimal             @map("opening_amount") @db.Decimal(14, 2)
+  /// `opening + monthly_contribution` — what the share was reaching for.
+  targetAmount       Decimal             @map("target_amount") @db.Decimal(14, 2)
+  /// Where the ledger stands now. Written back to the allocation.
+  closingAmount      Decimal             @map("closing_amount") @db.Decimal(14, 2)
+  /// `closing - opening`. NEGATIVE when the household spent past the money no
+  /// goal had claimed and into what this one held — that is the signal, so it is
+  /// never clamped.
+  actualAmount       Decimal             @map("actual_amount") @db.Decimal(14, 2)
+  /// The wallet's balance at the close, kept so a settlement can be explained
+  /// without re-deriving a figure that has moved on since.
+  walletBalance      Decimal             @map("wallet_balance") @db.Decimal(14, 2)
+  /// True when the share missed its target because the wallet ran out, rather
+  /// than because no pace was declared.
+  shortOnWallet      Boolean             @default(false) @map("short_on_wallet")
+  /// True when a tie at one priority was split by the product's fallback rather
+  /// than by shares the household had declared.
+  needsShareDecision Boolean             @default(false) @map("needs_share_decision")
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  household          Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  financialGoal      FinancialGoal       @relation(fields: [financialGoalId], references: [id], onDelete: Cascade)
+  allocation         GoalAssetAllocation @relation(fields: [allocationId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, month])
+  @@index([financialGoalId, month])
+  @@map("goal_contribution_settlements")
 }
 
 model MoneyEvent {

@@ -466,6 +466,143 @@ and keeps showing as such. This is only possible because `asset_purchase` now
 carries `from_asset_id` (see [[assets]]); before that, a wallet falling and gold
 rising were two unrelated facts and pairing them would have been a guess.
 
+### A contribution share is always a fixed amount
+
+`kind` answers one question: does this claim track the asset's PRICE? Only a
+holding can be asked it. Gold has a price, so "50% of my gold" is a standing
+arrangement that follows it.
+
+A wallet has no price — its balance moves only when money is paid in or spent —
+so a percent there tracks nothing. It re-derives itself every time the household
+buys groceries, and since the pace panel is built on contribution shares alone,
+the month's delta stopped meaning "how much went into the goal" and started
+meaning "how much did this wallet move". Spending 2tr of unpromised money
+reported the household as 2tr behind a pace they had in fact kept.
+
+Refused at three layers: `normalizeAllocationShape` throws with a message the
+household can act on, the `goal_asset_allocations_contribution_is_fixed` CHECK is
+the backstop, and both forms set `fixed` when a share becomes a contribution. The
+web dialog had been doing the OPPOSITE (`setKind('percent')` with 100%) — mobile
+never did, which is what showed it was a regression rather than a decision.
+
+### The month-end close: how a contribution is actually captured
+
+`goal_asset_allocations.allocated_amount` on a **contribution** share is a
+**sub-ledger**, not a figure the household typed once. The wallet is one account
+at the bank; the shares are the household's own division of it, and the division
+has to move when money does. TCB holding 30tr with 20tr promised to the car
+becomes TCB holding 40tr with 30tr promised, the month they put 10tr in.
+
+It used to sit still. A household that declared "20tr already there, 10tr a
+month" and then saved the full 10tr was told they had missed the month, because
+`min(allocated_amount, wallet)` still read 20tr and the delta was 0. The earlier
+attempt at a fix — making the share `kind = 'percent'` at 100% so it tracked the
+balance — traded that for a worse bug: the claim then followed EVERY movement, so
+buying groceries from the same wallet read as money leaving the goal. Percent on
+a contribution share is now refused outright (see the rule above).
+
+**Nothing here reads a transaction.** A transfer labelled "10tr for the car"
+states an INTENTION. If 4tr came back out of the same wallet on the 20th, the car
+did not get 10tr that month, and recording 10tr would record something that did
+not happen. So the month is left to run — money in, money out, no verdict — and
+what the goal actually kept is read off the balance once the month is over. That
+is accrual accounting, and the reason a period is only closed after it has ended.
+
+`settleMonthlyContributions` closes one month, per wallet:
+
+1. Each share AIMS at `allocated_amount + monthly_contribution`.
+2. What is available is the wallet's CLOSING balance, taken in `priority` order —
+   a `high` goal fills its aim before a `medium` one gets anything.
+3. A tie at one priority is split by the declared `sharePercent`, falling back to
+   the aims themselves when the household never said — the same rule
+   `resolveWalletShareByGoal` uses for the running month, so the mid-month
+   estimate and the close cannot disagree about who comes first.
+4. The new ledger figure is what the share claimed; `actual` is the difference
+   from where it started.
+
+That difference is the month's real contribution, and settling against the
+balance is what makes it honest in both directions:
+
+| Wallet at close | New ledger | Actual | Reading |
+|---|---|---|---|
+| 40tr | 30tr | +10tr | kept the pace |
+| 35tr | 30tr | +10tr | kept it — the 5tr spent was never promised |
+| 26tr | 26tr | +6tr | 4tr short |
+| 18tr | 18tr | −2tr | spent into what the goal held |
+
+The second row is the point. Money no goal has claimed is the household's to
+spend, and spending it costs them nothing. Only spending that reaches THROUGH the
+unpromised money and into the promised part shows up — and it shows up as exactly
+what it took, never more. A percent claim could not do this: it took its cut from
+the first đồng spent.
+
+`actual` is **never clamped at zero**. Eating into money the goal had already
+banked is the signal, and a floor would hide it.
+
+**A share with no declared pace still aims at what it already holds.** The
+household never promised to add to it, but never released it either, so it keeps
+its place in the queue ahead of lower-priority goals.
+
+#### What the pace panel reads
+
+For any month that has CLOSED, the panel reports the close — not the difference
+between two snapshots. The close is measured from the wallet's own closing
+balance, priority order and all; the snapshot difference can only subtract two
+frozen points, and snapshots are taken when somebody presses a button, so a month
+with none reported nothing at all.
+
+A settled month therefore appears on the strength of its close alone, with no
+snapshot behind it. Months the job has not reached fall back to the snapshot
+difference exactly as before, so nothing about the existing history changes.
+
+**The running month never reads a close** — it has not closed. It keeps the live
+figure (or the headroom estimate for a goal with no month behind it yet), which
+is what `inProgress` tells the UI to label as partial.
+
+The month's TOTAL (`endAmount`) still comes from the snapshot wherever one
+exists: only a snapshot knows what the gold was worth, and a close never looks at
+it. For a month with a close and no snapshot the total falls back to the closing
+contribution ledger — the honest figure for what that job actually measured —
+and `holdingsAmount` lands at 0 rather than a guess. With `MonthEndCron` taking a
+snapshot in the same run, that fallback is the exception, not the norm.
+
+#### The two phases run in one job
+
+`MonthEndCron` (00:20 on the 1st) snapshots the household and THEN settles it.
+The order is the reason they share a job rather than a cron expression: the
+settle phase rewrites `allocated_amount`, so a snapshot taken after it would
+freeze ledgers that already carry the month's contribution — every frozen goal
+figure a month ahead of the picture it claims to be. As two crons at the same
+minute that ordering would be a scheduling coincidence; in one job it is a
+guarantee. Same reasoning as `SavingDepositCron`'s accrual-then-maturity pair.
+
+The snapshot half covers EVERY household, not only those with goals — a snapshot
+is the whole financial picture. A snapshot that fails does not stop the
+settlement: it is a record, not a precondition, and a household whose forecast
+will not build still deserves its ledgers closed. The 60s snapshot rate limit is
+one of the things that can make it skip, harmlessly: somebody who took one
+moments ago already has the picture.
+
+Ordering against the other jobs matters too, and is already right by the clock:
+`AssetsValuationCron` refreshes market prices at 23:45, so by 00:20 the gold and
+stock figures a snapshot freezes are the month's closing prices.
+
+#### Why a separate settlements table
+
+The close REWRITES `allocated_amount`, which makes that column a running figure
+with no memory. `goal_contribution_settlements` is the memory: one append-only
+row per share per month, holding the opening, the target, the closing, the actual
+and the wallet balance behind them.
+
+Without it a closed month becomes unrecoverable the moment the next one closes,
+and the pace panel would be back to subtracting two snapshots — which cannot tell
+money the household kept from money the market moved.
+
+The unique index on `(allocation_id, month)` is what makes the job **idempotent**:
+a re-run for a month already settled conflicts instead of writing a second row
+that would double the month's contribution. That is also what makes it safe to
+retry after a crash mid-run, and what stops a re-run from restating history.
+
 ### Why the progress bar explains itself
 
 A goal backed by gold reprices on its own: a household that saw 50% yesterday and

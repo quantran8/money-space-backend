@@ -6,6 +6,9 @@ import { SNAPSHOTS_REPOSITORY } from './repositories/snapshots.repository.interf
 import { PrismaSnapshotsRepository } from './repositories/prisma-snapshots.repository';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { ForecastModule } from '../forecast/forecast.module';
+import { AssetsModule } from '../assets/assets.module';
+import { GoalsModule } from '../goals/goals.module';
+import { MonthEndCron } from './month-end.cron';
 
 /**
  * Reads assets through its own repository + the pure `computeCurrentValue`
@@ -17,10 +20,21 @@ import { ForecastModule } from '../forecast/forecast.module';
  * and their now-dead injections went with them.
  */
 @Module({
-  imports: [CommonModule, MarketDataModule, ForecastModule],
+  // Assets + Goals for `MonthEndCron`: it settles goal ledgers against wallet
+  // values. Both edges are one-way — neither module imports this one (Goals
+  // binds SNAPSHOTS_REPOSITORY directly for exactly that reason), so the
+  // existing Snapshots → Forecast → Goals path stays acyclic.
+  imports: [
+    CommonModule,
+    MarketDataModule,
+    ForecastModule,
+    AssetsModule,
+    GoalsModule,
+  ],
   controllers: [SnapshotsController],
   providers: [
     SnapshotsService,
+    MonthEndCron,
     {
       provide: SNAPSHOTS_REPOSITORY,
       useClass: PrismaSnapshotsRepository,
