@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 
 import { AssetsService } from './assets.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import type { Asset } from './entities/asset.entity';
 import type { AssetValueHistory } from './entities/asset-value-history.entity';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
@@ -62,6 +63,7 @@ describe('AssetsService', () => {
         {} as never,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       ),
     };
   }
@@ -125,6 +127,7 @@ describe('AssetsService', () => {
         {} as never,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       );
     }
 
@@ -232,6 +235,7 @@ describe('AssetsService', () => {
       {} as never,
       // Premium: these tests are about the asset rules, not the plan.
       premiumEntitlements(),
+      noopAnalytics(),
     );
 
     await service.createAsset('household-1', {
@@ -332,6 +336,7 @@ describe('AssetsService', () => {
         {} as never,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       );
       return { service, existing, updateAsset, insertAssetPurchaseEvent };
     }
@@ -463,6 +468,7 @@ describe('AssetsService', () => {
         {} as never,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       );
       return {
         service,
@@ -562,6 +568,7 @@ describe('AssetsService', () => {
       {} as never,
       // Premium: these tests are about the asset rules, not the plan.
       premiumEntitlements(),
+      noopAnalytics(),
     );
 
     await service.updateAsset('household-1', current.id, {
@@ -839,6 +846,7 @@ describe('AssetsService', () => {
         {} as never,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       );
       return {
         service,
@@ -1051,6 +1059,7 @@ describe('AssetsService', () => {
         {} as never,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       );
       return { service, wallet, points };
     }

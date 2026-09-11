@@ -78,6 +78,12 @@ async function bootstrap() {
   app.setGlobalPrefix('api', { exclude: ['', 'health'] });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
+  // Without this, Nest never calls onModuleDestroy / onApplicationShutdown.
+  // PrismaService has implemented the former since day one and was never run,
+  // so every deploy dropped pooled connections uncleanly; analytics needs it to
+  // flush its last batch. See memory/infrastructure/deployment.md.
+  app.enableShutdownHooks();
+
   const port = process.env.PORT ?? 3000;
   await app.listen(port);
 

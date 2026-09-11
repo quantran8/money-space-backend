@@ -352,9 +352,18 @@ exactly; money that merely displaces future contributions uses
 (`comfortable | watch | tight | not_covered`) is a calm classification for
 styling, not advice. The product never says whether to buy.
 
-**Analytics carry only a bucket** — `{householdId, hasGoal, hasAssetSale,
-amountBucket, resultType}`. Never the amount, never the balances: a couple's
-figures stay theirs.
+**Analytics carry only a bucket** — `{hasGoal, hasAssetSale, amountBucket,
+resultType}`, plus `source` and `rerun`. Never the amount, never the balances: a
+couple's figures stay theirs.
+
+This used to be a `logger.log` line; it is now `analytics.capture('what_if_run',
+…)` with the same payload, snake_cased. The rule is no longer a convention —
+`SafeProps` in the event catalog makes a money-shaped property name a compile
+error at the call site. See [[analytics]].
+
+`source` says which screen the FAB was pressed on. The server normalises an
+unknown value to `'other'` and **never returns 400**: telemetry must not be able
+to fail a household's calculation.
 
 ### Funding a spend by selling an asset
 

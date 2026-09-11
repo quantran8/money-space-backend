@@ -29,7 +29,7 @@ export class PaymentsController {
   @Post('orders')
   createOrder(
     @Param('householdId') householdId: string,
-    @Body() payload: { planCode?: string },
+    @Body() payload: { planCode?: string; fromReason?: string },
     @CurrentMembership() membership?: HouseholdMembership,
   ) {
     if (!payload?.planCode) {
@@ -42,6 +42,9 @@ export class PaymentsController {
       householdId,
       membership.userId,
       payload.planCode,
+      // Telemetry only. An unrecognised value becomes null rather than a 400 —
+      // an attribution tag must never be able to fail a payment.
+      payload.fromReason,
     );
   }
 

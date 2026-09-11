@@ -20,6 +20,7 @@ import {
   type BillingRepository,
 } from './repositories/billing.repository.interface';
 import { isUniqueViolation } from '../../common/repositories/prisma-errors';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 
 /**
  * What the webhook did, for the log. Never returned to RevenueCat — the
@@ -53,6 +54,7 @@ export class RevenuecatService {
     private readonly subscriptions: SubscriptionService,
     private readonly cacheInvalidator: CacheInvalidator,
     private readonly audit: AuditService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -227,6 +229,19 @@ export class RevenuecatService {
             addedDays: result.addedDays,
             stacked: result.stacked,
           },
+        });
+
+        // The second revenue rail. Two nulls, both honest rather than guessed:
+        // the store charged in its own currency (so it is not a đồng figure),
+        // and an IAP arrives as a webhook with no order we created, so the wall
+        // that prompted it is not recoverable server-side.
+        // See memory/analytics.md.
+        this.analytics.capture(householdId, 'payment_settled', {
+          plan_code: planCode,
+          price_vnd: null,
+          provider: 'revenuecat',
+          store: event.store ?? null,
+          from_reason: null,
         });
       },
     );

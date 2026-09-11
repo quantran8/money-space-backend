@@ -23,6 +23,8 @@ import {
   type BillingRepository,
 } from './repositories/billing.repository.interface';
 import { isUniqueViolation } from '../../common/repositories/prisma-errors';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
+import { isPaywallReason } from '../../common/analytics/paywall-reason';
 
 /** PayOS's webhook body. `data` is what carries the signature. */
 export interface PayosWebhookBody {
@@ -58,6 +60,7 @@ export class PaymentsService {
     private readonly subscriptions: SubscriptionService,
     private readonly cacheInvalidator: CacheInvalidator,
     private readonly audit: AuditService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -67,7 +70,14 @@ export class PaymentsService {
    * client that could name its own amount could buy a lifetime plan for 1.000đ,
    * and the campaign discount has to be resolved server-side anyway.
    */
-  async createOrder(householdId: string, userId: string, planCode: string) {
+  async createOrder(
+    householdId: string,
+    userId: string,
+    planCode: string,
+    rawFromReason?: string,
+  ) {
+    // Narrowed to the eight reasons a 402 can carry; anything else is dropped.
+    const fromReason = isPaywallReason(rawFromReason) ? rawFromReason : null;
     if (!billingConfig.payosConfigured) {
       // Refused here rather than at the gateway, so the button fails with a
       // clear reason instead of a 503 halfway through a checkout.
@@ -103,6 +113,9 @@ export class PaymentsService {
         amount: offer.amount,
         durationDays: PLAN_CATALOG[planCode as PlanCode].durationDays,
         expiresAt,
+        // Frozen on the order because the webhook has no request context: by
+        // the time PayOS calls back, the paywall that prompted this is gone.
+        fromReason,
       });
     } catch (error) {
       // Two checkouts in the same second drew the same code. The unique index
@@ -130,6 +143,20 @@ export class PaymentsService {
       checkoutUrl: link.checkoutUrl,
       providerOrderId: link.paymentLinkId,
     });
+
+    // `price_vnd` is OUR list price, not the household's money — the one
+    // figure the catalog's ban carves an exception for.
+    this.analytics.capture(
+      householdId,
+      'checkout_created',
+      {
+        plan_code: planCode,
+        price_vnd: offer.amount,
+        discount_percent: offer.discountPercent,
+        from_reason: fromReason,
+      },
+      userId,
+    );
 
     return {
       orderCode: orderCode.toString(),
@@ -313,7 +340,14 @@ export class PaymentsService {
    * between the two writes for a crash to land in.
    */
   private async settle(
-    order: { orderCode: bigint | null; householdId: string; planCode: string; durationDays: number | null },
+    order: {
+      orderCode: bigint | null;
+      householdId: string;
+      planCode: string;
+      durationDays: number | null;
+      amount: number;
+      fromReason?: string | null;
+    },
     reference: string,
     body: PayosWebhookBody,
   ): Promise<void> {
@@ -357,6 +391,22 @@ export class PaymentsService {
             addedDays: result.addedDays,
             stacked: result.stacked,
           },
+        });
+
+        // Inside the transaction callback but after the grant: a settlement
+        // event for a payment that rolled back would be revenue we never took.
+        // No actor — PayOS called us, nobody pressed anything.
+        // `from_reason` comes off the ORDER, not the request: the webhook is
+        // PayOS calling us and has no user context at all. Freezing it at
+        // checkout is what makes "which wall converted" answerable.
+        this.analytics.capture(order.householdId, 'payment_settled', {
+          plan_code: order.planCode,
+          price_vnd: order.amount,
+          provider: 'payos',
+          store: null,
+          from_reason: isPaywallReason(order.fromReason)
+            ? order.fromReason
+            : null,
         });
       },
     );

@@ -1,4 +1,5 @@
 import { AssetsService } from './assets.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import {
   freeEntitlement,
   premiumEntitlement,
@@ -63,6 +64,7 @@ function makeService(
     {} as never,
     {} as never,
     entitlements,
+    noopAnalytics(),
   );
 
   return { service, insertAsset };

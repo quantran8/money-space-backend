@@ -1,5 +1,6 @@
 import { ConflictException, HttpStatus } from '@nestjs/common';
 import { RedeemService } from './redeem.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import type { BillingRepository } from './repositories/billing.repository.interface';
 
 /**
@@ -47,6 +48,7 @@ function build(overrides: {
     {} as never,
     cache as never,
     {} as never,
+    noopAnalytics(),
   );
 
   return { service, counters, cache };

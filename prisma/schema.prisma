@@ -728,6 +728,18 @@ model PaymentOrder {
   /// support, and for telling an auto-renewing subscription from a lapsed one.
   storeExpiresAt DateTime? @map("store_expires_at") @db.Timestamptz(6)
 
+  /// Which paywall sent the household to checkout, when one did.
+  ///
+  /// NULL is a real answer, not missing data: the plans page can be opened with
+  /// nothing refused. Always NULL on a RevenueCat order — an in-app purchase
+  /// arrives as a webhook with no order of ours, so the wall that prompted it
+  /// is not recoverable server-side.
+  ///
+  /// TEXT rather than an enum, for the reason `plan_code` is: an order is a
+  /// historical record, and retiring a paywall reason must not make an old
+  /// receipt unreadable.
+  fromReason String? @map("from_reason")
+
   /// Who started the checkout. Any member may pay; the plan is the
   /// household's either way.
   ///

@@ -33,6 +33,9 @@ const PAYMENT_ORDER_FIELDS = {
   planCode: true,
   amount: true,
   durationDays: true,
+  // `settle` reads this off the order: the webhook has no request context, so
+  // the paywall that prompted the checkout is only knowable from the row.
+  fromReason: true,
   providerTxnId: true,
   checkoutUrl: true,
   createdAt: true,

@@ -1,5 +1,6 @@
 import { GoalsService } from './goals.service';
 import { EntitlementService } from '../billing/entitlement.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import { PremiumRequiredException } from '../billing/entitlement.errors';
 import {
   freeEntitlement,
@@ -52,6 +53,7 @@ function makeService(entitlement: Entitlement, goals: FinancialGoal[]) {
     { findSubscription: jest.fn(async () => null) } as never,
     { get: jest.fn(async () => undefined), set: jest.fn(), del: jest.fn() } as never,
     {} as never,
+    noopAnalytics(),
   );
   // The row-to-entitlement resolution has its own spec; what is under test here
   // is what `createFinancialGoal` does with the answer.

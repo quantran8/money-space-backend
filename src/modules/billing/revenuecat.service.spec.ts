@@ -1,4 +1,5 @@
 import { RevenuecatService } from './revenuecat.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import type { RevenuecatWebhookBody } from './domain/revenuecat-event';
 
 /**
@@ -49,6 +50,7 @@ function makeService(
       ),
     } as never,
     { record } as never,
+    noopAnalytics(),
   );
 
   return { service, insertStorePurchase, linkRevenuecatSubscriber, grantOrExtend, record };

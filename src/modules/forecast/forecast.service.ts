@@ -11,8 +11,10 @@ import {
 } from '../../common/utils/clock';
 import { runForecast } from './domain/forecast';
 import { CacheService } from '../../common/cache/cache.service';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { EntitlementService } from '../billing/entitlement.service';
 import { WhatIfUsageService } from '../billing/whatif-usage.service';
+import { normalizeWhatIfSource } from './dto/what-if.dto';
 import { PremiumRequiredException } from '../billing/entitlement.errors';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { computeFlexibleMoney } from './domain/flexible-money';
@@ -250,6 +252,7 @@ export class ForecastService {
     private readonly cache: CacheService,
     private readonly entitlements: EntitlementService,
     private readonly whatIfUsage: WhatIfUsageService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -757,17 +760,20 @@ export class ForecastService {
     const answerForecast = afterSaleForecast ?? afterForecast;
     const resultType = classifyResult(answerForecast);
 
-    // Analytics: bucket + shape only. Never the amount, never the balances —
-    // the household's figures stay theirs (§26D).
-    this.logger.log(
-      `what_if_run ${JSON.stringify({
-        householdId,
-        hasGoal: Boolean(goal),
-        hasAssetSale: Boolean(appliedSale),
-        amountBucket: amountBucket(amount),
-        resultType,
-      })}`,
-    );
+    // Bucket + shape only. Never the amount, never the balances — the
+    // household's figures stay theirs (§26D). See memory/analytics.md.
+    //
+    // This replaces a `logger.log` line rather than sitting beside one: two
+    // definitions of the same event drift, and a second line per request is
+    // ingest nobody reads.
+    this.analytics.capture(householdId, 'what_if_run', {
+      source: normalizeWhatIfSource(payload.source),
+      rerun: payload.rerun === true,
+      has_goal: Boolean(goal),
+      has_asset_sale: Boolean(appliedSale),
+      amount_bucket: amountBucket(amount),
+      result_type: resultType,
+    });
 
     const side = (
       forecast: ForecastResult,

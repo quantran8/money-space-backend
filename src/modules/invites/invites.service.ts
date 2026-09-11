@@ -8,6 +8,7 @@ import {
 import type { AuthUser } from '../auth/entities/auth-user.entity';
 import type { CreateInviteDto } from './dto/create-invite.dto';
 import type { HouseholdInvite, InvitePreview } from './entities/invite.entity';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { INVITES_REPOSITORY } from './repositories/invites.repository.interface';
 import type { InvitesRepository } from './repositories/invites.repository.interface';
 
@@ -33,6 +34,7 @@ export class InvitesService {
   constructor(
     @Inject(INVITES_REPOSITORY)
     private readonly invitesRepository: InvitesRepository,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async listInvites(householdId: string) {
@@ -157,6 +159,20 @@ export class InvitesService {
       email: user.email,
       fullName: user.fullName ?? user.displayName ?? null,
     });
+
+    // The activation moment: a household stops being one person. `already_member`
+    // marks the re-scan that changed nothing, so it can be filtered out.
+    this.analytics.capture(
+      result.householdId,
+      'member_joined',
+      {
+        method: 'invite',
+        member_index: null,
+        hours_since_household_created: null,
+        already_member: result.alreadyMember,
+      },
+      user.id,
+    );
 
     return {
       householdId: result.householdId,

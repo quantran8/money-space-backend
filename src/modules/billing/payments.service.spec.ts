@@ -1,4 +1,5 @@
 import { PaymentsService } from './payments.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import { signPayload } from './domain/payos-signature';
 
 const CHECKSUM_KEY = 'test-checksum-key';
@@ -61,6 +62,7 @@ function makeService(
       ),
     } as never,
     { record: jest.fn() } as never,
+    noopAnalytics(),
   );
 
   return { service, markPaymentOrderPaid, recordPaymentPayload, grantOrExtend };
@@ -176,6 +178,7 @@ describe('PayOS webhook', () => {
           ),
         } as never,
         { record: jest.fn() } as never,
+        noopAnalytics(),
       );
 
       await expect(failing.handleWebhook(webhook())).resolves.toBe(
@@ -209,6 +212,7 @@ describe('PayOS webhook', () => {
           ),
         } as never,
         { record: jest.fn() } as never,
+        noopAnalytics(),
       );
 
       await expect(failing.handleWebhook(webhook())).rejects.toThrow(

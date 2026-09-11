@@ -59,4 +59,37 @@ export interface WhatIfRequestDto {
    * server infers by comparing payloads.
    */
   rerun?: boolean;
+  /**
+   * Which screen the household opened this from. Analytics only — it never
+   * touches the calculation.
+   *
+   * A closed union rather than a free string: an open value would be unbounded
+   * cardinality in a dashboard. Anything unrecognised is normalised to
+   * `'other'` and never rejected — telemetry must not be able to fail a
+   * paying household's request.
+   */
+  source?: WhatIfSource;
+}
+
+/** Where what-if was opened from. Mirrors the client's `WhatIfSource`. */
+export type WhatIfSource =
+  | 'home'
+  | 'upcoming'
+  | 'goal'
+  | 'goal-detail'
+  | 'other';
+
+const WHAT_IF_SOURCES: readonly WhatIfSource[] = [
+  'home',
+  'upcoming',
+  'goal',
+  'goal-detail',
+  'other',
+];
+
+/** Never throws: an unknown source is `'other'`, not a 400. */
+export function normalizeWhatIfSource(raw: unknown): WhatIfSource {
+  return (WHAT_IF_SOURCES as readonly unknown[]).includes(raw)
+    ? (raw as WhatIfSource)
+    : 'other';
 }

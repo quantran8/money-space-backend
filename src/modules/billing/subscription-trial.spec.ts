@@ -2,6 +2,7 @@ import { HttpStatus } from '@nestjs/common';
 import { SubscriptionService } from './subscription.service';
 import type { SubscriptionRow } from './domain/entitlement';
 import type { BillingRepository } from './repositories/billing.repository.interface';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 
 const HOUSEHOLD = 'hh-1';
 const NOW = new Date('2026-09-10T00:00:00.000Z');
@@ -18,8 +19,13 @@ function build(current: SubscriptionRow | null) {
     forHousehold: jest.fn(async () => ({ householdId: HOUSEHOLD })),
   };
 
-  const service = new SubscriptionService(repository, entitlements as never);
-  return { service, upsertSubscription, entitlements };
+  const analytics = noopAnalytics();
+  const service = new SubscriptionService(
+    repository,
+    entitlements as never,
+    analytics,
+  );
+  return { service, upsertSubscription, entitlements, analytics };
 }
 
 function row(overrides: Partial<SubscriptionRow>): SubscriptionRow {

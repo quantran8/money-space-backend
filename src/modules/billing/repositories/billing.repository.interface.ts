@@ -55,6 +55,8 @@ export interface PaymentOrderRow {
   planCode: string;
   amount: number;
   durationDays: number | null;
+  /** Which paywall sent them to checkout. NULL = opened from the plans page. */
+  fromReason: string | null;
   providerTxnId: string | null;
   checkoutUrl: string | null;
   createdAt: Date;
@@ -106,6 +108,8 @@ export interface PaymentOrderWrite {
   amount: number;
   durationDays: number | null;
   expiresAt: Date;
+  /** Which paywall sent them here. NULL = opened from the plans page. */
+  fromReason: string | null;
 }
 
 export interface BillingRepository {

@@ -16,6 +16,7 @@ import {
   BILLING_REPOSITORY,
   type BillingRepository,
 } from './repositories/billing.repository.interface';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 
 /**
  * Short, because a plan changes while the household is looking at the screen.
@@ -58,6 +59,7 @@ export class EntitlementService {
     private readonly billingRepository: BillingRepository,
     private readonly cache: CacheService,
     private readonly whatIfUsage: WhatIfUsageService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   private readonly memory = new Map<
@@ -109,6 +111,17 @@ export class EntitlementService {
   ): void {
     const limit = entitlement.limits[quota];
     if (limit === null || used < limit) return;
+
+    // Emitted HERE rather than at the two call sites: this is the only place a
+    // counted wall is decided, so a third quota is measured the day it is
+    // added. Synchronous and fail-open, so it cannot change what is thrown.
+    this.analytics.capture(entitlement.householdId, 'paywall_hit', {
+      reason,
+      tier: entitlement.tier,
+      limit,
+      used,
+      household_age_days: null,
+    });
 
     throw new PremiumRequiredException(reason, entitlement, { limit, used });
   }

@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { RawResponse } from '../../common/interceptors/raw-response.decorator';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { RequirePremium } from '../auth/decorators/require-premium.decorator';
 import {
   EXPORT_DATASETS,
@@ -30,7 +31,10 @@ import {
  */
 @Controller('households/:householdId/export')
 export class ExportController {
-  constructor(private readonly exportService: ExportService) {}
+  constructor(
+    private readonly exportService: ExportService,
+    private readonly analytics: AnalyticsService,
+  ) {}
 
   @RequirePremium('export_data')
   @RawResponse()
@@ -44,11 +48,21 @@ export class ExportController {
     @Query('dataset') dataset: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ): Promise<string> {
+    const exportFormat = parseFormat(format);
+    const exportDataset = parseDataset(dataset);
+
     const file = await this.exportService.export(
       householdId,
-      parseFormat(format),
-      parseDataset(dataset),
+      exportFormat,
+      exportDataset,
     );
+
+    // After the file is built: a request refused by `@RequirePremium` never
+    // reaches here, and that refusal is already a `paywall_hit`.
+    this.analytics.capture(householdId, 'export_run', {
+      format: exportFormat,
+      dataset: exportDataset,
+    });
 
     response.setHeader('Content-Type', file.contentType);
     response.setHeader(

@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { AssetsService } from './assets.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import type { Asset } from './entities/asset.entity';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import type { PrismaService } from '../../database/prisma/prisma.service';
@@ -138,6 +139,7 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
         moneyEventsService,
         // Premium: these tests are about the asset rules, not the plan.
         premiumEntitlements(),
+        noopAnalytics(),
       ),
       calls,
       audit: audit as unknown as { record: jest.Mock },

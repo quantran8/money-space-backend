@@ -28,6 +28,7 @@ import {
   type RedeemCodeRow,
 } from './repositories/billing.repository.interface';
 import { isUniqueViolation } from '../../common/repositories/prisma-errors';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 
 /** Failures per hour, per user and per household, before the door closes. */
 const MAX_FAILURES_PER_HOUR = 10;
@@ -52,6 +53,7 @@ export class RedeemService {
     private readonly cacheInvalidator: CacheInvalidator,
     private readonly cache: CacheService,
     private readonly audit: AuditService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -217,6 +219,21 @@ export class RedeemService {
     const addedDays = entitlement.isLifetime
       ? 0
       : this.daysBetween(now, entitlement.expiresAt);
+
+    // After the transaction commits: a `no_effect` code throws above and is
+    // rolled back, so reaching here means the grant actually landed.
+    // `campaign` is the attribution field — which batch brought this household.
+    this.analytics.capture(
+      householdId,
+      'code_redeemed',
+      {
+        campaign: row!.campaign,
+        grant_type: row!.grantType,
+        added_days: addedDays,
+        lifetime: entitlement.isLifetime,
+      },
+      userId,
+    );
 
     return { redeemed: true, code, addedDays, entitlement };
   }

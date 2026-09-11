@@ -10,6 +10,7 @@ import {
   BILLING_REPOSITORY,
   type BillingRepository,
 } from './repositories/billing.repository.interface';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 
 export interface GrantResult {
   periodEnd: Date | null;
@@ -33,6 +34,7 @@ export class SubscriptionService {
     @Inject(BILLING_REPOSITORY)
     private readonly billingRepository: BillingRepository,
     private readonly entitlements: EntitlementService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -69,6 +71,16 @@ export class SubscriptionService {
       });
       await this.entitlements.invalidate(householdId);
     }
+
+    // The one hook that sees every rail — PayOS, RevenueCat, a code, a manual
+    // grant. `noop` is emitted too: a code that added nothing is worth knowing.
+    this.analytics.capture(householdId, 'subscription_granted', {
+      source,
+      added_days: result.addedDays,
+      stacked: result.stacked,
+      noop: result.noop,
+      lifetime: result.periodEnd === null,
+    });
 
     return {
       periodEnd: result.periodEnd,
@@ -115,6 +127,11 @@ export class SubscriptionService {
       trialEndsAt: endsAt,
     });
     await this.entitlements.invalidate(householdId);
+
+    // Its own event, not a property of `household_created`: the trial is opted
+    // into from the paywall, often days later. Without this, trial→paid is
+    // unanswerable.
+    this.analytics.capture(householdId, 'trial_started', { days });
 
     // The fresh entitlement, so the client re-renders from the server's answer.
     return this.entitlements.forHousehold(householdId, now);

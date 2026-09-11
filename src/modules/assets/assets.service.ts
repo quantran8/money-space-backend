@@ -88,6 +88,7 @@ import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interfa
 import type { GoalsRepository } from '../goals/repositories/goals.repository.interface';
 import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
 import type { CashflowEventsRepository } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { DEBTS_REPOSITORY } from '../debts/repositories/debts.repository.interface';
 import type { DebtsRepository } from '../debts/repositories/debts.repository.interface';
 import {
@@ -125,6 +126,7 @@ export class AssetsService {
     @Inject(forwardRef(() => MoneyEventsService))
     private readonly moneyEventsService: MoneyEventsService,
     private readonly entitlements: EntitlementService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   private readonly logger = new Logger(AssetsService.name);
@@ -680,6 +682,19 @@ export class AssetsService {
     // than being stuck with "the first two you happened to create".
     if (asset.valuationMode === 'market_priced') {
       asset.autoPriceEnabled = await this.canAutoPrice(householdId);
+
+      // The SILENT paywall: the asset is created either way, so this never
+      // throws and the exception filter can never see it. Without this event
+      // the one limit with a real marginal cost behind it (CoinMarketCap,
+      // Twelve Data) leaves no trace at all.
+      if (!asset.autoPriceEnabled) {
+        this.analytics.capture(householdId, 'auto_price_declined', {
+          reason: 'auto_price_quota',
+          asset_type: asset.type,
+          limit: null,
+          used: null,
+        });
+      }
     }
 
     // "We just bought this" names the wallet that paid; "we already own this"

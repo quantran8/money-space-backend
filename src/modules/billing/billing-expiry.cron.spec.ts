@@ -1,4 +1,5 @@
 import { BillingExpiryCron } from './billing-expiry.cron';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 
 /**
  * The advisory lock is real Postgres, so the spec stands in for it with a
@@ -43,7 +44,12 @@ function setup(
   } as never;
 
   return {
-    cron: new BillingExpiryCron(billingRepository, entitlements, prisma),
+    cron: new BillingExpiryCron(
+      billingRepository,
+      entitlements,
+      prisma,
+      noopAnalytics(),
+    ),
     billingRepository: billingRepository as Record<string, jest.Mock>,
     entitlements: entitlements as Record<string, jest.Mock>,
   };

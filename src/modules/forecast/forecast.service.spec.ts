@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { ForecastService } from './forecast.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import { UNASSIGNED_WALLET_ID } from './domain/what-if';
 import { CacheService } from '../../common/cache/cache.service';
 import type { ForecastBundle } from './repositories/forecast.repository.interface';
@@ -102,6 +103,7 @@ function setup(
     consume: jest.fn(async () => 1),
   } as never;
 
+  const analytics = noopAnalytics();
   const service = new ForecastService(
     forecastRepository,
     goalsRepository,
@@ -109,6 +111,7 @@ function setup(
     cache,
     entitlements,
     whatIfUsage,
+    analytics,
   );
   return {
     service,
@@ -117,6 +120,7 @@ function setup(
     goalsRepository,
     goalsService,
     cache,
+    analytics,
     whatIfUsage: whatIfUsage as unknown as Record<string, jest.Mock>,
     entitlements: entitlements as unknown as Record<string, jest.Mock>,
   };
@@ -870,13 +874,7 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
   });
 
   it('keeps analytics bucketed, never the sale amount', async () => {
-    const { service } = setup(household());
-    const logged: string[] = [];
-    jest
-      .spyOn(service['logger'], 'log')
-      .mockImplementation((message: unknown) => {
-        logged.push(String(message));
-      });
+    const { service, analytics } = setup(household());
 
     await service.whatIf('hh-1', {
       ...spend,
@@ -886,10 +884,15 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
       },
     });
 
-    const line = logged.find((entry) => entry.startsWith('what_if_run'))!;
-    expect(line).toContain('"hasAssetSale":true');
-    expect(line).not.toContain('300000000');
-    expect(line).not.toContain('800000000');
+    const event = analytics.lastOf('what_if_run')!;
+    expect(event.props.has_asset_sale).toBe(true);
+    expect(event.props.amount_bucket).toBe('100M+');
+
+    // The guarantee, unchanged from when this event was a log line: the real
+    // figures must not appear anywhere in the payload, under any key.
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain('300000000');
+    expect(serialized).not.toContain('800000000');
   });
 
   it('credits the wallet the household chose, not one of its own picking', async () => {

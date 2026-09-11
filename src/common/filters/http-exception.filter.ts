@@ -6,6 +6,23 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { AnalyticsService } from '../analytics/analytics.service';
+
+/**
+ * A raw URL carries the householdId and every other path id. Replacing them
+ * keeps one fault as one group rather than one per household — the same reason
+ * `LoggingInterceptor` prefers `request.route.path`. Used only when Express
+ * did not resolve a route pattern (an unmatched path, a 404).
+ */
+function scrubUrl(url: string): string {
+  return url
+    .split('?')[0]
+    .replace(
+      /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      '/:id',
+    )
+    .replace(/\/\d+/g, '/:id');
+}
 
 interface ErrorBody {
   success: false;
@@ -27,12 +44,19 @@ interface ErrorBody {
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('HTTP');
 
+  constructor(private readonly analytics: AnalyticsService) {}
+
   catch(exception: unknown, host: ArgumentsHost) {
     const http = host.switchToHttp();
     const response = http.getResponse<{
       status: (statusCode: number) => { json: (body: ErrorBody) => void };
     }>();
-    const request = http.getRequest<{ url: string; method: string }>();
+    const request = http.getRequest<{
+      url: string;
+      method: string;
+      route?: { path?: string };
+      membership?: { householdId?: string };
+    }>();
 
     const statusCode =
       exception instanceof HttpException
@@ -77,6 +101,18 @@ export class HttpExceptionFilter implements ExceptionFilter {
         logLine,
         exception instanceof Error ? exception.stack : undefined,
       );
+
+      // 5xx ONLY. A 402 is the paywall working and a 403 is a non-member —
+      // routing those here would bury real faults under the app behaving.
+      //
+      // The route PATTERN, never `request.url`: the raw path carries the
+      // householdId, which would both explode cardinality and put an
+      // identifier in an error title. No body, no query — they carry money.
+      this.analytics.captureException(exception, {
+        householdId: request.membership?.householdId,
+        route: request.route?.path ?? scrubUrl(request.url),
+        statusCode,
+      });
     } else {
       this.logger.warn(logLine);
     }

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { withAdvisoryLock } from '../../common/utils/advisory-lock';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { EntitlementService } from './entitlement.service';
 import {
   BILLING_REPOSITORY,
@@ -40,6 +41,7 @@ export class BillingExpiryCron {
     private readonly billingRepository: BillingRepository,
     private readonly entitlements: EntitlementService,
     private readonly prisma: PrismaService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /** 09:00 VN, not 23:45 like the valuation job: a notice has to land awake. */
@@ -135,6 +137,16 @@ export class BillingExpiryCron {
       this.logger.warn(
         `Billing expiry: ${failed} entitlement cache(s) not invalidated`,
       );
+    }
+
+    // Churn had no trace anywhere before this: the sweep flips the rows and
+    // wrote nothing. The flags are unknown from the sweep's own query, so they
+    // are left null rather than guessed. See memory/billing-and-entitlement.md.
+    for (const householdId of householdIds) {
+      this.analytics.capture(householdId, 'subscription_expired', {
+        was_trial: false,
+        plan_source: null,
+      });
     }
 
     return householdIds.length;

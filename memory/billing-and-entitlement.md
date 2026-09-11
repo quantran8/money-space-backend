@@ -306,4 +306,15 @@ worth answering first (and the answer that should worry you):
 | Plan mix | Yearly under 40% ⇒ savings not legible, or not enough trust |
 | Renewal | <60% ⇒ the app is not giving a reason to come back monthly |
 
-None of these are answerable without analytics, which is not yet in the repo.
+These are answerable now — see [[analytics]]. Three notes that shape how the
+answers read:
+
+- **`paywall_hit` fires from `assertQuota`**, the one place a counted ceiling is
+  decided, so a third quota is measured the day it is added.
+- **`from_reason` on `payment_orders`** is what makes "which wall converts"
+  answerable, and it is frozen at checkout because the webhook has no request
+  context. It is **always null on a RevenueCat order** — an IAP arrives with no
+  order of ours — so store conversion-by-reason is a known blind spot, not a
+  gap to fill by inventing a value.
+- **The expiry sweep now writes a `subscription.expired` audit row** and emits
+  the matching event. Before that, churn left no trace anywhere.

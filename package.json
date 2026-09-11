@@ -22,6 +22,8 @@
     "db:init": "bash scripts/init-db.sh",
     "db:init:dry": "bash scripts/init-db.sh --dry",
     "redeem:create": "ts-node -r tsconfig-paths/register scripts/create-redeem-codes.ts",
+    "metrics:weekly": "ts-node -r tsconfig-paths/register scripts/metrics-weekly.ts",
+    "analytics:sync": "ts-node -r tsconfig-paths/register scripts/sync-analytics-catalog.ts",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
@@ -46,6 +48,7 @@
     "nestjs-pino": "^4.6.1",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
+    "posthog-node": "^5.51.8",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "vnstock-js": "^1.5.1"

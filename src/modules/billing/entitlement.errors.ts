@@ -1,16 +1,15 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import type { Entitlement } from './entities/entitlement.entity';
 
-/** Which wall the household just hit. The client picks the paywall from this. */
-export type PaywallReason =
-  | 'goal_quota'
-  | 'whatif_quota'
-  | 'auto_price_quota'
-  | 'forecast_horizon'
-  | 'history'
-  | 'export'
-  | 'expired'
-  | 'general';
+/**
+ * Which wall the household just hit. The client picks the paywall from this.
+ *
+ * Defined once in `common/analytics/paywall-reason.ts` and re-exported here so
+ * the throw site and the analytics catalog can never disagree about what a 402
+ * may carry. See [[analytics]].
+ */
+export type { PaywallReason } from '../../common/analytics/paywall-reason';
+import type { PaywallReason } from '../../common/analytics/paywall-reason';
 
 /**
  * 402 Payment Required — deliberately not 403.
