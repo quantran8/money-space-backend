@@ -26,20 +26,28 @@ function registerProcessGuards() {
   });
 }
 
+// Origins that work without any configuration: the Vite dev server and the
+// deployed web app. `CORS_ORIGINS` replaces this list when set.
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'https://money-space-lac.vercel.app',
+];
+
 /**
- * Browser origins allowed to call the API, from `CORS_ORIGINS` (comma-separated).
- *
- * Unset means allow everything, which is right for local development and for a
- * native client — the mobile app is not a browser and sends no `Origin` at all,
- * so it is never affected either way. Production sets the list.
+ * Browser origins allowed to call the API, from `CORS_ORIGINS` (comma-separated),
+ * falling back to `DEFAULT_CORS_ORIGINS`. The mobile app is not a browser and
+ * sends no `Origin`, so it is never affected either way.
  */
-function corsOrigins(): string[] | true {
+function corsOrigins(): string[] {
   const configured = (process.env.CORS_ORIGINS ?? '')
     .split(',')
-    .map((origin) => origin.trim())
+    // A trailing slash never matches: the browser sends a bare scheme+host.
+    .map((origin) => origin.trim().replace(/\/+$/, ''))
     .filter(Boolean);
 
-  return configured.length > 0 ? configured : true;
+  return configured.length > 0 ? configured : DEFAULT_CORS_ORIGINS;
 }
 
 async function bootstrap() {
@@ -68,6 +76,9 @@ async function bootstrap() {
     credentials: false,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    // The export download reads the filename off this header; cross-origin it
+    // is invisible to JS unless named here. See export.controller.ts.
+    exposedHeaders: ['Content-Disposition'],
   });
 
   // Every route is served under `/api/v1/*`. The prefix and the version live

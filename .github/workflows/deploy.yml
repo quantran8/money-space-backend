@@ -246,6 +246,9 @@ jobs:
           TWELVEDATA_BASE_URL: ${{ vars.TWELVEDATA_BASE_URL }}
           BACKEND_IMAGE: ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
           APP_PORT: ${{ vars.APP_PORT || '3000' }}
+          # Comma-separated browser origins. Unset falls back to the defaults in
+          # main.ts, which already cover localhost and the Vercel web app.
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           REDIS_MAXMEMORY: ${{ vars.REDIS_MAXMEMORY || '256mb' }}
@@ -273,7 +276,7 @@ jobs:
                        SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWKS_URL \
                        COIN_MARKETCAP_API_KEY COIN_MARKETCAP_BASE_URL \
                        TWELVEDATA_API_KEY TWELVEDATA_BASE_URL \
-                       BACKEND_IMAGE APP_PORT DOMAIN_NAME ACME_EMAIL \
+                       BACKEND_IMAGE APP_PORT CORS_ORIGINS DOMAIN_NAME ACME_EMAIL \
                        REDIS_MAXMEMORY HOSTNAME_LABEL \
                        LOG_LEVEL SERVICE_NAME; do
               # ACME_EMAIL goes to Caddy's own env file, written below.
@@ -412,6 +415,31 @@ jobs:
           echo "backend never became healthy" >&2
           ssh oci "cd ${{ secrets.APP_DIR }} && docker compose ps && docker compose logs --tail 80 backend" >&2
           exit 1
+
+      - name: Verify CORS
+        env:
+          # The deployed web app. A preflight that does not echo this back means
+          # the browser blocks every call, which /health alone cannot catch.
+          WEB_ORIGIN: ${{ vars.WEB_ORIGIN || 'https://money-space-lac.vercel.app' }}
+        run: |
+          headers=$(ssh oci "curl -fsS -o /dev/null -D - -X OPTIONS \
+            -H 'Origin: $WEB_ORIGIN' \
+            -H 'Access-Control-Request-Method: POST' \
+            -H 'Access-Control-Request-Headers: content-type,authorization' \
+            localhost:${{ vars.APP_PORT || '3000' }}/api/v1/auth/login") || {
+              echo "::error::Preflight request failed outright." >&2; exit 1; }
+
+          echo "$headers"
+
+          allowed=$(printf '%s' "$headers" \
+            | tr -d '\r' \
+            | sed -n 's/^[Aa]ccess-[Cc]ontrol-[Aa]llow-[Oo]rigin: *//p')
+
+          if [ "$allowed" != "$WEB_ORIGIN" ] && [ "$allowed" != "*" ]; then
+            echo "::error::CORS rejects $WEB_ORIGIN (allow-origin: '${allowed:-none}'). Set the CORS_ORIGINS variable." >&2
+            exit 1
+          fi
+          echo "::notice::CORS allows $WEB_ORIGIN"
 
       - name: Verify HTTPS
         if: vars.DOMAIN_NAME != ''
