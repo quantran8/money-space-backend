@@ -1,12 +1,15 @@
 import {
   CanActivate,
   ExecutionContext,
-  ForbiddenException,
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import {
+  NotHouseholdCreatorException,
+  NotHouseholdMemberException,
+  UnauthenticatedException,
+} from '../../../common/errors/coded.exceptions';
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import { HOUSEHOLD_CREATOR_KEY } from '../decorators/require-household-creator.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
@@ -69,7 +72,7 @@ export class HouseholdAccessGuard implements CanActivate {
 
     const user = request.user;
     if (!user) {
-      throw new UnauthorizedException('Missing bearer token');
+      throw new UnauthenticatedException('Missing bearer token');
     }
 
     // Both lookups key off `householdId` alone — the membership row does not
@@ -97,7 +100,7 @@ export class HouseholdAccessGuard implements CanActivate {
       throw new NotFoundException(`Household "${householdId}" was not found`);
     }
     if (!member) {
-      throw new ForbiddenException('You are not a member of this household');
+      throw new NotHouseholdMemberException();
     }
 
     const isCreator = household.createdById === user.id;
@@ -113,9 +116,7 @@ export class HouseholdAccessGuard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
     if (creatorOnly && !isCreator) {
-      throw new ForbiddenException(
-        'Only the member who created this household can do that',
-      );
+      throw new NotHouseholdCreatorException();
     }
 
     return true;

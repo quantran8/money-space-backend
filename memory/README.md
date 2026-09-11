@@ -66,6 +66,7 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [sharing-levels.md](sharing-levels.md) — everything counts; `detail` vs `summary_only` is presentation only
 - [activity-log.md](activity-log.md) — the journal: what is logged, what deliberately is not
 - [auth.md](auth.md) — authentication & session gating
+- [error-handling.md](error-handling.md) — `message` is a diagnostic, `code` is the contract, copy is the client's
 - [feedback.md](feedback.md) — báo lỗi / góp ý: why it is user-scoped, Postgres-only, and not in the journal
 - [billing-and-entitlement.md](billing-and-entitlement.md) — tiers, limits, granting, the expiry sweep
 - [data-export.md](data-export.md) — taking the household's data out (JSON + CSV)

@@ -200,8 +200,18 @@ Two cross-cutting rules for any create/update/delete flow:
   rejected promises you `await` — so services never need their own `try/catch`
   to avoid crashing; NestJS wraps every handler and routes errors to the filter.
   For unexpected 5xx (non-`HttpException`, e.g. a raw Prisma error) it returns
-  the real message in dev and a generic `"Internal server error"` when
-  `NODE_ENV === 'production'`, while always logging the full message + stack.
+  the real message only under `NODE_ENV=development|test` and a generic
+  `"Internal server error"` everywhere else, while always logging the full
+  message + stack.
+
+- **A thrown `message` is a diagnostic, never user copy.** The client shows one
+  translated sentence and never displays `message`, so write it for whoever
+  reads the log. When a client must *behave* differently (open the paywall,
+  re-authenticate, offer a cascade delete), throw one of the coded exceptions in
+  `src/common/errors/coded.exceptions.ts` so the reason travels as `code`.
+  The filter forwards a **whitelist** of structured keys (`code`, `premium`,
+  `trial`, `impact`) — a field not on that list is silently dropped.
+  See [memory/error-handling.md](memory/error-handling.md).
 
 - **Process-level guard.** `main.ts` registers `unhandledRejection` /
   `uncaughtException` handlers as a safety net for errors the filter can't see —

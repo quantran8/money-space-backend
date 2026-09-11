@@ -5,9 +5,15 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  HttpStatus,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Session, User } from '@supabase/supabase-js';
+import {
+  CodedException,
+  UnauthenticatedException,
+} from '../../common/errors/coded.exceptions';
 import {
   OAUTH_VERIFIER_ITEM,
   SupabaseService,
@@ -52,6 +58,8 @@ function withState(redirectTo: string | undefined, state: string) {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger('AuthService');
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly tokenVerifier: TokenVerifierService,
@@ -77,7 +85,8 @@ export class AuthService {
     });
 
     if (error) {
-      throw new UnauthorizedException(error.message);
+      this.logger.warn(`signup failed: ${error.message}`);
+      throw new UnauthenticatedException('Could not sign up');
     }
 
     if (!data.user) {
@@ -100,11 +109,20 @@ export class AuthService {
     });
 
     if (error) {
-      throw new UnauthorizedException(error.message);
+      // Supabase's wording never leaves the process: it distinguishes "no such
+      // user" from "wrong password", which is an account-enumeration oracle.
+      this.logger.warn(`login failed: ${error.message}`);
+      throw new UnauthenticatedException(
+        'Invalid email or password',
+        'invalid_credentials',
+      );
     }
 
     if (!data.user || !data.session) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthenticatedException(
+        'Invalid email or password',
+        'invalid_credentials',
+      );
     }
 
     const user = this.mapUser(data.user, 'email');
@@ -144,8 +162,9 @@ export class AuthService {
     });
 
     if (error || !data?.url) {
+      if (error) this.logger.warn(`google sign-in url failed: ${error.message}`);
       throw new InternalServerErrorException(
-        error?.message ?? 'Could not create Google sign-in URL',
+        'Could not create Google sign-in URL',
       );
     }
 
@@ -189,11 +208,12 @@ export class AuthService {
     );
 
     if (error) {
-      throw new UnauthorizedException(error.message);
+      this.logger.warn(`google callback failed: ${error.message}`);
+      throw new UnauthenticatedException('Could not complete Google sign-in');
     }
 
     if (!data.user || !data.session) {
-      throw new UnauthorizedException('Could not complete Google sign-in');
+      throw new UnauthenticatedException('Could not complete Google sign-in');
     }
 
     const user = this.mapUser(data.user, 'google');
@@ -208,11 +228,18 @@ export class AuthService {
     });
 
     if (error) {
-      throw new UnauthorizedException(error.message);
+      this.logger.warn(`refresh failed: ${error.message}`);
+      throw new UnauthenticatedException(
+        'Could not refresh session',
+        'session_expired',
+      );
     }
 
     if (!data.user || !data.session) {
-      throw new UnauthorizedException('Could not refresh session');
+      throw new UnauthenticatedException(
+        'Could not refresh session',
+        'session_expired',
+      );
     }
 
     return {
@@ -239,7 +266,12 @@ export class AuthService {
     // Rate limiting is the one failure worth surfacing — silence would look
     // like the mail was sent and leave the user waiting for nothing.
     if (error?.status === 429) {
-      throw new BadRequestException(error.message);
+      this.logger.warn(`password reset rate-limited: ${error.message}`);
+      throw new CodedException(
+        'rate_limited',
+        'Too many reset requests',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
     }
 
     return { success: true };

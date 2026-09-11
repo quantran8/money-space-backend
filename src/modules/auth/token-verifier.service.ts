@@ -1,5 +1,6 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { UnauthenticatedException } from '../../common/errors/coded.exceptions';
 import type { AuthProvider, AuthUser } from './entities/auth-user.entity';
 
 /**
@@ -69,8 +70,13 @@ export class TokenVerifierService {
       });
       payload = result.payload;
     } catch (error) {
+      // `jose`'s reason stays in the log — it names claims and algorithms.
       const reason = error instanceof Error ? error.message : 'unknown';
-      throw new UnauthorizedException(`Invalid or expired session (${reason})`);
+      this.logger.warn(`token verification failed: ${reason}`);
+      throw new UnauthenticatedException(
+        'Invalid or expired session',
+        'session_expired',
+      );
     }
 
     if (!payload.sub) {
