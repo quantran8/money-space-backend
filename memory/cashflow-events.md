@@ -36,6 +36,16 @@ was uncategorized, and completing an **outgoing** one hardcoded `other` on the
 money event it created regardless. That migration added it as a TEXT code;
 `20260904090000_category_id_foreign_key` then converted it to the FK.
 
+**The single-row create is raw SQL and must name every NOT NULL column itself.**
+`insertCashflowEvent` hand-writes its INSERT (one round-trip: it derives
+`created_by` from the household row, and a missing household inserts nothing →
+404). Making `category_id` NOT NULL therefore broke create with a bare Postgres
+`23502` — the column list still predated the FK, so every new event sent NULL.
+The bulk and update paths went on working, because they go through Prisma and
+get new columns for free. Nothing caught it: raw SQL is not typechecked, and the
+service tests mock the repository, so no test ever reaches the statement. A
+NOT NULL column added to this table has to be added to that column list by hand.
+
 ## The four axes
 
 | field | values | what it decides |

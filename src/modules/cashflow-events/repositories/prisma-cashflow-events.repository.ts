@@ -149,11 +149,12 @@ export class PrismaCashflowEventsRepository
     // row. If the household doesn't exist (or is soft-deleted) the SELECT
     // yields no row, nothing is inserted, and we surface a 404.
     //
-    // `updated_at` is NOT NULL with no DB default — Prisma's @updatedAt fills
-    // it on ORM writes, but a raw INSERT must set it explicitly.
+    // `updated_at` and `category_id` are NOT NULL with no usable DB default, so
+    // a raw INSERT must name both — the ORM writes below get them for free.
+    // See memory/cashflow-events.md.
     const inserted = await this.prisma.$executeRaw`
       INSERT INTO cashflow_events
-        (id, household_id, name, amount, direction, expected_date,
+        (id, household_id, name, category_id, amount, direction, expected_date,
          recurrence, recurrence_end_date, requirement, certainty,
          status, attention_level,
          owner_member_id, debt_id,
@@ -163,6 +164,7 @@ export class PrismaCashflowEventsRepository
         ${event.id}::uuid,
         h.id,
         ${event.name},
+        ${event.categoryId}::uuid,
         ${event.amount}::numeric,
         ${event.direction}::"CashflowDirection",
         ${this.toDate(event.expectedDate)}::date,
