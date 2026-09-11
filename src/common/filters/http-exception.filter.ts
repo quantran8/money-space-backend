@@ -32,12 +32,22 @@ interface ErrorBody {
   timestamp: string;
   path: string;
   /**
+   * The machine-readable reason, when a throw site names one. The client picks
+   * its copy from this — `message` is a diagnostic and is never displayed.
+   * See memory/error-handling.md.
+   */
+  code?: string;
+  /**
    * Only on a 402 from `PremiumRequiredException`: which limit was hit, and
    * what the current plan allows. Forwarded because the client cannot pick the
    * right paywall from a status code alone, and parsing `message` for it would
    * make a copy string load-bearing.
    */
   premium?: Record<string, unknown>;
+  /** Only on a 409 from `TrialUnavailableException`: why the trial is not on offer. */
+  trial?: Record<string, unknown>;
+  /** Only on `asset_in_use`: what still links to the asset, so the client can offer a cascade. */
+  impact?: Record<string, unknown>;
 }
 
 @Catch()
@@ -74,7 +84,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // real message to make debugging easier; on prod we return a generic one.
     // The full message + stack are always written to the server log below.
     const isServerError = statusCode >= HttpStatus.INTERNAL_SERVER_ERROR;
-    const isProduction = process.env.NODE_ENV === 'production';
+    // Allow-list, not `!== 'production'`: an unset or misspelled NODE_ENV on a
+    // deployed box must fail closed, not start echoing Prisma at the client.
+    const env = process.env.NODE_ENV;
+    const isLocal = env === 'development' || env === 'test';
 
     const rawMessage =
       payload.message ??
@@ -82,7 +95,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? exception.message
         : 'Internal server error');
     const message =
-      isServerError && isProduction ? 'Internal server error' : rawMessage;
+      isServerError && !isLocal ? 'Internal server error' : rawMessage;
     const error =
       payload.error ??
       (exception instanceof HttpException
@@ -124,8 +137,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
       error: String(error),
       timestamp: new Date().toISOString(),
       path: request.url,
+      ...(typeof payload.code === 'string' ? { code: payload.code } : {}),
       ...(payload.premium
         ? { premium: payload.premium as Record<string, unknown> }
+        : {}),
+      ...(payload.trial
+        ? { trial: payload.trial as Record<string, unknown> }
+        : {}),
+      ...(payload.impact
+        ? { impact: payload.impact as Record<string, unknown> }
         : {}),
     });
   }

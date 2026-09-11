@@ -1,10 +1,6 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { UnauthenticatedException } from '../../../common/errors/coded.exceptions';
 import { AuthService } from '../auth.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import type { AuthUser } from '../entities/auth-user.entity';
@@ -36,7 +32,7 @@ export class SupabaseAuthGuard implements CanActivate {
     if (!request.user) {
       const token = extractBearerToken(request);
       if (!token) {
-        throw new UnauthorizedException('Missing bearer token');
+        throw new UnauthenticatedException('Missing bearer token');
       }
       request.user = await this.authService.getUserFromToken(token);
     }
