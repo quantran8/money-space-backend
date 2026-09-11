@@ -2,6 +2,9 @@
 /dist
 /node_modules
 /build
+# Incremental-build cache. Committed, it outlives the dist/ it describes and
+# makes tsc skip emitting entirely.
+*.tsbuildinfo
 
 # Logs
 logs

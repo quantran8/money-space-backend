@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // `rootDir` pins the build output to dist/main.js. Without it a single .ts
+  // outside src/ (scripts/) widens the root to the repo and emits dist/src/,
+  // which the Dockerfile's `node dist/main` cannot find.
+  "compilerOptions": { "rootDir": "./src" },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "test", "dist", "scripts", "**/*spec.ts"]
 }

@@ -29,6 +29,10 @@ FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN pnpm run build
+# `nest build` exits 0 even when tsc infers a wider rootDir and emits
+# dist/src/main.js instead — which the runner's `node dist/main` cannot load.
+RUN test -f dist/main.js \
+    || (echo "build emitted no dist/main.js (rootDir drifted?)" && ls -R dist | head -40 && exit 1)
 
 # ---------------------------------------------------------------------------
 # prod-deps — production-only tree with a freshly generated Prisma client.
