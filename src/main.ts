@@ -26,15 +26,49 @@ function registerProcessGuards() {
   });
 }
 
+/**
+ * Browser origins allowed to call the API, from `CORS_ORIGINS` (comma-separated).
+ *
+ * Unset means allow everything, which is right for local development and for a
+ * native client — the mobile app is not a browser and sends no `Origin` at all,
+ * so it is never affected either way. Production sets the list.
+ */
+function corsOrigins(): string[] | true {
+  const configured = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  return configured.length > 0 ? configured : true;
+}
+
 async function bootstrap() {
   registerProcessGuards();
 
   // `bufferLogs` holds bootstrap output until useLogger() swaps in Pino, so
   // even the startup lines come out as JSON instead of Nest's text format.
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  // `rawBody` keeps the unparsed Buffer at `request.rawBody` for handlers that
+  // need the exact bytes. Nest 11 STILL parses JSON alongside it, so no
+  // existing route is affected — every controller keeps receiving a parsed
+  // body. PayOS actually signs the `data` object rather than the raw bytes, so
+  // its webhook does not need this; it is enabled because a gateway that signs
+  // raw bytes is the norm, and finding this out after taking a payment is
+  // worse than one flag now.
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
+    rawBody: true,
+  });
   app.useLogger(app.get(PinoLogger));
   app.flushLogs();
-  app.enableCors();
+  app.enableCors({
+    origin: corsOrigins(),
+    // The app authenticates with a bearer token, not cookies. Leaving
+    // credentials off keeps a wildcard origin legal in dev and means a stolen
+    // session cannot ride along on a cross-site request.
+    credentials: false,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
 
   // Every route is served under `/api/v1/*`. The prefix and the version live
   // here rather than in each @Controller so a future v2 is a per-route
@@ -43,6 +77,12 @@ async function bootstrap() {
   // target them directly and must not move with the API version.
   app.setGlobalPrefix('api', { exclude: ['', 'health'] });
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
+
+  // Without this, Nest never calls onModuleDestroy / onApplicationShutdown.
+  // PrismaService has implemented the former since day one and was never run,
+  // so every deploy dropped pooled connections uncleanly; analytics needs it to
+  // flush its last batch. See memory/infrastructure/deployment.md.
+  app.enableShutdownHooks();
 
   const port = process.env.PORT ?? 3000;
   await app.listen(port);

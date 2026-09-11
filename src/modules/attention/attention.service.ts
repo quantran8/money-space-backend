@@ -4,9 +4,13 @@ import { freshnessOf } from '../../common/utils/freshness';
 import { computeFlexibleMoney } from '../forecast/domain/flexible-money';
 import { runForecast } from '../forecast/domain/forecast';
 import { ForecastService } from '../forecast/forecast.service';
+import { EntitlementService } from '../billing/entitlement.service';
+import type { Entitlement } from '../billing/entities/entitlement.entity';
 import {
+  ATTENTION_THRESHOLDS,
   deriveAttentionItems,
   derivedAttentionId,
+  type DeriveAttentionInput,
   type DerivedAttentionItem,
 } from './domain/attention-rules';
 import type { AttentionItemView } from './entities/attention-item.entity';
@@ -42,6 +46,7 @@ export class AttentionService {
     private readonly forecast: ForecastService,
     @Inject(GOALS_REPOSITORY)
     private readonly goalsRepository: GoalsRepository,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   async listAttentionItems(householdId: string): Promise<{
@@ -52,12 +57,16 @@ export class AttentionService {
     // The household row is real input here (`updateFrequency` drives staleness),
     // not an access check — the guard already did that — so it loads alongside
     // the rest instead of in front of it.
-    const [household, input, goals, allocations] = await Promise.all([
-      this.attentionRepository.assertHousehold(householdId),
-      this.forecast.loadInput(householdId, ATTENTION_HORIZON_DAYS),
-      this.goalsRepository.findFinancialGoalsByHousehold(householdId),
-      this.goalsRepository.findAllocationsByHousehold(householdId),
-    ]);
+    // The entitlement joins the fan-out rather than being fetched after it: it
+    // is a cache read in the common case and costs nothing in parallel.
+    const [household, input, goals, allocations, entitlement] =
+      await Promise.all([
+        this.attentionRepository.assertHousehold(householdId),
+        this.forecast.loadInput(householdId, ATTENTION_HORIZON_DAYS),
+        this.goalsRepository.findFinancialGoalsByHousehold(householdId),
+        this.goalsRepository.findAllocationsByHousehold(householdId),
+        this.entitlements.forHousehold(householdId),
+      ]);
 
     const forecast = runForecast(input);
     const flexible = computeFlexibleMoney(forecast);
@@ -132,6 +141,7 @@ export class AttentionService {
       staleAssets,
       goalsWithoutWallet,
       overdrawnWallets,
+      expiringPlan: toExpiringPlan(entitlement),
     });
 
     const items: AttentionItemView[] = derived
@@ -176,4 +186,32 @@ export class AttentionService {
 
   /** Exposed for tests + the derived-id contract shared with the client. */
   static derivedId = derivedAttentionId;
+}
+
+/**
+ * The plan, when it is close enough to running out to be worth a nudge.
+ *
+ * Free households and lifetime grants both return `null` — neither has an end
+ * date to count down to. An already-lapsed plan returns `null` too: the
+ * subscription page states that in full, and repeating it here would nag about
+ * something the household cannot fix by opening Home.
+ */
+function toExpiringPlan(
+  entitlement: Entitlement,
+): DeriveAttentionInput['expiringPlan'] {
+  if (entitlement.tier !== 'premium') return null;
+  if (entitlement.status !== 'active') return null;
+  if (entitlement.isLifetime) return null;
+  if (entitlement.daysRemaining === null || entitlement.expiresAt === null) {
+    return null;
+  }
+  if (entitlement.daysRemaining > ATTENTION_THRESHOLDS.planExpiringSoonDays) {
+    return null;
+  }
+
+  return {
+    daysRemaining: entitlement.daysRemaining,
+    expiresAt: entitlement.expiresAt,
+    isTrial: entitlement.isTrial,
+  };
 }

@@ -57,6 +57,14 @@ export type DerivedAttentionRuleCode =
    * away by itself the moment the ledger balances again.
    */
   | 'wallet_overdrawn'
+  /**
+   * The household's plan runs out within `planExpiringSoonDays`.
+   *
+   * Derived like the rest, and for the same reason: it clears itself the moment
+   * a code is redeemed or a payment settles, with no row to go and find.
+   * Lifetime plans never raise it — they have no end date to count down to.
+   */
+  | 'plan_expiring_soon'
   | 'stale_data';
 
 /** Signals that are genuine point-in-time records, so they ARE persisted. */
@@ -114,6 +122,17 @@ export interface DeriveAttentionInput {
    * the same asset list the forecast already loaded, so this costs no query.
    */
   overdrawnWallets?: { assetId: string; name: string; balance: number }[];
+  /**
+   * The household's plan, when one is running out. Resolved by the caller from
+   * the entitlement it already reads — `null` for free, lifetime, and anything
+   * with more than `planExpiringSoonDays` left.
+   */
+  expiringPlan?: {
+    daysRemaining: number;
+    /** ISO timestamp, so the client can render the date it lapses. */
+    expiresAt: string;
+    isTrial: boolean;
+  } | null;
 }
 
 /**
@@ -123,6 +142,11 @@ export interface DeriveAttentionInput {
 export const ATTENTION_THRESHOLDS = {
   /** A required outflow within this many days is worth surfacing. */
   dueSoonDays: 7,
+  /**
+   * A plan with this many days left is worth a nudge. Wider than `dueSoonDays`
+   * because renewing needs a bank transfer, not just attention.
+   */
+  planExpiringSoonDays: 14,
 } as const;
 
 /**
@@ -265,6 +289,30 @@ export function deriveAttentionItems(
       relatedObjectType: 'asset',
       relatedObjectId: wallet.assetId,
       params: { walletName: wallet.name, balance: wallet.balance },
+    });
+  }
+
+  // The plan is running out. `important`, never `urgent`: nothing is lost at
+  // the moment it lapses — the household keeps every record it has entered and
+  // only the premium capabilities stop. Treating that like an overdraft would
+  // be the nagging §29 forbids.
+  const plan = input.expiringPlan;
+  if (plan && plan.daysRemaining <= ATTENTION_THRESHOLDS.planExpiringSoonDays) {
+    items.push({
+      id: derivedAttentionId('plan_expiring_soon', null),
+      source: 'derived',
+      ruleCode: 'plan_expiring_soon',
+      level: 'important',
+      amount: null,
+      relatedObjectType: null,
+      relatedObjectId: null,
+      params: {
+        daysRemaining: plan.daysRemaining,
+        expiresAt: plan.expiresAt,
+        // A lapsing trial and a lapsing paid plan need different copy, and the
+        // client owns all copy.
+        isTrial: plan.isTrial,
+      },
     });
   }
 

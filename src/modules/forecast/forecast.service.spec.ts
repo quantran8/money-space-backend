@@ -1,9 +1,14 @@
 import { BadRequestException } from '@nestjs/common';
 import { todayInTimeZone } from '../../common/utils/clock';
 import { ForecastService } from './forecast.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import { UNASSIGNED_WALLET_ID } from './domain/what-if';
 import { CacheService } from '../../common/cache/cache.service';
 import type { ForecastBundle } from './repositories/forecast.repository.interface';
+import {
+  freeEntitlement,
+  premiumEntitlement,
+} from '../billing/test-support/entitlement.fixture';
 
 const M = 1_000_000;
 // Must match the service's clock: it anchors to the household timezone
@@ -27,7 +32,13 @@ function bundle(over: Partial<ForecastBundle> = {}): ForecastBundle {
   };
 }
 
-function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
+function setup(
+  over: Partial<ForecastBundle> = {},
+  goal?: unknown,
+  // The quota cases need a Free household; everything else stays premium so a
+  // failure means the engine is wrong, not that a fixture drifted.
+  entitlement = premiumEntitlement(),
+) {
   const loadForecastBundle = jest.fn(async () => bundle(over));
   const forecastRepository = {
     assertHousehold: jest.fn(async () => ({}) as never),
@@ -81,11 +92,26 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
   // to the loader, so these tests exercise the actual cached code path rather
   // than a stub, while staying offline.
   const cache = new CacheService();
+  // Premium, and a counter that records nothing: these tests are about the
+  // engine, not the plan. The quota has its own spec.
+  const entitlements = {
+    forHousehold: jest.fn(async () => entitlement),
+    assertQuota: jest.fn(),
+  } as never;
+  const whatIfUsage = {
+    used: jest.fn(async () => 0),
+    consume: jest.fn(async () => 1),
+  } as never;
+
+  const analytics = noopAnalytics();
   const service = new ForecastService(
     forecastRepository,
     goalsRepository,
     goalsService,
     cache,
+    entitlements,
+    whatIfUsage,
+    analytics,
   );
   return {
     service,
@@ -94,6 +120,9 @@ function setup(over: Partial<ForecastBundle> = {}, goal?: unknown) {
     goalsRepository,
     goalsService,
     cache,
+    analytics,
+    whatIfUsage: whatIfUsage as unknown as Record<string, jest.Mock>,
+    entitlements: entitlements as unknown as Record<string, jest.Mock>,
   };
 }
 
@@ -212,6 +241,59 @@ describe('ForecastService.parseHorizon', () => {
 
 describe('ForecastService.whatIf', () => {
   const spend = { amount: 30 * M, plannedDate: TODAY };
+
+  /**
+   * A slot is one QUESTION — input entered, "Xem thử" pressed, an answer shown
+   * — not one engine execution. The funding step re-runs the engine twice more
+   * while answering the same question, and it appears exactly when a household
+   * is short of money.
+   */
+  describe('what counts as one run', () => {
+    it('spends a slot for a new question', async () => {
+      const { service, whatIfUsage } = setup({}, undefined, freeEntitlement());
+
+      await service.whatIf('hh-1', spend);
+
+      expect(whatIfUsage.consume).toHaveBeenCalledTimes(1);
+    });
+
+    it('spends nothing on a re-run of the answer on screen', async () => {
+      const { service, whatIfUsage } = setup({}, undefined, freeEntitlement());
+
+      await service.whatIf('hh-1', { ...spend, rerun: true });
+
+      expect(whatIfUsage.consume).not.toHaveBeenCalled();
+    });
+
+    // Same numbers typed again is a NEW question. Nothing about the payload
+    // says otherwise, which is why the flag comes from the client.
+    it('spends a slot when the same amount is asked again', async () => {
+      const { service, whatIfUsage } = setup({}, undefined, freeEntitlement());
+
+      await service.whatIf('hh-1', spend);
+      await service.whatIf('hh-1', spend);
+
+      expect(whatIfUsage.consume).toHaveBeenCalledTimes(2);
+    });
+
+    // The ceiling is about engine work, so a re-run is still checked against
+    // it — a client that could set `rerun` freely would otherwise be ungated.
+    it('still checks a re-run against the ceiling', async () => {
+      const { service, entitlements } = setup({}, undefined, freeEntitlement());
+
+      await service.whatIf('hh-1', { ...spend, rerun: true });
+
+      expect(entitlements.assertQuota).toHaveBeenCalled();
+    });
+
+    it('counts nothing at all for a premium household', async () => {
+      const { service, whatIfUsage } = setup();
+
+      await service.whatIf('hh-1', spend);
+
+      expect(whatIfUsage.consume).not.toHaveBeenCalled();
+    });
+  });
 
   it('loads the forecast bundle exactly ONCE for before + after', async () => {
     const { service, loadForecastBundle } = setup();
@@ -792,13 +874,7 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
   });
 
   it('keeps analytics bucketed, never the sale amount', async () => {
-    const { service } = setup(household());
-    const logged: string[] = [];
-    jest
-      .spyOn(service['logger'], 'log')
-      .mockImplementation((message: unknown) => {
-        logged.push(String(message));
-      });
+    const { service, analytics } = setup(household());
 
     await service.whatIf('hh-1', {
       ...spend,
@@ -808,10 +884,15 @@ describe('ForecastService.whatIf — funding a spend by selling an asset', () =>
       },
     });
 
-    const line = logged.find((entry) => entry.startsWith('what_if_run'))!;
-    expect(line).toContain('"hasAssetSale":true');
-    expect(line).not.toContain('300000000');
-    expect(line).not.toContain('800000000');
+    const event = analytics.lastOf('what_if_run')!;
+    expect(event.props.has_asset_sale).toBe(true);
+    expect(event.props.amount_bucket).toBe('100M+');
+
+    // The guarantee, unchanged from when this event was a log line: the real
+    // figures must not appear anywhere in the payload, under any key.
+    const serialized = JSON.stringify(event);
+    expect(serialized).not.toContain('300000000');
+    expect(serialized).not.toContain('800000000');
   });
 
   it('credits the wallet the household chose, not one of its own picking', async () => {

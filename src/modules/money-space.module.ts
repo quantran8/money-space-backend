@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { AssetsModule } from './assets/assets.module';
 import { AuthModule } from './auth/auth.module';
+import { BillingModule } from './billing/billing.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DebtsModule } from './debts/debts.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { GoalsModule } from './goals/goals.module';
 import { HouseholdsModule } from './households/households.module';
 import { MarketDataModule } from './market-data/market-data.module';
@@ -15,10 +17,12 @@ import { AttentionModule } from './attention/attention.module';
 import { InvitesModule } from './invites/invites.module';
 import { ActivityModule } from './activity/activity.module';
 import { SnapshotsModule } from './snapshots/snapshots.module';
+import { ExportModule } from './export/export.module';
 
 @Module({
   imports: [
     AuthModule,
+    BillingModule,
     HouseholdsModule,
     DashboardModule,
     AssetsModule,
@@ -34,9 +38,12 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MarketDataModule,
     SnapshotsModule,
     ActivityModule,
+    FeedbackModule,
+    ExportModule,
   ],
   exports: [
     AuthModule,
+    BillingModule,
     HouseholdsModule,
     DashboardModule,
     AssetsModule,
@@ -52,6 +59,8 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MarketDataModule,
     SnapshotsModule,
     ActivityModule,
+    FeedbackModule,
+    ExportModule,
   ],
 })
 export class MoneySpaceModule {}

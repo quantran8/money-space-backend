@@ -11,6 +11,11 @@ import {
 } from '../../common/utils/clock';
 import { runForecast } from './domain/forecast';
 import { CacheService } from '../../common/cache/cache.service';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
+import { EntitlementService } from '../billing/entitlement.service';
+import { WhatIfUsageService } from '../billing/whatif-usage.service';
+import { normalizeWhatIfSource } from './dto/what-if.dto';
+import { PremiumRequiredException } from '../billing/entitlement.errors';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
 import { computeFlexibleMoney } from './domain/flexible-money';
 import { walletValuesAfterOutflows } from './domain/wallet-values-after-outflows';
@@ -245,9 +250,15 @@ export class ForecastService {
     // not be valued here without it.
     private readonly goalsService: GoalsService,
     private readonly cache: CacheService,
+    private readonly entitlements: EntitlementService,
+    private readonly whatIfUsage: WhatIfUsageService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
-  /** Validate + clamp the requested horizon. */
+  /**
+   * Validate the requested horizon. Shape only — this says nothing about which
+   * horizons the household may actually ask for.
+   */
   parseHorizon(raw?: string | number): number {
     if (raw === undefined || raw === null || raw === '') {
       return DEFAULT_HORIZON;
@@ -259,6 +270,39 @@ export class ForecastService {
       );
     }
     return parsed;
+  }
+
+  /**
+   * Validate the horizon AND check the household may have it.
+   *
+   * This moved down from the four controller handlers deliberately. The
+   * controller has no `householdId` in scope at the point it parses the query
+   * string, so gating there would have meant either resolving the household
+   * four times or spreading the check across four call sites. Here it is one
+   * chokepoint, and every forecast route passes through it.
+   *
+   * `@RequirePremium()` is NOT on these routes, for the same reason: they serve
+   * Free perfectly well at horizon 30. It is the VALUE that is gated, never the
+   * endpoint.
+   */
+  private async resolveHorizon(
+    householdId: string,
+    raw?: string | number,
+  ): Promise<number> {
+    const horizonDays = this.parseHorizon(raw);
+    // The horizons every plan includes; no entitlement read needed for them,
+    // which is the common case and the default.
+    if (horizonDays <= DEFAULT_HORIZON) {
+      return horizonDays;
+    }
+
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    if (!entitlement.limits.forecastHorizons.includes(horizonDays)) {
+      throw new PremiumRequiredException('forecast_horizon', entitlement, {
+        requested: horizonDays,
+      });
+    }
+    return horizonDays;
   }
 
   /**
@@ -283,6 +327,44 @@ export class ForecastService {
       horizonDays,
       ...bundle,
     };
+  }
+
+  /**
+   * The HTTP entries: parse the horizon, check the household may HAVE it, then
+   * run the same method the rest of the codebase calls with a number.
+   *
+   * The split exists because `forecast()` and friends are also called
+   * internally — by the snapshot backfill, and by what-if running the engine
+   * twice over one bundle — with a horizon that was never a query string and
+   * has no household choosing it. Gating inside them would have made an
+   * internal caller subject to a paywall it has no way to answer.
+   */
+  async forecastForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.forecast(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
+  }
+
+  async flexibleMoneyForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.flexibleMoney(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
+  }
+
+  async financialStateForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.financialState(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
+  }
+
+  async forecastBundleForRequest(householdId: string, rawHorizon?: string | number) {
+    return this.forecastBundle(
+      householdId,
+      await this.resolveHorizon(householdId, rawHorizon),
+    );
   }
 
   /**
@@ -421,6 +503,26 @@ export class ForecastService {
     }
     if (!payload.plannedDate) {
       throw new BadRequestException('plannedDate is required');
+    }
+
+    // The quota, checked AFTER the payload is known to be well-formed and
+    // BEFORE any of the expensive work. A malformed request must never spend
+    // one of a household's runs, and a household that is over its limit must
+    // not pay for a bundle load to be told so.
+    //
+    // A re-run is checked too, not waved through: the ceiling is about how much
+    // engine work a free household gets, and a client that could set `rerun`
+    // freely would otherwise have none.
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    const whatIfLimit = entitlement.limits.whatIfPerMonth;
+    if (whatIfLimit !== null) {
+      const used = await this.whatIfUsage.used(householdId);
+      this.entitlements.assertQuota(
+        entitlement,
+        'whatIfPerMonth',
+        used,
+        'whatif_quota',
+      );
     }
 
     const input = await this.loadInput(householdId, horizonDays);
@@ -658,17 +760,20 @@ export class ForecastService {
     const answerForecast = afterSaleForecast ?? afterForecast;
     const resultType = classifyResult(answerForecast);
 
-    // Analytics: bucket + shape only. Never the amount, never the balances —
-    // the household's figures stay theirs (§26D).
-    this.logger.log(
-      `what_if_run ${JSON.stringify({
-        householdId,
-        hasGoal: Boolean(goal),
-        hasAssetSale: Boolean(appliedSale),
-        amountBucket: amountBucket(amount),
-        resultType,
-      })}`,
-    );
+    // Bucket + shape only. Never the amount, never the balances — the
+    // household's figures stay theirs (§26D). See memory/analytics.md.
+    //
+    // This replaces a `logger.log` line rather than sitting beside one: two
+    // definitions of the same event drift, and a second line per request is
+    // ingest nobody reads.
+    this.analytics.capture(householdId, 'what_if_run', {
+      source: normalizeWhatIfSource(payload.source),
+      rerun: payload.rerun === true,
+      has_goal: Boolean(goal),
+      has_asset_sale: Boolean(appliedSale),
+      amount_bucket: amountBucket(amount),
+      result_type: resultType,
+    });
 
     const side = (
       forecast: ForecastResult,
@@ -866,6 +971,23 @@ export class ForecastService {
             afterGoalResult?.projection ?? null,
           )
         : null;
+
+    // Counted only now, once the run has actually produced an answer. Charging
+    // at the top would spend a slot on a request that then failed validation or
+    // threw — and three a month is few enough that one wrongly-charged run is
+    // something a household would notice.
+    //
+    // A slot is one QUESTION, not one execution. Adding an asset sale to the
+    // answer on screen, or taking it away, re-runs the engine but is still the
+    // same question — and the funding step appears exactly when a household is
+    // short of money, which is when they can least afford to be charged three
+    // times for asking once.
+    //
+    // Unlimited plans are not counted at all: the number would only ever be
+    // written and never read.
+    if (whatIfLimit !== null && payload.rerun !== true) {
+      await this.whatIfUsage.consume(householdId);
+    }
 
     return {
       householdId,

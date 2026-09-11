@@ -8,6 +8,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
+import { EntitlementService } from '../billing/entitlement.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { MoneyEventsService } from '../money-events/money-events.service';
 import { todayInTimeZone } from '../../common/utils/clock';
@@ -87,6 +88,7 @@ import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interfa
 import type { GoalsRepository } from '../goals/repositories/goals.repository.interface';
 import { CASHFLOW_EVENTS_REPOSITORY } from '../cashflow-events/repositories/cashflow-events.repository.interface';
 import type { CashflowEventsRepository } from '../cashflow-events/repositories/cashflow-events.repository.interface';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { DEBTS_REPOSITORY } from '../debts/repositories/debts.repository.interface';
 import type { DebtsRepository } from '../debts/repositories/debts.repository.interface';
 import {
@@ -123,9 +125,25 @@ export class AssetsService {
     // it arrives lazily — see the module's `forwardRef` note.
     @Inject(forwardRef(() => MoneyEventsService))
     private readonly moneyEventsService: MoneyEventsService,
+    private readonly entitlements: EntitlementService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   private readonly logger = new Logger(AssetsService.name);
+
+  /**
+   * Whether the household has room for one more automatically-priced asset.
+   *
+   * `null` is unlimited, so a premium household never reaches the count.
+   */
+  private async canAutoPrice(householdId: string): Promise<boolean> {
+    const entitlement = await this.entitlements.forHousehold(householdId);
+    const limit = entitlement.limits.marketPricedAssets;
+    if (limit === null) return true;
+
+    const used = await this.assetsRepository.countAutoPricedAssets(householdId);
+    return used < limit;
+  }
 
   async listAssets(householdId: string) {
     // `assertHousehold` only guards; it does not feed `getAssetRecords`. Running
@@ -648,7 +666,36 @@ export class AssetsService {
       marketPosition: payload.marketPosition,
       calculationTerm: payload.calculationTerm,
       holderMemberId: payload.holderMemberId || creatorMemberId || null,
+      autoPriceEnabled: true,
     });
+
+    // The auto-price quota — and note what it does NOT do: it never refuses.
+    //
+    // Creating a gold, stock or crypto asset is always allowed. Blocking it
+    // would block the balance sheet a Vietnamese household opens the app for,
+    // and they would leave rather than pay; what Premium sells is the
+    // automation, not the record. So an asset over the ceiling is created
+    // exactly as asked, just with automatic pricing off — the UI shows a
+    // "Cập nhật tay" chip and the household can move automation onto it.
+    //
+    // That also means the household picks WHICH assets are automatic, rather
+    // than being stuck with "the first two you happened to create".
+    if (asset.valuationMode === 'market_priced') {
+      asset.autoPriceEnabled = await this.canAutoPrice(householdId);
+
+      // The SILENT paywall: the asset is created either way, so this never
+      // throws and the exception filter can never see it. Without this event
+      // the one limit with a real marginal cost behind it (CoinMarketCap,
+      // Twelve Data) leaves no trace at all.
+      if (!asset.autoPriceEnabled) {
+        this.analytics.capture(householdId, 'auto_price_declined', {
+          reason: 'auto_price_quota',
+          asset_type: asset.type,
+          limit: null,
+          used: null,
+        });
+      }
+    }
 
     // "We just bought this" names the wallet that paid; "we already own this"
     // leaves it out. Only the former moves money, and only it has to be

@@ -1,9 +1,26 @@
 import { ConflictException } from '@nestjs/common';
 import { AssetsService } from './assets.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import type { Asset } from './entities/asset.entity';
 import type { AssetsRepository } from './repositories/assets.repository.interface';
 import type { PrismaService } from '../../database/prisma/prisma.service';
 import type { MarketDataService } from '../market-data/market-data.service';
+import { premiumEntitlement } from '../billing/test-support/entitlement.fixture';
+
+/**
+ * A stub entitlement service that always answers Premium.
+ *
+ * These specs are about the asset rules; handing them Premium keeps the
+ * auto-price quota out of the way, so a failing quota test means the quota is
+ * wrong rather than that an unrelated fixture drifted.
+ */
+function premiumEntitlements() {
+  return {
+    forHousehold: jest.fn(async () => premiumEntitlement()),
+    assertQuota: jest.fn(),
+  } as never;
+}
+
 
 /**
  * Deleting an asset that other records point at.
@@ -120,6 +137,9 @@ describe('AssetsService.deleteAsset — records pointing at the asset', () => {
         cashflowEventsRepository,
         debtsRepository,
         moneyEventsService,
+        // Premium: these tests are about the asset rules, not the plan.
+        premiumEntitlements(),
+        noopAnalytics(),
       ),
       calls,
       audit: audit as unknown as { record: jest.Mock },

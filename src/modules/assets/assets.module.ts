@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
+import { BillingModule } from '../billing/billing.module';
 import { MarketDataModule } from '../market-data/market-data.module';
 import { MoneyEventsModule } from '../money-events/money-events.module';
 import { GOALS_REPOSITORY } from '../goals/repositories/goals.repository.interface';
@@ -24,6 +25,9 @@ import { PrismaAssetsRepository } from './repositories/prisma-assets.repository'
     CommonModule,
     MarketDataModule,
     forwardRef(() => MoneyEventsModule),
+    // The auto-price quota. Counted in the service against assets it has
+    // already queried — a guard cannot count.
+    BillingModule,
   ],
   controllers: [AssetsController],
   providers: [

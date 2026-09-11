@@ -11,7 +11,7 @@ import type { Params } from 'nestjs-pino';
  * `{ a: { b: { token } } }` — which is the shape a nested DTO or an upstream
  * error payload actually arrives in. Anything short of a recursive walk leaks.
  */
-const SENSITIVE_KEYS = new Set([
+export const SENSITIVE_KEYS = new Set([
   'authorization',
   'cookie',
   'set-cookie',
