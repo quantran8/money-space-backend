@@ -1242,3 +1242,38 @@ model AuditLog {
   @@index([entityType, entityId])
   @@map("audit_logs")
 }
+
+// One person's message to whoever builds this — a bug or an idea.
+// Deliberately not household-scoped and deliberately un-joined; append-only,
+// like audit_logs. See memory/feedback.md.
+model Feedback {
+  id     String       @id @default(uuid(7)) @db.Uuid
+  // The reporter, resolved from the bearer token. Never read from the body.
+  userId String       @map("user_id") @db.Uuid
+  type   FeedbackType
+  message String
+  // Denormalized from the token so a row reads without a join, and survives
+  // the profile being deleted.
+  email  String?
+  // The space they were looking at. NO foreign key: a report about a household
+  // that was then deleted must still insert, and must still be there after.
+  householdId String?  @map("household_id") @db.Uuid
+  // Route, app version, platform, user agent. Json because the shape is the
+  // CLIENT's and will drift; nothing queries inside it.
+  context Json        @default("{}") @db.JsonB
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // The only read pattern that exists: newest first, in the table editor.
+  @@index([createdAt(sort: Desc)])
+  // Supports the per-user rate check in FeedbackService.
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("feedback")
+}
+
+enum FeedbackType {
+  bug
+  idea
+  other
+
+  @@map("feedback_type")
+}

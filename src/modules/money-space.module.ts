@@ -3,6 +3,7 @@ import { AssetsModule } from './assets/assets.module';
 import { AuthModule } from './auth/auth.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DebtsModule } from './debts/debts.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { GoalsModule } from './goals/goals.module';
 import { HouseholdsModule } from './households/households.module';
 import { MarketDataModule } from './market-data/market-data.module';
@@ -34,6 +35,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MarketDataModule,
     SnapshotsModule,
     ActivityModule,
+    FeedbackModule,
   ],
   exports: [
     AuthModule,
@@ -52,6 +54,7 @@ import { SnapshotsModule } from './snapshots/snapshots.module';
     MarketDataModule,
     SnapshotsModule,
     ActivityModule,
+    FeedbackModule,
   ],
 })
 export class MoneySpaceModule {}
