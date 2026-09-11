@@ -15,6 +15,10 @@ import {
 import type { GoogleCallbackDto } from './dto/google-auth.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RefreshTokenDto } from './dto/refresh-token.dto';
+import type {
+  RequestPasswordResetDto,
+  UpdatePasswordDto,
+} from './dto/reset-password.dto';
 import type { SignupDto } from './dto/signup.dto';
 import type {
   AuthProvider,
@@ -215,6 +219,67 @@ export class AuthService {
       user: this.mapUser(data.user, this.providerOf(data.user)),
       session: this.mapSession(data.session),
     };
+  }
+
+  /**
+   * Send a password-recovery email.
+   *
+   * Always reports success, even for an address with no account: the response
+   * must not tell a stranger whether someone banks here.
+   */
+  async requestPasswordReset(
+    payload: RequestPasswordResetDto,
+  ): Promise<{ success: true }> {
+    const email = payload.email.trim().toLowerCase();
+
+    const { error } = await this.client().auth.resetPasswordForEmail(email, {
+      redirectTo: payload.redirectTo,
+    });
+
+    // Rate limiting is the one failure worth surfacing — silence would look
+    // like the mail was sent and leave the user waiting for nothing.
+    if (error?.status === 429) {
+      throw new BadRequestException(error.message);
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Set a new password using the recovery link's access token.
+   *
+   * The token comes from the emailed link, so possession of it is the proof of
+   * identity — there is no old password to check.
+   */
+  async updatePassword(payload: UpdatePasswordDto): Promise<AuthResult> {
+    const { data, error } = await this.client().auth.getUser(
+      payload.accessToken,
+    );
+
+    if (error || !data.user) {
+      throw new UnauthorizedException('Invalid or expired recovery link');
+    }
+
+    if (!this.supabase.hasAdminClient()) {
+      throw new InternalServerErrorException(
+        'Password reset is not configured',
+      );
+    }
+
+    const { error: updateError } = await this.supabase
+      .getAdminClient()
+      .auth.admin.updateUserById(data.user.id, { password: payload.password });
+
+    if (updateError) {
+      throw new BadRequestException(updateError.message);
+    }
+
+    // Sign in straight away: the alternative is asking someone who has just
+    // proved who they are to type the password they set one screen ago.
+    return this.login({
+      email: data.user.email ?? '',
+      password: payload.password,
+    });
   }
 
   async logout(accessToken: string): Promise<{ success: true }> {

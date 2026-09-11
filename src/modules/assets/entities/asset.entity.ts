@@ -66,6 +66,21 @@ export interface Asset {
   countsAsFlexible?: boolean | null;
   currency: string;
   note: string;
+  /**
+   * Whether the valuation cron refreshes this asset's price.
+   *
+   * Only meaningful when `valuationMode` is `market_priced`; on a manual asset
+   * there is nothing to refresh. It is separate from the mode because the plan
+   * limits the AUTOMATION, never the record: an asset over a free household's
+   * ceiling is still created, still market-priced, and simply valued by hand
+   * until the household picks it as one of their automatic ones.
+   *
+   * Optional on the entity, defaulting to true wherever it is read: the column
+   * has that default, and an asset constructed without mentioning it (every
+   * manual asset, and every fixture that predates the plan) refreshes exactly
+   * as it always did.
+   */
+  autoPriceEnabled?: boolean;
   status: AssetStatus;
   /**
    * When this asset's value was last established, as an ISO timestamp. NULL

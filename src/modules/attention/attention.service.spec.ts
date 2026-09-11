@@ -1,4 +1,6 @@
 import { AttentionService } from './attention.service';
+import { freeEntitlement } from '../billing/test-support/entitlement.fixture';
+import type { Entitlement } from '../billing/entities/entitlement.entity';
 import type { ForecastInput } from '../forecast/domain/forecast.types';
 
 const M = 1_000_000;
@@ -42,6 +44,7 @@ function setup(
     updateFrequency?: 'weekly' | 'monthly' | 'manual';
     goals?: Array<{ id: string; name: string }>;
     allocations?: Array<{ financialGoalId: string; role: string }>;
+    entitlement?: Partial<Entitlement>;
   } = {},
 ) {
   const attentionRepository = {
@@ -64,11 +67,19 @@ function setup(
     findAllocationsByHousehold: jest.fn(async () => options.allocations ?? []),
   } as never;
 
+  // Feeds `plan_expiring_soon`. Free by default, which raises nothing.
+  const entitlements = {
+    forHousehold: jest.fn(async () =>
+      freeEntitlement(options.entitlement),
+    ),
+  } as never;
+
   return {
     service: new AttentionService(
       attentionRepository,
       forecast,
       goalsRepository,
+      entitlements,
     ),
     attentionRepository: attentionRepository as Record<string, jest.Mock>,
   };
@@ -200,6 +211,91 @@ describe('AttentionService.listAttentionItems', () => {
     expect(
       result.items.some((item) => item.ruleCode === 'goal_without_wallet'),
     ).toBe(false);
+  });
+
+  describe('plan_expiring_soon', () => {
+    const expiring = (over: Partial<Entitlement> = {}): Partial<Entitlement> => ({
+      tier: 'premium',
+      status: 'active',
+      expiresAt: '2026-08-20T00:00:00.000Z',
+      daysRemaining: 7,
+      source: 'payment',
+      ...over,
+    });
+
+    it('flags a plan inside the window', async () => {
+      const { service } = setup({ entitlement: expiring() });
+
+      const result = await service.listAttentionItems('hh-1');
+      const signal = result.items.find(
+        (item) => item.ruleCode === 'plan_expiring_soon',
+      );
+      expect(signal).toBeDefined();
+      expect(signal?.level).toBe('important');
+      expect(signal?.params.daysRemaining).toBe(7);
+      expect(signal?.params.isTrial).toBe(false);
+    });
+
+    it('marks a lapsing trial so the client can say so', async () => {
+      const { service } = setup({
+        entitlement: expiring({ source: 'trial', isTrial: true }),
+      });
+
+      const result = await service.listAttentionItems('hh-1');
+      expect(
+        result.items.find((item) => item.ruleCode === 'plan_expiring_soon')
+          ?.params.isTrial,
+      ).toBe(true);
+    });
+
+    it('stays quiet outside the window', async () => {
+      const { service } = setup({ entitlement: expiring({ daysRemaining: 40 }) });
+
+      const result = await service.listAttentionItems('hh-1');
+      expect(result.items.map((i) => i.ruleCode)).not.toContain(
+        'plan_expiring_soon',
+      );
+    });
+
+    // Lifetime has no end date to count down to.
+    it('never flags a lifetime plan', async () => {
+      const { service } = setup({
+        entitlement: {
+          tier: 'premium',
+          status: 'active',
+          isLifetime: true,
+          expiresAt: null,
+          daysRemaining: null,
+        },
+      });
+
+      const result = await service.listAttentionItems('hh-1');
+      expect(result.items.map((i) => i.ruleCode)).not.toContain(
+        'plan_expiring_soon',
+      );
+    });
+
+    // Already gone: the subscription page states it in full, and nagging on
+    // Home about something Home cannot fix is what §29 forbids.
+    it('stays quiet once the plan has already lapsed', async () => {
+      const { service } = setup({
+        entitlement: expiring({ status: 'expired', daysRemaining: 0 }),
+      });
+
+      const result = await service.listAttentionItems('hh-1');
+      expect(result.items.map((i) => i.ruleCode)).not.toContain(
+        'plan_expiring_soon',
+      );
+    });
+
+    it('stays quiet for a free household', async () => {
+      const { service } = setup();
+
+      const result = await service.listAttentionItems('hh-1');
+      expect(result.items.map((i) => i.ruleCode)).not.toContain(
+        'plan_expiring_soon',
+      );
+    });
   });
 
   it('raises no staleness signal for a household on manual cadence', async () => {

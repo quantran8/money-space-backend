@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InvitesService } from './invites.service';
+import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import type { HouseholdInvite } from './entities/invite.entity';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -58,7 +59,7 @@ function setup(stored: HouseholdInvite | null = invite()) {
   } as never;
 
   return {
-    service: new InvitesService(invitesRepository),
+    service: new InvitesService(invitesRepository, noopAnalytics()),
     invitesRepository: invitesRepository as Record<string, jest.Mock>,
   };
 }

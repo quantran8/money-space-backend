@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { CacheService } from '../../common/cache/cache.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
-import { MARKET_DATA_AS_OF } from '../../common/seed/money-space.seed';
 import type { ListFxRatesQuery } from './dto/list-fx-rates.query';
 import type { ListFxCounterRatesQuery } from './dto/list-fx-counter-rates.query';
 import type { ListGoldPricesQuery } from './dto/list-gold-prices.query';
@@ -40,6 +39,19 @@ const SEARCHABLE_CLASSES: SymbolAssetClass[] = [
 ];
 const DEFAULT_SYMBOL_LIMIT = 30; // Fits the whole VN30 default stock list.
 const MAX_SYMBOL_LIMIT = 50;
+
+/**
+ * The newest timestamp carried by the rows themselves, or now when the list is
+ * empty. Reporting the clock instead would claim data is fresher than it is —
+ * the freshness layer reads this to decide whether a figure can be trusted.
+ */
+function latestTimestamp(stamps: readonly (string | undefined)[]): string {
+  let newest = '';
+  for (const stamp of stamps) {
+    if (stamp && stamp > newest) newest = stamp;
+  }
+  return newest || new Date().toISOString();
+}
 
 @Injectable()
 export class MarketDataService {
@@ -152,7 +164,7 @@ export class MarketDataService {
     }
 
     return {
-      asOf: MARKET_DATA_AS_OF,
+      asOf: latestTimestamp(items.map((item) => item.priceTime)),
       items,
       total: items.length,
     };
@@ -421,7 +433,7 @@ export class MarketDataService {
     }
 
     return {
-      asOf: MARKET_DATA_AS_OF,
+      asOf: latestTimestamp(items.map((item) => item.asOf)),
       items,
       total: items.length,
     };

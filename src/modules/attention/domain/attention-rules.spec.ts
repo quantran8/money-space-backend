@@ -301,6 +301,7 @@ describe('thresholds', () => {
   it('are what the rules claim', () => {
     expect(ATTENTION_THRESHOLDS).toEqual({
       dueSoonDays: 7,
+      planExpiringSoonDays: 14,
     });
   });
 });

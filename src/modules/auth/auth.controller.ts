@@ -19,6 +19,10 @@ import type {
 } from './dto/google-auth.dto';
 import type { LoginDto } from './dto/login.dto';
 import type { RefreshTokenDto } from './dto/refresh-token.dto';
+import type {
+  RequestPasswordResetDto,
+  UpdatePasswordDto,
+} from './dto/reset-password.dto';
 import type { SignupDto } from './dto/signup.dto';
 import {
   SupabaseAuthGuard,
@@ -46,6 +50,25 @@ export class AuthController {
       throw new BadRequestException('email and password are required');
     }
     return this.authService.login(payload);
+  }
+
+  @Public()
+  @Post('password/reset')
+  requestPasswordReset(@Body() payload: RequestPasswordResetDto) {
+    if (!payload?.email) {
+      throw new BadRequestException('email is required');
+    }
+    return this.authService.requestPasswordReset(payload);
+  }
+
+  /** Completes a reset: the recovery link's token IS the authentication here. */
+  @Public()
+  @Post('password/update')
+  updatePassword(@Body() payload: UpdatePasswordDto) {
+    if (!payload?.accessToken || !payload?.password) {
+      throw new BadRequestException('accessToken and password are required');
+    }
+    return this.authService.updatePassword(payload);
   }
 
   @Public()

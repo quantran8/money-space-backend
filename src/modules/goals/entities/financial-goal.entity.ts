@@ -1,5 +1,14 @@
 export type GoalPriority = 'high' | 'medium' | 'low';
 
+/**
+ * Where the goal is in its life. Mirrors the `GoalStatus` enum in the schema.
+ *
+ * Surfaced on the entity because the plan's goal quota counts `active` goals
+ * only — a household that COMPLETES two goals must still be able to start a
+ * third, or the ceiling would punish them for succeeding.
+ */
+export type GoalStatus = 'active' | 'paused' | 'completed' | 'cancelled';
+
 export type GoalAllocationKind = 'fixed' | 'percent';
 
 /**
@@ -91,6 +100,7 @@ export interface FinancialGoal {
    */
   baselineContributionAmount: number | null;
   priority: GoalPriority;
+  status: GoalStatus;
   note: string;
   /** Renamed from `deadline` (spec §20). */
   targetDate: string;

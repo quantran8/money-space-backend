@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import type { AuthUser } from '../auth/entities/auth-user.entity';
 import type { CreateHouseholdDto } from './dto/create-household.dto';
+import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { HOUSEHOLDS_REPOSITORY } from './repositories/households.repository.interface';
 import type { HouseholdsRepository } from './repositories/households.repository.interface';
 
@@ -14,6 +15,7 @@ export class HouseholdsService {
   constructor(
     @Inject(HOUSEHOLDS_REPOSITORY)
     private readonly householdsRepository: HouseholdsRepository,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /** Households the given user belongs to. Drives onboarding gating on the client. */
@@ -89,7 +91,7 @@ export class HouseholdsService {
       ? payload.updateFrequency!
       : 'manual';
 
-    return this.householdsRepository.createHousehold({
+    const household = await this.householdsRepository.createHousehold({
       name,
       currency: payload.currency?.trim() || 'VND',
       updateFrequency,
@@ -98,6 +100,27 @@ export class HouseholdsService {
       ownerName: user.displayName ?? user.fullName,
       inviteEmail: inviteEmail || null,
     });
+
+    // No plan row is written here on purpose: a new household is on Free, and
+    // a missing row IS Free. The trial is a choice the household makes in the
+    // paywall, not something spent for them before they have seen what Premium
+    // does — see `SubscriptionService.startTrial`.
+    //
+    // So there is deliberately NO `trial_granted` property here: it would be
+    // false on every event and would read as "nobody takes the trial".
+    // `trial_started` is its own event, fired where the choice is made.
+    this.analytics.capture(
+      household.id,
+      'household_created',
+      {
+        update_frequency: updateFrequency,
+        // A boolean. The address itself never leaves the server.
+        partner_invited: Boolean(inviteEmail),
+      },
+      user.id,
+    );
+
+    return household;
   }
 
   /**

@@ -21,6 +21,74 @@ enum InviteStatus {
   cancelled
 }
 
+enum SubscriptionTier {
+  free
+  premium
+}
+
+enum SubscriptionStatus {
+  active
+  expired
+}
+
+/// What granted the current plan. Display and analytics only.
+enum EntitlementSource {
+  redeem_code
+  payment
+  manual_grant
+  trial
+}
+
+enum RedeemCodeStatus {
+  active
+  /// Switched off by hand — a leaked code, a cancelled campaign.
+  disabled
+  /// Denormalized from redemption_count so the common filter needs no maths.
+  exhausted
+}
+
+/// Who processed the money. PayOS first — 0đ per transaction, a hosted
+/// checkout with the QR already on it, and a real HMAC-SHA256 webhook
+/// signature. VNPay is deferred: it needs a business licence, 2–4 weeks of
+/// approval, and charges 1.1–2.2%, which at 39.000đ is the whole margin.
+enum PaymentProvider {
+  payos
+  /// Apple / Google in-app purchase, settled through RevenueCat. One value for
+  /// both stores: RevenueCat is the system of record either way, and the store
+  /// itself is recorded in `store` — splitting the enum would mean every query
+  /// that means "an IAP" had to list two values.
+  revenuecat
+}
+
+/// Which store actually took the money. Only set on RevenueCat orders; PayOS
+/// leaves it NULL. Kept because a refund is handled per store, and support
+/// cannot act on "an IAP" without knowing which one.
+enum PurchaseStore {
+  app_store
+  play_store
+}
+
+/// Where an order stands. Deliberately NOT a payment "attempt" log — one row
+/// per checkout, moved through its states.
+enum PaymentOrderStatus {
+  /// Created, checkout opened, nothing received yet. Also where an
+  /// UNDERPAYMENT stays: the money arrived but not the amount owed, so the
+  /// order is neither paid nor dead, and a human decides.
+  pending
+  paid
+  /// The household backed out on the hosted page.
+  cancelled
+  /// PayOS expired the link before anything was paid.
+  expired
+}
+
+/// What a code grants. `lifetime` absorbs everything after it.
+enum RedeemGrantType {
+  duration_days
+  until_date
+  lifetime
+}
+
 enum MemberStatus {
   active
   invited
@@ -370,36 +438,39 @@ model Currency {
 }
 
 model Profile {
-  id                       String                @id @db.Uuid
-  fullName                 String?               @map("full_name")
-  displayName              String?               @map("display_name")
-  avatarUrl                String?               @map("avatar_url")
+  id                       String                 @id @db.Uuid
+  fullName                 String?                @map("full_name")
+  displayName              String?                @map("display_name")
+  avatarUrl                String?                @map("avatar_url")
   email                    String?
   phone                    String?
-  createdAt                DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
-  householdsCreated        Household[]           @relation("HouseholdCreatedBy")
-  householdMembers         HouseholdMember[]     @relation("HouseholdMemberUser")
-  invitedHouseholdMembers  HouseholdMember[]     @relation("HouseholdMemberInvitedBy")
-  householdInvitesSent     HouseholdInvite[]     @relation("HouseholdInviteInvitedBy")
-  householdInvitesAccepted HouseholdInvite[]     @relation("HouseholdInviteAcceptedBy")
-  snapshotsCreated         Snapshot[]            @relation("SnapshotCreatedBy")
-  assetsCreated            Asset[]               @relation("AssetCreatedBy")
-  assetsUpdated            Asset[]               @relation("AssetUpdatedBy")
-  assetValuationsCreated   AssetValuation[]      @relation("AssetValuationCreatedBy")
-  assetValuationsUpdated   AssetValuation[]      @relation("AssetValuationUpdatedBy")
-  cashflowEventsCreated    CashflowEvent[]       @relation("CashflowEventCreatedBy")
-  cashflowEventsUpdated    CashflowEvent[]       @relation("CashflowEventUpdatedBy")
-  cashflowEventsCompleted  CashflowEvent[]       @relation("CashflowEventLastCompletedBy")
-  debtsCreated             Debt[]                @relation("DebtCreatedBy")
-  debtsUpdated             Debt[]                @relation("DebtUpdatedBy")
-  financialGoalsCreated    FinancialGoal[]       @relation("FinancialGoalCreatedBy")
-  financialGoalsUpdated    FinancialGoal[]       @relation("FinancialGoalUpdatedBy")
-  goalAllocationsCreated   GoalAssetAllocation[] @relation("GoalAssetAllocationCreatedBy")
-  goalAllocationsUpdated   GoalAssetAllocation[] @relation("GoalAssetAllocationUpdatedBy")
-  moneyEventsCreated       MoneyEvent[]          @relation("MoneyEventCreatedBy")
-  moneyEventsUpdated       MoneyEvent[]          @relation("MoneyEventUpdatedBy")
-  auditLogsActed           AuditLog[]            @relation("AuditLogActor")
+  createdAt                DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+  householdsCreated        Household[]            @relation("HouseholdCreatedBy")
+  householdMembers         HouseholdMember[]      @relation("HouseholdMemberUser")
+  invitedHouseholdMembers  HouseholdMember[]      @relation("HouseholdMemberInvitedBy")
+  householdInvitesSent     HouseholdInvite[]      @relation("HouseholdInviteInvitedBy")
+  householdInvitesAccepted HouseholdInvite[]      @relation("HouseholdInviteAcceptedBy")
+  snapshotsCreated         Snapshot[]             @relation("SnapshotCreatedBy")
+  assetsCreated            Asset[]                @relation("AssetCreatedBy")
+  assetsUpdated            Asset[]                @relation("AssetUpdatedBy")
+  assetValuationsCreated   AssetValuation[]       @relation("AssetValuationCreatedBy")
+  assetValuationsUpdated   AssetValuation[]       @relation("AssetValuationUpdatedBy")
+  cashflowEventsCreated    CashflowEvent[]        @relation("CashflowEventCreatedBy")
+  cashflowEventsUpdated    CashflowEvent[]        @relation("CashflowEventUpdatedBy")
+  cashflowEventsCompleted  CashflowEvent[]        @relation("CashflowEventLastCompletedBy")
+  debtsCreated             Debt[]                 @relation("DebtCreatedBy")
+  debtsUpdated             Debt[]                 @relation("DebtUpdatedBy")
+  financialGoalsCreated    FinancialGoal[]        @relation("FinancialGoalCreatedBy")
+  financialGoalsUpdated    FinancialGoal[]        @relation("FinancialGoalUpdatedBy")
+  goalAllocationsCreated   GoalAssetAllocation[]  @relation("GoalAssetAllocationCreatedBy")
+  goalAllocationsUpdated   GoalAssetAllocation[]  @relation("GoalAssetAllocationUpdatedBy")
+  moneyEventsCreated       MoneyEvent[]           @relation("MoneyEventCreatedBy")
+  moneyEventsUpdated       MoneyEvent[]           @relation("MoneyEventUpdatedBy")
+  auditLogsActed           AuditLog[]             @relation("AuditLogActor")
+  revenuecatSubscribers    RevenuecatSubscriber[] @relation("RevenuecatSubscriberProfile")
+  redeemCodesRedeemed      RedeemCodeRedemption[] @relation("RedeemCodeRedeemedBy")
+  paymentOrdersCreated     PaymentOrder[]         @relation("PaymentOrderCreatedBy")
 
   @@map("profiles")
 }
@@ -414,34 +485,322 @@ model Household {
   // Per-household config bag (jsonb). Holds household-scoped settings that don't
   // warrant their own column, e.g. `{ "defaultEventCategoryCode": "housing" }`
   // — the code auto-selected in the money-event form. Nullable / defaults to {}.
-  config                      Json                         @default("{}") @map("config") @db.JsonB
-  createdById                 String                       @map("created_by") @db.Uuid
-  createdAt                   DateTime                     @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt                   DateTime                     @updatedAt @map("updated_at") @db.Timestamptz(6)
-  deletedAt                   DateTime?                    @map("deleted_at") @db.Timestamptz(6)
-  createdBy                   Profile                      @relation("HouseholdCreatedBy", fields: [createdById], references: [id])
-  householdMembers            HouseholdMember[]
-  householdInvites            HouseholdInvite[]
-  snapshots                   Snapshot[]
-  assets                      Asset[]
-  assetMarketPositions        AssetMarketPosition[]
-  assetCalculationTerms       AssetCalculationTerm[]
-  valueHistory                AssetValuation[]
-  snapshotAssetValues         SnapshotAssetValue[]
-  debts                       Debt[]
-  debtInterestPeriods         DebtInterestPeriod[]
-  cashflowEvents              CashflowEvent[]
-  financialGoals              FinancialGoal[]
-  goalAssetAllocations        GoalAssetAllocation[]
-  snapshotGoalValues          SnapshotGoalValue[]
-  moneyEvents                 MoneyEvent[]
-  moneyEventCategories        MoneyEventCategory[]
-  auditLogs                   AuditLog[]
+  config                  Json                    @default("{}") @map("config") @db.JsonB
+  createdById             String                  @map("created_by") @db.Uuid
+  createdAt               DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt               DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt               DateTime?               @map("deleted_at") @db.Timestamptz(6)
+  createdBy               Profile                 @relation("HouseholdCreatedBy", fields: [createdById], references: [id])
+  householdMembers        HouseholdMember[]
+  householdInvites        HouseholdInvite[]
+  snapshots               Snapshot[]
+  assets                  Asset[]
+  assetMarketPositions    AssetMarketPosition[]
+  assetCalculationTerms   AssetCalculationTerm[]
+  valueHistory            AssetValuation[]
+  snapshotAssetValues     SnapshotAssetValue[]
+  debts                   Debt[]
+  debtInterestPeriods     DebtInterestPeriod[]
+  cashflowEvents          CashflowEvent[]
+  financialGoals          FinancialGoal[]
+  goalAssetAllocations    GoalAssetAllocation[]
+  snapshotGoalValues      SnapshotGoalValue[]
+  moneyEvents             MoneyEvent[]
+  moneyEventCategories    MoneyEventCategory[]
+  auditLogs               AuditLog[]
   goalContributionSettlements GoalContributionSettlement[]
+  subscription            HouseholdSubscription?
+  redeemRedemptions       RedeemCodeRedemption[]
+  paymentOrders           PaymentOrder[]
+  revenuecatSubscribers   RevenuecatSubscriber[]
 
   @@index([createdById])
   @@index([deletedAt])
   @@map("households")
+}
+
+/// The household's plan. One row per household, created on first grant —
+/// a missing row and `tier: free` mean the same thing, so no backfill.
+model HouseholdSubscription {
+  id          String @id @default(uuid(7)) @db.Uuid
+  householdId String @unique @map("household_id") @db.Uuid
+
+  tier   SubscriptionTier   @default(free)
+  status SubscriptionStatus @default(active)
+
+  /// NULL + premium = lifetime. NULL + free = never purchased.
+  /// `tier` is what tells the two apart, so there is no isLifetime column.
+  currentPeriodEnd DateTime? @map("current_period_end") @db.Timestamptz(6)
+
+  source EntitlementSource?
+
+  /// Vietnamese gateways have no real recurring billing at this price, so the
+  /// model is prepaid. Kept so the column exists when that changes.
+  autoRenew Boolean @default(false) @map("auto_renew")
+
+  /// Separate from currentPeriodEnd so a household that has used its trial
+  /// cannot be granted a second one after expiry.
+  trialStartedAt DateTime? @map("trial_started_at") @db.Timestamptz(6)
+  trialEndsAt    DateTime? @map("trial_ends_at") @db.Timestamptz(6)
+
+  /// Internal note for manual grants. Never shown to the household.
+  note String @default("")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  /// The expiry sweep: WHERE tier = premium AND currentPeriodEnd < now().
+  /// Lifetime rows (NULL) fall outside it with no special case.
+  @@index([tier, currentPeriodEnd])
+  @@map("household_subscriptions")
+}
+
+/// An activation code, e.g. `OURS8K3M2QYT`.
+///
+/// Stored in PLAINTEXT on purpose: support has to read a code back when a
+/// customer loses the message, which hashing makes impossible. This is not a
+/// password — one leaked code is worth 39k and `maxRedemptions` caps the
+/// damage. Brute force is answered by entropy plus rate limiting; hashing would
+/// slow an attacker working over HTTP by nothing at all.
+model RedeemCode {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// Normalized: upper-case, no separators, confusables folded. See
+  /// `domain/redeem-code-format.ts`.
+  code String @unique @db.VarChar(32)
+
+  /// Batch this belongs to: "beta-2026-q1", "shopee-tet", "referral".
+  campaign String @db.VarChar(64)
+
+  status RedeemCodeStatus @default(active)
+
+  grantTier SubscriptionTier @default(premium) @map("grant_tier")
+  grantType RedeemGrantType  @map("grant_type")
+
+  /// Required when grantType = duration_days.
+  grantDurationDays Int? @map("grant_duration_days")
+
+  /// Required when grantType = until_date. A beta code good "until 31/12".
+  grantUntil DateTime? @map("grant_until") @db.Timestamptz(6)
+
+  /// 1 for a retail code, N for a shared campaign. There is deliberately no
+  /// "unlimited": a leaked unlimited code is unbounded lost revenue. Use a
+  /// large number instead, which stays observable.
+  maxRedemptions Int @default(1) @map("max_redemptions")
+
+  /// Denormalized, and incremented by a conditional UPDATE — that statement is
+  /// the race guard itself, not merely a display counter.
+  redemptionCount Int @default(0) @map("redemption_count")
+
+  /// When the CODE stops working, as opposed to what it grants. NULL = never.
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  /// Admin note: which customer, which order. Never shown to the household.
+  note String @default("")
+
+  /// NULL when minted by the CLI script rather than a person.
+  createdById String? @map("created_by") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  redemptions RedeemCodeRedemption[]
+
+  @@index([campaign, status])
+  @@index([status, expiresAt])
+  @@map("redeem_codes")
+}
+
+/// One redemption. The receipt for a grant.
+model RedeemCodeRedemption {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  redeemCodeId String @map("redeem_code_id") @db.Uuid
+  householdId  String @map("household_id") @db.Uuid
+  /// Whoever pressed the button. Any member may — see memory/subscription.md.
+  redeemedById String @map("redeemed_by") @db.Uuid
+
+  /// Frozen at redemption time. The code can be edited or withdrawn later; what
+  /// this household was actually given cannot change after the fact.
+  grantedDays     Int?      @map("granted_days")
+  /// The expiry BEFORE this code applied. NULL = they were on free.
+  periodEndBefore DateTime? @map("period_end_before") @db.Timestamptz(6)
+  /// The expiry AFTER. NULL = this code granted lifetime.
+  periodEndAfter  DateTime? @map("period_end_after") @db.Timestamptz(6)
+
+  redeemedAt DateTime @default(now()) @map("redeemed_at") @db.Timestamptz(6)
+
+  redeemCode RedeemCode @relation(fields: [redeemCodeId], references: [id], onDelete: Cascade)
+  household  Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  redeemedBy Profile    @relation("RedeemCodeRedeemedBy", fields: [redeemedById], references: [id])
+
+  /// "One household, one code, once" enforced by the DATABASE, not by an app
+  /// check — this is the second race barrier, and it holds even when two
+  /// requests arrive together.
+  @@unique([redeemCodeId, householdId])
+  @@index([householdId, redeemedAt])
+  @@map("redeem_code_redemptions")
+}
+
+/// One checkout. Created when the household picks a plan, closed by the
+/// webhook.
+///
+/// It records the money as WELL as the plan, because a plan's price is a
+/// constant in code that will change: without `amount` frozen here, an order
+/// created at 299.000đ and paid after a price rise could not be reconciled
+/// against what actually arrived in the bank. All three of original, discount
+/// and final are kept for the same reason — the discount is a campaign that
+/// expires, and the receipt has to survive it.
+model PaymentOrder {
+  id          String @id @default(uuid(7)) @db.Uuid
+  householdId String @map("household_id") @db.Uuid
+
+  provider PaymentProvider    @default(payos)
+  status   PaymentOrderStatus @default(pending)
+
+  /// PayOS requires an INTEGER order reference, unique per merchant — a string
+  /// ref is not accepted. Generated as
+  /// `(epochSeconds % 100_000_000) * 100 + random(0..99)`: ordered by time,
+  /// short enough for the integer field, and with 100 slots a second to make a
+  /// collision within one second unlikely rather than impossible. The unique
+  /// index is what actually decides it; a collision fails the insert and the
+  /// caller retries.
+  /// NULL for a RevenueCat order: an IAP is never handed to PayOS, so it needs
+  /// no integer reference, and minting one would imply a checkout that does not
+  /// exist. `providerTxnId` is what identifies those.
+  orderCode BigInt? @unique @map("order_code")
+
+  /// Which plan was bought. A plain string, not the PlanCode enum: an order is
+  /// a historical record, and retiring a plan must not make an old receipt
+  /// unreadable.
+  planCode String @map("plan_code")
+
+  /// Full price, the campaign discount, and what was actually charged. Integer
+  /// đồng — VND has no minor unit, and a Decimal here would invite fractions
+  /// that no bank transfer can settle.
+  amountOriginal Int @map("amount_original")
+  discountAmount Int @default(0) @map("discount_amount")
+  amount         Int
+
+  /// How many days this order grants once paid. NULL = lifetime, matching
+  /// `PLAN_CATALOG`. Frozen at creation so changing a plan's duration later
+  /// cannot retroactively alter what an unpaid order is worth.
+  durationDays Int? @map("duration_days")
+
+  /// PayOS's own reference for the settled transaction.
+  ///
+  /// **The primary idempotency barrier.** A webhook delivered twice violates
+  /// this unique index on the second insert, which is caught and swallowed —
+  /// so a replay cannot extend a household's period a second time. It is a
+  /// database constraint rather than an app-level check precisely because two
+  /// deliveries can arrive at once.
+  providerTxnId String? @unique @map("provider_txn_id")
+
+  /// The hosted checkout the household was sent to, and PayOS's own id for it.
+  checkoutUrl     String? @map("checkout_url")
+  providerOrderId String? @map("provider_order_id")
+
+  /// The webhook body, verbatim, once it has been verified. Kept for the cases
+  /// a status column cannot answer — chiefly an underpayment, where somebody
+  /// has to see what actually arrived.
+  rawPayload Json? @map("raw_payload")
+
+  /// Which store took the money. NULL on PayOS orders.
+  store PurchaseStore? @map("store")
+
+  /// RevenueCat's identifier for the subscriber, i.e. our `app_user_id`. Kept
+  /// so a webhook that arrives for a household we cannot resolve can still be
+  /// traced back to a person by support.
+  providerUserId String? @map("provider_user_id")
+
+  /// The store product that was bought, e.g. `oursight_premium_yearly`. Stored
+  /// beside `planCode` rather than instead of it: the mapping between the two
+  /// can change, and an old receipt must keep meaning what it meant.
+  productId String? @map("product_id")
+
+  /// When the store's own subscription period ends, as RevenueCat reports it.
+  ///
+  /// NOT what the entitlement is computed from — `grantOrExtend` owns the
+  /// household's expiry, and a store renewal simply extends it. Kept for
+  /// support, and for telling an auto-renewing subscription from a lapsed one.
+  storeExpiresAt DateTime? @map("store_expires_at") @db.Timestamptz(6)
+
+  /// Which paywall sent the household to checkout, when one did.
+  ///
+  /// NULL is a real answer, not missing data: the plans page can be opened with
+  /// nothing refused. Always NULL on a RevenueCat order — an in-app purchase
+  /// arrives as a webhook with no order of ours, so the wall that prompted it
+  /// is not recoverable server-side.
+  ///
+  /// TEXT rather than an enum, for the reason `plan_code` is: an order is a
+  /// historical record, and retiring a paywall reason must not make an old
+  /// receipt unreadable.
+  fromReason String? @map("from_reason")
+
+  /// Who started the checkout. Any member may pay; the plan is the
+  /// household's either way.
+  ///
+  /// NULL for a store-initiated RENEWAL: Apple charging a card a year later is
+  /// not a person acting, and attributing it to whoever first subscribed would
+  /// be a guess the journal would state as fact.
+  createdById String?   @map("created_by") @db.Uuid
+  paidAt      DateTime? @map("paid_at") @db.Timestamptz(6)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy Profile?  @relation("PaymentOrderCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+
+  /// The subscription page reads a household's orders newest first.
+  @@index([householdId, createdAt(sort: Desc)])
+  /// The sweep that expires stale pending orders.
+  @@index([status, expiresAt])
+  /// Support tracing a RevenueCat subscriber back to their orders.
+  @@index([providerUserId])
+  @@map("payment_orders")
+}
+
+/// The link between a RevenueCat subscriber and the household their purchase
+/// pays for.
+///
+/// This table is why a RENEWAL can be settled at all. Apple charges a card a
+/// year later with no app running and no client to tell us who it is for; the
+/// webhook carries only `app_user_id`. Without a stored mapping, that money
+/// would arrive for a household we could not name.
+///
+/// Keyed by `providerUserId` rather than by profile: the two are the same today
+/// (we set `app_user_id` to the profile id at login) but an anonymous purchase
+/// later aliased to an account is a first-class RevenueCat flow, and it would
+/// arrive as a second id for the same person.
+model RevenuecatSubscriber {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  /// RevenueCat's `app_user_id`. What every webhook carries.
+  providerUserId String @unique @map("provider_user_id")
+
+  /// Who this subscriber is, when we know. NULL for a purchase made before
+  /// sign-in and not yet aliased.
+  profileId String? @map("profile_id") @db.Uuid
+
+  /// The household the purchase pays for.
+  ///
+  /// Recorded when the purchase is registered and NOT re-derived per webhook:
+  /// a person who later leaves and joins another household must not have their
+  /// existing subscription silently start paying for the new one.
+  householdId String @map("household_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  profile   Profile?  @relation("RevenuecatSubscriberProfile", fields: [profileId], references: [id], onDelete: SetNull)
+
+  @@index([householdId])
+  @@map("revenuecat_subscribers")
 }
 
 model HouseholdMember {
@@ -556,6 +915,20 @@ model Asset {
   // the forecast and the dashboard cannot end up with different totals. The
   // `assets_liquidity_matches_type` CHECK keeps the two in step.
   countsAsFlexible            Boolean?               @map("counts_as_flexible")
+  /// Whether this asset's price is refreshed automatically by the valuation
+  /// cron. Free plans get a limited number of these.
+  ///
+  /// It is deliberately SEPARATE from `valuationMode`. Creating a gold, stock
+  /// or crypto asset is never blocked — blocking it would block the balance
+  /// sheet a Vietnamese household opens the app for, and they would leave
+  /// rather than pay. What Premium sells is the automation, so an asset over
+  /// the ceiling is still created and still `market_priced`; it simply lands
+  /// with this false and carries a "Cập nhật tay" chip until the household
+  /// chooses it as one of their automatic ones.
+  ///
+  /// Defaults true so every asset that predates this keeps refreshing exactly
+  /// as it did.
+  autoPriceEnabled            Boolean                @default(true) @map("auto_price_enabled")
   status                      AssetStatus            @default(active)
   soldAt                      DateTime?              @map("sold_at") @db.Timestamptz(6)
   areaSqm                     Decimal?               @map("area_sqm") @db.Decimal(14, 4)
@@ -924,6 +1297,8 @@ model CashflowEvent {
   @@index([ownerMemberId])
   @@index([financialGoalId])
   @@index([plannedAssetId])
+  /// Mirrors `MoneyEvent`'s. Created by the category_id FK migration but never
+  /// declared here, which is what Prisma kept reporting as schema drift.
   @@index([householdId, categoryId])
   @@map("cashflow_events")
 }

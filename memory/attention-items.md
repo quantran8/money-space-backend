@@ -2,7 +2,7 @@
 
 Signals worth the household's attention (spec §29). Related:
 [[forecast-and-flexible-money]], [[cashflow-events]], [[data-freshness]],
-[[money-events]], [[assets]].
+[[money-events]], [[assets]], [[billing-and-entitlement]].
 
 ## Every signal is derived
 
@@ -22,6 +22,7 @@ step, no row to go stale, and no code path that can forget to clean up.
 | `low_projected_balance` | **urgent** | — |
 | `goal_without_wallet` | important | financial goal |
 | `wallet_overdrawn` | important | asset |
+| `plan_expiring_soon` | important | — |
 | `stale_data` | normal | asset |
 
 `GET /attention-items` is the only route. It costs **no extra queries** — the
@@ -122,3 +123,33 @@ and no duplicate-run problem on a multi-instance deployment.
 ```
 GET /households/:hid/attention-items   → { householdId, items, total }
 ```
+
+## `plan_expiring_soon` — the one signal not from the forecast
+
+Every other signal is computed from the forecast bundle. This one reads the
+household's entitlement, which `AttentionService` fetches in the same
+`Promise.all` as the rest — a cache read in the common case, so it still costs
+nothing measurable.
+
+It fires when a premium plan has **14 days or fewer** left
+(`ATTENTION_THRESHOLDS.planExpiringSoonDays`, deliberately wider than
+`dueSoonDays: 7` because renewing needs a bank transfer, not just attention).
+
+Four cases raise nothing, and each is a deliberate decision:
+
+- **Free** — nothing to expire.
+- **Lifetime** — no end date to count down to. `currentPeriodEnd IS NULL`
+  falls outside the check with no special case, the same way it does in the
+  expiry cron.
+- **Already lapsed** — the subscription page states it in full. Repeating it on
+  Home would nag about something Home cannot fix, which is what §29 forbids.
+- **More than 14 days left** — not yet worth saying.
+
+`isTrial` rides along in `params` because a lapsing trial and a lapsing paid
+plan need different copy, and the client owns all copy.
+
+Level is `important`, never `urgent`. Nothing is lost when a plan lapses: the
+household keeps every record it has entered and only the premium capabilities
+stop. `urgent` is reserved for `low_projected_balance` — the household running
+out of money — and putting a billing reminder at the same weight would be
+selling, not helping.

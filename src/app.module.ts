@@ -6,6 +6,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { CacheModule } from './common/cache/cache.module';
+import { CommonModule } from './common/common.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { CacheInvalidationInterceptor } from './common/interceptors/cache-invalidation.interceptor';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -33,6 +34,10 @@ import { buildLoggerParams } from './config/logger.config';
     LoggerModule.forRoot(buildLoggerParams()),
     DatabaseModule,
     CacheModule,
+    // The global HttpExceptionFilter injects AnalyticsService, which this
+    // exports. Without it the filter cannot be constructed and the app will
+    // not boot.
+    CommonModule,
     MoneySpaceModule,
   ],
   controllers: [AppController],

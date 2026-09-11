@@ -20,6 +20,7 @@ export type AuditAction =
   | 'asset.deleted'
   | 'asset.value_updated'
   | 'asset.liquidity_changed'
+  | 'asset.auto_price_changed'
   | 'asset.sold'
   // A saving deposit reaching its end and becoming a spendable account. Logged
   // because the household did not ask for it — the money moved on its own, and
@@ -41,6 +42,11 @@ export type AuditAction =
   | 'household.invite_created'
   | 'household.invite_revoked'
   | 'household.steward_transferred'
+  // The plan. Journalled for the same reason invites are: it changes what the
+  // shared space can do, and both partners are affected by it.
+  | 'subscription.redeemed'
+  | 'subscription.activated'
+  | 'subscription.expired'
   // Snapshots and corrections
   | 'snapshot.created'
   | 'debt.corrected';
@@ -53,7 +59,8 @@ export type AuditEntityType =
   | 'snapshot'
   | 'household'
   | 'household_member'
-  | 'household_invite';
+  | 'household_invite'
+  | 'household_subscription';
 
 /** Which shared figure a change moved, and by how much. */
 export type AuditImpactMetric =

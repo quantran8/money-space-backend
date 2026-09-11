@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
+import { BillingModule } from '../billing/billing.module';
 import { ForecastModule } from '../forecast/forecast.module';
 import { AttentionController } from './attention.controller';
 import { AttentionService } from './attention.service';
@@ -17,7 +18,9 @@ import { PrismaAttentionRepository } from './repositories/prisma-attention.repos
  * import this — attention depends on the calculation, never the reverse.
  */
 @Module({
-  imports: [CommonModule, ForecastModule],
+  // BillingModule imports nothing but CommonModule, so this edge is safe —
+  // ForecastModule already depends on it the same way.
+  imports: [CommonModule, ForecastModule, BillingModule],
   controllers: [AttentionController],
   providers: [
     AttentionService,

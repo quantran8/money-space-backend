@@ -4,6 +4,7 @@ import type {
   FinancialGoal,
   GoalAssetAllocation,
 } from './entities/financial-goal.entity';
+import { premiumEntitlement } from '../billing/test-support/entitlement.fixture';
 
 const M = 1_000_000;
 
@@ -23,6 +24,7 @@ function goal(over: Partial<FinancialGoal> = {}): FinancialGoal {
     plannedMonthlyContribution: null,
     baselineContributionAmount: null,
     priority: 'medium',
+    status: 'active',
     note: '',
     targetDate: 'No deadline',
     ...over,
@@ -112,12 +114,20 @@ function setup(
     ),
   } as never;
 
+  // Premium by default: these tests are about the allocation rules, not the
+  // plan. The goal quota has its own spec, which stubs a Free entitlement.
+  const entitlements = {
+    forHousehold: jest.fn(async () => premiumEntitlement()),
+    assertQuota: jest.fn(),
+  } as never;
+
   const service = new GoalsService(
     repository,
     prisma,
     assetsService,
     snapshotsRepository,
     cashflowEventsRepository,
+    entitlements,
   );
   return {
     service,

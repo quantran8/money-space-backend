@@ -177,6 +177,10 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
       null) as boolean | null,
     currency: row.currency,
     note: row.note ?? '',
+    // Defaults true, matching the column: an asset from before this existed
+    // refreshes exactly as it always did.
+    autoPriceEnabled:
+      (row.autoPriceEnabled ?? row.auto_price_enabled ?? true) as boolean,
     status: row.status ?? 'active',
     // The REAL last-valued stamp. Previously every read path substituted the
     // seed constant `AS_OF`, which made every asset look equally fresh — and
@@ -335,6 +339,9 @@ export function mapFinancialGoal(row: DbRow): FinancialGoal {
             row.baselineContributionAmount ?? row.baseline_contribution_amount,
           ),
     priority: row.priority,
+    // The column has a default of `active`, so a row can only lack it when the
+    // caller selected a narrower set of fields.
+    status: row.status ?? 'active',
     note: row.note ?? '',
     targetDate:
       (row.targetDate ?? row.target_date)
