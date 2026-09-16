@@ -2,12 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { uuidv7 } from '../../../common/utils/uuid';
 import {
+  dateOnly,
   mapAsset,
   mapAssetValueHistory,
   mapFxRate,
   mapHousehold,
   mapMoneyEvent,
   mapSnapshot,
+  numberFromDb,
 } from '../../../common/repositories/money-space.mapper';
 import {
   DbRow,
@@ -407,6 +409,34 @@ export class PrismaAssetsRepository
     });
 
     return valuation ? mapAssetValueHistory(valuation) : undefined;
+  }
+
+  async findLatestValuationsBefore(
+    householdId: string,
+    beforeDate: string,
+  ): Promise<Array<{ assetId: string; valuationDate: string; value: number }>> {
+    // One `DISTINCT ON` for the whole household, served by the
+    // (asset_id, valuation_date DESC) index — a per-asset lookup would add a
+    // round-trip each to the page opened most. `money_event_id IS NULL` keeps
+    // out points a deposit or sale wrote: see [[asset-valuation]].
+    const rows = await this.prisma.$queryRaw<
+      Array<{ asset_id: string; valuation_date: Date; value: Prisma.Decimal }>
+    >`
+      SELECT DISTINCT ON (v."asset_id")
+             v."asset_id", v."valuation_date", v."value"
+      FROM "asset_valuations" v
+      WHERE v."household_id" = ${householdId}::uuid
+        AND v."valuation_date" < ${this.toDate(beforeDate)}::date
+        AND v."money_event_id" IS NULL
+        AND v."deleted_at" IS NULL
+      ORDER BY v."asset_id", v."valuation_date" DESC
+    `;
+
+    return rows.map((row) => ({
+      assetId: row.asset_id,
+      valuationDate: dateOnly(row.valuation_date),
+      value: numberFromDb(row.value),
+    }));
   }
 
   /**

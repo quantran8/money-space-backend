@@ -135,6 +135,10 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
 - `AssetCalculationTerm` — principal / rate / dates / compounding (for formula-based interest instruments).
 - `AssetValuation` — point-in-time value with method/confidence; optionally linked to a market price, FX rate, or calc term.
 
+Read paths also carry two derived, never-persisted figures: `valueChange` per
+market-priced asset and `valueChangeTotal` on the summary — the day-over-day
+move. See [[asset-valuation]].
+
 ## Where it lives in code
 
 - **frontend-web**: `src/features/assets/{model/assets.ts, model/assets.types.ts, model/assets-form.ts, api/assets.repository.ts, hooks/use-assets.ts, hooks/use-assets-page.ts}`.

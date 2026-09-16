@@ -24,7 +24,6 @@ function premiumEntitlements() {
   } as never;
 }
 
-
 describe('AssetsService', () => {
   /** Minimal repo/prisma scaffolding for the update + create paths. */
   function harness(current?: Asset) {
@@ -97,6 +96,7 @@ describe('AssetsService', () => {
       const repository = {
         assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
         findAssetsByHousehold: jest.fn().mockResolvedValue([asset]),
+        findLatestValuationsBefore: jest.fn().mockResolvedValue([]),
         getFxRates: jest.fn().mockResolvedValue([]),
       } as unknown as AssetsRepository;
       const marketData = {
@@ -148,6 +148,207 @@ describe('AssetsService', () => {
       const { items } = await service.listAssets('household-1');
 
       expect(items[0].marketPosition?.marketPrice).toBe(150_500_000);
+    });
+  });
+
+  /**
+   * The day-over-day figure: what a holding has done since the last recorded
+   * point. See [[asset-valuation]] for why null is a real answer.
+   */
+  describe('day-over-day value change', () => {
+    const M = 1_000_000;
+
+    /** A manual asset values at `manualValue`; a market one at quantity × price. */
+    function asset(
+      id: string,
+      overrides: Partial<Asset> & { manualValue?: number } = {},
+    ): Asset {
+      return {
+        id,
+        householdId: 'household-1',
+        name: id,
+        type: 'gold',
+        valuationMode: 'market_priced',
+        liquidity: 'long_term',
+        currency: 'VND',
+        note: '',
+        status: 'active',
+        marketPosition: {
+          assetClass: 'gold',
+          symbol: 'SJC',
+          quantity: 1,
+          unit: 'lượng',
+          quoteCurrency: 'VND',
+          lastPrice: 100 * M,
+        },
+        ...overrides,
+      } as unknown as Asset;
+    }
+
+    function changeHarness(
+      assets: Asset[],
+      points: Array<{ assetId: string; valuationDate: string; value: number }>,
+    ) {
+      const findLatestValuationsBefore = jest.fn().mockResolvedValue(points);
+      const repository = {
+        assertHousehold: jest.fn().mockResolvedValue({ id: 'household-1' }),
+        findAssetsByHousehold: jest.fn().mockResolvedValue(assets),
+        findLatestValuationsBefore,
+        getFxRates: jest.fn().mockResolvedValue([]),
+      } as unknown as AssetsRepository;
+      const service = new AssetsService(
+        repository,
+        {
+          runInTransaction: jest.fn(async (work: () => Promise<unknown>) =>
+            work(),
+          ),
+        } as unknown as PrismaService,
+        {
+          getMarketPrices: jest.fn().mockResolvedValue([]),
+        } as unknown as MarketDataService,
+        { record: jest.fn() } as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        premiumEntitlements(),
+        noopAnalytics(),
+      );
+      return { service, findLatestValuationsBefore };
+    }
+
+    it('measures the holding against its last recorded point', async () => {
+      const { service } = changeHarness(
+        [asset('asset-gold')],
+        [{ assetId: 'asset-gold', valuationDate: '2026-09-14', value: 95 * M }],
+      );
+
+      const { items } = await service.listAssets('household-1');
+
+      expect(items[0].valueChange).toEqual({
+        previousDate: '2026-09-14',
+        previousValue: 95 * M,
+        delta: 5 * M,
+        deltaPercent: expect.closeTo(5.263, 2) as number,
+      });
+    });
+
+    /** Weekends and a skipped nightly run leave the baseline days old. */
+    it('keeps a baseline that is not yesterday', async () => {
+      const { service } = changeHarness(
+        [asset('asset-gold')],
+        [
+          {
+            assetId: 'asset-gold',
+            valuationDate: '2026-09-11',
+            value: 100 * M,
+          },
+        ],
+      );
+
+      const { items } = await service.listAssets('household-1');
+
+      expect(items[0].valueChange?.previousDate).toBe('2026-09-11');
+    });
+
+    it('asks only for points before today', async () => {
+      const { service, findLatestValuationsBefore } = changeHarness(
+        [asset('asset-gold')],
+        [],
+      );
+
+      const { asOf } = await service.listAssets('household-1');
+
+      expect(findLatestValuationsBefore).toHaveBeenCalledWith(
+        'household-1',
+        asOf,
+      );
+    });
+
+    it('reports no change, and no zero, for an asset with no baseline', async () => {
+      const { service } = changeHarness([asset('asset-gold')], []);
+
+      const { items } = await service.listAssets('household-1');
+
+      expect(items[0].valueChange).toBeNull();
+      // The value itself is unaffected by the missing baseline.
+      expect(items[0].currentValue).toBe(100 * M);
+    });
+
+    it('leaves a manual asset alone even when it has a point', async () => {
+      const { service } = changeHarness(
+        [
+          asset('asset-cash', {
+            type: 'cash',
+            valuationMode: 'manual',
+            liquidity: 'usable_now',
+            marketPosition: undefined,
+            manualValue: 50 * M,
+          }),
+        ],
+        [{ assetId: 'asset-cash', valuationDate: '2026-09-14', value: 40 * M }],
+      );
+
+      const { items } = await service.listAssets('household-1');
+
+      expect(items[0].valueChange).toBeNull();
+    });
+
+    it('totals only the market holdings that have a baseline', async () => {
+      const { service } = changeHarness(
+        [asset('asset-a'), asset('asset-b'), asset('asset-c')],
+        [
+          { assetId: 'asset-a', valuationDate: '2026-09-14', value: 95 * M },
+          { assetId: 'asset-b', valuationDate: '2026-09-11', value: 110 * M },
+        ],
+      );
+
+      const summary = await service.getAssetSummary('household-1');
+
+      expect(summary.valueChangeTotal).toMatchObject({
+        delta: -5 * M,
+        assetCount: 2,
+        missingCount: 1,
+        // Oldest leg: the total cannot claim to be "since yesterday".
+        previousDate: '2026-09-11',
+      });
+    });
+
+    it('keeps a sold holding out of the total', async () => {
+      const { service } = changeHarness(
+        [asset('asset-a'), asset('asset-sold', { status: 'sold' })],
+        [
+          { assetId: 'asset-a', valuationDate: '2026-09-14', value: 95 * M },
+          { assetId: 'asset-sold', valuationDate: '2026-09-14', value: 10 * M },
+        ],
+      );
+
+      const summary = await service.getAssetSummary('household-1');
+
+      expect(summary.valueChangeTotal).toMatchObject({
+        delta: 5 * M,
+        assetCount: 1,
+        missingCount: 0,
+      });
+    });
+
+    it('gives no total when nothing is market-priced', async () => {
+      const { service } = changeHarness(
+        [
+          asset('asset-cash', {
+            type: 'cash',
+            valuationMode: 'manual',
+            liquidity: 'usable_now',
+            marketPosition: undefined,
+            manualValue: 50 * M,
+          }),
+        ],
+        [],
+      );
+
+      const summary = await service.getAssetSummary('household-1');
+
+      expect(summary.valueChangeTotal).toBeNull();
     });
   });
 

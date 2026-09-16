@@ -311,6 +311,76 @@ Repo methods: `findAssetValueHistory` (by date, the AS_OF point),
 `insertAssetValueHistory`, `deleteAssetValueHistory`,
 `deleteAssetValueHistoryByMoneyEvent`.
 
+## Day-over-day change (lãi/lỗ hôm nay)
+
+What a **market-priced** holding has done since the last recorded point. Shown
+on the asset detail page, on every list row, and as one portfolio total.
+Code: `modules/assets/domain/value-change.ts` (pure), wired in
+`AssetsService.getAssetRecords` / `.getAssetSummary`.
+
+### The baseline is the last recorded point, NOT "yesterday"
+
+Most recent `asset_valuations` row **strictly before today**, with
+`money_event_id IS NULL` and `deleted_at IS NULL`
+(`findLatestValuationsBefore`, one `DISTINCT ON` per household).
+
+- **The `money_event_id` filter is load-bearing.** An event-linked point records
+  a deposit or a sale. Measuring today's value against one would report the
+  household's own transfer as a market movement.
+- `valuation_method` is deliberately **not** filtered: a household that revalued
+  its gold by hand yesterday has a legitimate baseline.
+- The baseline can be days old — markets close at weekends, and the nightly job
+  can miss a day. So the figure always carries `previousDate`, and the UI says
+  "hôm qua" only when it really is. **Never label a three-day move as
+  yesterday's.**
+
+### Why not the provider's `percent_change_24h`
+
+It describes the **instrument**, not the household's holding, and ignores
+quantity. The app also persists no provider ticks at all ([[market-data]]) — the
+daily series is the only thing with a time axis.
+
+### Null is a real answer
+
+No baseline → `valueChange: null` → the UI renders **no line**. Never a
+fabricated "0%" or "+0đ". It happens when:
+
+- the asset was created today;
+- `auto_price_enabled = false` (free plan over the ceiling — the household
+  values it by hand, so there is no market move to report);
+- the nightly job skipped the household: `findHouseholdsNeedingMarketValuation`
+  scopes its `NOT EXISTS` to the **household**, so one asset already having a
+  point that day suppresses the rest;
+- `previousValue` is 0 → the delta is real but `deltaPercent` is null. 0 → 5tr
+  is not "+100%", it is simply new.
+
+Unlike `buildGoalProgressChange`, a **zero delta still returns an object**: that
+one feeds an explanation that should stay quiet, this one fills a fixed slot on
+a card, where a blank reads as "we don't know".
+
+### Only market_priced
+
+A manual asset's "change" is the household retyping a figure — data entry, not a
+movement. A formula asset accrues by arithmetic its own term panel already
+explains.
+
+### The portfolio total (`getAssetSummary.valueChangeTotal`)
+
+Summed over **active market-priced** holdings that have a baseline.
+`deltaPercent` divides by what *those same* holdings were worth, never by
+`totals.totalAssets` — a market-only numerator over a whole-portfolio
+denominator means nothing. `missingCount > 0` means the total is **partial** and
+the UI must say so; `previousDate` is the **oldest** contributor's, so the total
+cannot claim to be "since yesterday". Returns `null` when nothing is
+market-priced: no line at all, not a zero.
+
+### Known limitation
+
+Buying more since the baseline puts the purchase into the delta, because it
+compares totals. Separating price movement from quantity movement needs the
+per-unit columns the table deliberately dropped (migration
+`20260714233000_remove_redundant_asset_value_history_observations`).
+
 ## Gold is quoted per lượng but held in chỉ, lượng or gram
 
 Vietnamese dealers publish **one** figure per product, per **lượng** (1 lượng =
