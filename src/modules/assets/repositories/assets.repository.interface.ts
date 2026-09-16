@@ -108,6 +108,15 @@ export interface AssetsRepository {
     assetId: string,
     valuationDate: string,
   ): Promise<AssetValueHistory | undefined>;
+  /**
+   * Per asset, the latest unlinked valuation point strictly before `beforeDate`
+   * — the baseline the day-over-day change is measured against.
+   * See [[asset-valuation]].
+   */
+  findLatestValuationsBefore(
+    householdId: string,
+    beforeDate: string,
+  ): Promise<Array<{ assetId: string; valuationDate: string; value: number }>>;
   insertAssetValueHistory(valuation: AssetValueHistory): Promise<void>;
   /**
    * Bulk equivalent of {@link insertAssetValueHistory} for the daily market

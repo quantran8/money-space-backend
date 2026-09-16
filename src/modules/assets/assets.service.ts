@@ -55,6 +55,11 @@ function formatVndPlain(amount: number): string {
   return `${new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 0 }).format(Math.round(amount))} đ`;
 }
 import { AssetValueHistory } from './entities/asset-value-history.entity';
+import {
+  buildAssetValueChange,
+  buildAssetValueChangeTotal,
+  type AssetValueChange,
+} from './domain/value-change';
 import type {
   CalculationTerm,
   DepositSettledEvent,
@@ -193,7 +198,12 @@ export class AssetsService {
    * 10x — the sale/purchase dialogs seed their đồng field from this and label it
    * "per <position unit>". See [[asset-valuation]].
    */
-  private withMarketPrice(asset: Asset, marketPrices: MarketPrice[]): Asset {
+  // Generic so the caller's record type (with `currentValue`, `valueChange`)
+  // survives; narrowing to `Asset` here dropped them from the response type.
+  private withMarketPrice<T extends Asset>(
+    asset: T,
+    marketPrices: MarketPrice[],
+  ): T {
     if (!asset.marketPosition || marketPrices.length === 0) return asset;
 
     const { assetClass, symbol, unit, quoteCurrency } = asset.marketPosition;
@@ -239,11 +249,17 @@ export class AssetsService {
     // buckets — it is kept only for history. See [[asset-sale]].
     const activeAssets = assets.filter((asset) => asset.status === 'active');
     const totals = computeLiquidityTotals(activeAssets);
+    const valueChangeTotal = buildAssetValueChangeTotal(
+      activeAssets
+        .filter((asset) => asset.valuationMode === 'market_priced')
+        .map((asset) => asset.valueChange),
+    );
 
     return {
       householdId,
       asOf: todayInTimeZone(),
       totals,
+      valueChangeTotal,
       groups: [
         {
           liquidity: 'usable_now',
@@ -2408,23 +2424,41 @@ export class AssetsService {
   }
 
   private async getAssetRecords(householdId: string) {
-    const [assets, marketPrices, fxRates] = await Promise.all([
+    // Read the clock once: two reads can straddle the Vietnam midnight and
+    // leave today's value compared against today's own point.
+    const asOf = todayInTimeZone();
+    const [assets, marketPrices, fxRates, previousPoints] = await Promise.all([
       this.assetsRepository.findAssetsByHousehold(householdId),
       this.marketData.getMarketPrices(),
       this.assetsRepository.getFxRates(),
+      this.assetsRepository.findLatestValuationsBefore(householdId, asOf),
     ]);
+    const previousByAsset = new Map(
+      previousPoints.map((point) => [point.assetId, point]),
+    );
 
     return assets.map((asset) => {
       const currentValue = computeCurrentValue(
         asset,
         marketPrices,
         fxRates,
-        todayInTimeZone(),
+        asOf,
       );
+      const previous = previousByAsset.get(asset.id);
       return {
         ...asset,
         currentValue,
         valueUpdatedAt: asset.valueUpdatedAt ?? null,
+        // Market-priced only: a manual asset's "change" is the household
+        // retyping a figure. See [[asset-valuation]].
+        valueChange:
+          asset.valuationMode === 'market_priced'
+            ? buildAssetValueChange(
+                previous?.valuationDate ?? null,
+                previous?.value ?? null,
+                currentValue,
+              )
+            : null,
       };
     });
   }
@@ -2493,6 +2527,9 @@ export class AssetsService {
       ...asset,
       currentValue,
       valueUpdatedAt: asset.valueUpdatedAt ?? null,
+      // The write paths answer with the record they just changed; the baseline
+      // belongs to a read, and the client refetches for it.
+      valueChange: null as AssetValueChange | null,
     };
   }
 

@@ -3,6 +3,10 @@
 External providers are the source of truth for current market quotes. The app
 does **not** persist provider ticks in PostgreSQL.
 
+Because of that, the day-over-day change is derived from the persisted daily
+valuation series, **not** from a provider's `percent_change_24h` — adding an
+upstream that exposes one does not change that. See [[asset-valuation]].
+
 ## Flow
 
 - `PriceProvider.getLatestPrices(requests?: SymbolRequest[])` is the adapter
