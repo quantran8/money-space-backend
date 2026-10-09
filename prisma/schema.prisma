@@ -290,6 +290,8 @@ enum MoneyEventType {
   // but kept distinct from it: `asset_update` means the PRICE moved, this means
   // the QUANTITY did. Conflating them reported phantom gains and losses.
   asset_quantity_adjustment
+  // A loan_receivable repaid in full into a wallet. See memory/loan-receivable.md.
+  loan_collection
   payment_paid
   debt_update
   adjustment

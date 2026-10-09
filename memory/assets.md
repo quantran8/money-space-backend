@@ -77,6 +77,7 @@ CRUD over `Asset`, with a derived current value. On create, `valuationMode` defa
   - Both forms render `type` (and `symbol`) as a **locked field** on edit — the
     disabled-input recipe, not a hidden field: the user still has to see what
     they are editing.
+- **Loan receivable** — "Vừa cho vay" trừ ví theo gốc; "Đánh dấu đã trả" ghi `loan_collection` và đóng khoản vay (`closed`, giá trị 0). See [[loan-receivable]].
 - **Delete** = soft-delete (`deletedAt`), and — because a soft delete fires no
   database cascade — the app must clear everything pointing at the asset itself.
   - **Refused by default.** While a live goal claim, cashflow event or debt still

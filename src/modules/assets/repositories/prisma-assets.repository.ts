@@ -254,6 +254,7 @@ export class PrismaAssetsRepository
     isoDate: string;
     note: string;
     fundingAssetId?: string | null;
+    categoryCode?: string;
   }): Promise<void> {
     // Two different acts share this row, told apart by whether a funding wallet
     // was named:
@@ -276,7 +277,7 @@ export class PrismaAssetsRepository
         ${event.note},
         'asset_purchase'::"MoneyEventType",
         (SELECT c.id FROM money_event_categories c
-         WHERE c.household_id IS NULL AND c.code = 'investment'
+         WHERE c.household_id IS NULL AND c.code = ${event.categoryCode ?? 'investment'}
            AND c.deleted_at IS NULL LIMIT 1),
         ${event.amount}::numeric,
         0::numeric,

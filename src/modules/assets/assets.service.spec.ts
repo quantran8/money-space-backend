@@ -1091,6 +1091,38 @@ describe('AssetsService', () => {
       expect(walletBalance()).toBe(150_000_000);
     });
 
+    it('debits only the principal of a loan just lent, filed under debt', async () => {
+      const { service, insertAssetPurchaseEvent, walletBalance } = harness();
+
+      await service.createAsset('household-1', {
+        name: 'Anh Nam',
+        type: 'loan_receivable',
+        valuationMode: 'formula_calculated',
+        calculationTerm: {
+          calculationType: 'loan_receivable',
+          principalAmount: 30_000_000,
+          interestRate: 12,
+          // A year back: the live value already carries accrued interest.
+          startDate: '2025-01-01',
+          maturityDate: null,
+          interestPayment: 'end_of_term',
+          nonTermRate: 0,
+          interestDestination: 'principal',
+          receivingWalletId: null,
+        },
+        fundingAssetId: wallet.id,
+      });
+
+      expect(insertAssetPurchaseEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 30_000_000,
+          note: 'Cho vay Anh Nam',
+          categoryCode: 'debt',
+        }),
+      );
+      expect(walletBalance()).toBe(170_000_000);
+    });
+
     it('charges the cost basis, not the live market value, for a market position', async () => {
       const existingPosition: Asset = {
         id: 'asset-vnm',

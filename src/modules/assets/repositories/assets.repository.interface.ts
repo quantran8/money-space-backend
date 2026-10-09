@@ -78,6 +78,8 @@ export interface AssetsRepository {
     isoDate: string;
     note: string;
     fundingAssetId?: string | null;
+    /** System category code; defaults to `investment`. */
+    categoryCode?: string;
   }): Promise<void>;
   updateAsset(assetId: string, asset: Asset): Promise<void>;
   updateAssetCurrentValue(assetId: string, value: number): Promise<void>;

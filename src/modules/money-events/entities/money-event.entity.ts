@@ -17,6 +17,8 @@ export type MoneyEventType =
   // reports, but distinct from it: this one says the QUANTITY moved, not the
   // price. `quantityBefore`/`quantityAfter` carry both sides.
   | 'asset_quantity_adjustment'
+  // A loan_receivable repaid in full. See memory/loan-receivable.md.
+  | 'loan_collection'
   // Settling a cashflow event (an outgoing one marked done). Present in the DB
   // enum and written by `completeCashflowEvent`; it was missing from this union,
   // which an `as never` cast at the call site hid.

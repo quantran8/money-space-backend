@@ -206,6 +206,7 @@ export class MoneyEventsService {
       payload.fromAssetId,
       payload.toAssetId,
     );
+    await this.assertLoanCollectionLinks(householdId, payload);
     // What this event may claim about a goal, per that goal's backing mode
     // (see the method) — rejected before any balance is touched.
     // `insertMoneyEvent` asserts the household exists (and needs its row to
@@ -266,6 +267,7 @@ export class MoneyEventsService {
         // a full sale). The wallet credit above already used the net amount
         // (amount - fee), so only the source-asset reduction remains.
         await this.applySaleEffects(event);
+        await this.applyLoanCollectionEffects(event, 'apply');
         // A repayment (debt-linked outflow) reduces the debt's outstanding and,
         // for editable relative/other debts, rebalances the next installment by
         // any over/under payment. The borrow inflow is a debt_update *inflow* and
@@ -500,6 +502,7 @@ export class MoneyEventsService {
       next.fromAssetId,
       next.toAssetId,
     );
+    await this.assertLoanCollectionLinks(householdId, next, event);
     // Editing an event can change its amount or its linked wallets, so reverse
     // the old event's wallet moves and apply the new one's — together with the
     // row update, in one transaction so they can't diverge. For an asset_sale
@@ -591,6 +594,7 @@ export class MoneyEventsService {
       async () => {
         await this.applyWalletEffects(event, 'reverse');
         await this.reverseSaleEffects(event);
+        await this.applyLoanCollectionEffects(event, 'reverse');
         // Undo the old event's debt-repayment effects (raise outstanding back,
         // un-rebalance the next installment) before re-applying the edited event's
         // — so an amount/link change nets out to exactly the new state. Reversal
@@ -605,6 +609,7 @@ export class MoneyEventsService {
         await this.moneyEventsRepository.updateMoneyEvent(eventId, next);
         await this.applyWalletEffects(next, 'apply');
         await this.applySaleEffects(next);
+        await this.applyLoanCollectionEffects(next, 'apply');
         await this.applyDebtRepaymentEffects(householdId, next, -1);
         // The reverse/apply pair above only nets out correctly on the wallet's
         // *current* balance. Any event dated after this one still sits on the
@@ -651,6 +656,7 @@ export class MoneyEventsService {
         await this.moneyEventsRepository.deleteMoneyEvent(eventId);
         await this.applyWalletEffects(event, 'reverse');
         await this.reverseSaleEffects(event);
+        await this.applyLoanCollectionEffects(event, 'reverse');
         // Deleting a repayment restores the debt's outstanding and un-rebalances
         // the next installment it had shifted.
         await this.applyDebtRepaymentEffects(householdId, event, 1);
@@ -855,6 +861,7 @@ export class MoneyEventsService {
     for (const event of events) {
       await this.applyWalletEffects(event, 'reverse');
       await this.reverseSaleEffects(event);
+      await this.applyLoanCollectionEffects(event, 'reverse');
       // A repayment recorded through this wallet still owes its money once the
       // wallet is gone: restore the debt's outstanding and un-rebalance the
       // installment this payment had shifted.
@@ -975,6 +982,61 @@ export class MoneyEventsService {
         valueSold: event.soldValue,
       },
     );
+  }
+
+  /**
+   * A `loan_collection` takes an active loan into a wallet. Its type and loan are
+   * fixed once written — to change them, delete and record again.
+   */
+  private async assertLoanCollectionLinks(
+    householdId: string,
+    next: Pick<MoneyEvent, 'type' | 'fromAssetId' | 'toAssetId'>,
+    previous?: MoneyEvent,
+  ): Promise<void> {
+    const wasCollection = previous?.type === 'loan_collection';
+    const isCollection = next.type === 'loan_collection';
+    if (!wasCollection && !isCollection) return;
+    if (
+      previous &&
+      (wasCollection !== isCollection ||
+        previous.fromAssetId !== next.fromAssetId)
+    ) {
+      throw new BadRequestException(
+        'Không thể đổi loại hoặc khoản vay của một lần thu hồi.',
+      );
+    }
+    if (!next.fromAssetId || !next.toAssetId) {
+      throw new BadRequestException(
+        'Thu hồi khoản cho vay cần khoản vay và ví nhận tiền.',
+      );
+    }
+    // On edit the loan is closed by this very event, so only a create checks it.
+    if (!previous) {
+      await this.assetsService.assertCollectableLoan(
+        householdId,
+        next.fromAssetId,
+      );
+    }
+    await this.assetsService.assertWalletAsset(householdId, next.toAssetId);
+  }
+
+  /** Close (apply) or reopen (reverse) the loan a `loan_collection` repaid. */
+  private async applyLoanCollectionEffects(
+    event: MoneyEvent,
+    mode: 'apply' | 'reverse',
+  ): Promise<void> {
+    if (event.type !== 'loan_collection' || !event.fromAssetId) return;
+    if (mode === 'apply') {
+      await this.assetsService.closeCollectedLoan(
+        event.householdId,
+        event.fromAssetId,
+      );
+    } else {
+      await this.assetsService.reopenCollectedLoan(
+        event.householdId,
+        event.fromAssetId,
+      );
+    }
   }
 
   /**
