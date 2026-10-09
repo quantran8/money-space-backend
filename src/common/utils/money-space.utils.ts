@@ -304,6 +304,10 @@ export function computeCurrentValue(
   fxRates: FxRate[],
   asOf: string,
 ) {
+  // A closed asset (e.g. a repaid loan) holds nothing. See memory/loan-receivable.md.
+  if (asset.status === 'closed') {
+    return 0;
+  }
   if (asset.valuationMode === 'manual') {
     return asset.manualValue ?? 0;
   }

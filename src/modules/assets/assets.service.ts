@@ -830,6 +830,10 @@ export class AssetsService {
       const cost = position.quantity * position.purchasePrice;
       return Math.max(0, await this.toVndCost(cost, position.quoteCurrency));
     }
+    // A formula asset costs its principal, not principal + accrued interest.
+    if (asset.calculationTerm) {
+      return Math.max(0, asset.calculationTerm.principalAmount);
+    }
     if (knownValue !== undefined) {
       return Math.max(0, knownValue);
     }
@@ -1285,14 +1289,16 @@ export class AssetsService {
   ): Promise<void> {
     const today = this.todayIso();
     const eventId = this.assetsRepository.createId('event');
+    const isLoan = asset.type === 'loan_receivable';
     await this.assetsRepository.insertAssetPurchaseEvent({
       id: eventId,
       householdId: asset.householdId,
       assetId: asset.id,
       amount: value,
       isoDate: today,
-      note: `Mua ${asset.name}`,
+      note: isLoan ? `Cho vay ${asset.name}` : `Mua ${asset.name}`,
       fundingAssetId,
+      categoryCode: isLoan ? 'debt' : undefined,
     });
     await this.debitManualAsset(asset.householdId, fundingAssetId, value, {
       moneyEventId: eventId,
@@ -2127,6 +2133,44 @@ export class AssetsService {
 
     await this.assetsRepository.updateAsset(assetId, next);
     await this.upsertCurrentValuation(next, context);
+  }
+
+  /** Reject a `loan_collection` whose source is not an active loan. */
+  async assertCollectableLoan(
+    householdId: string,
+    assetId: string,
+  ): Promise<void> {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (asset.type !== 'loan_receivable' || !asset.calculationTerm) {
+      throw new BadRequestException('Chỉ khoản cho vay mới có thể thu hồi.');
+    }
+    if (asset.status !== 'active') {
+      throw new BadRequestException('Khoản cho vay này đã được thu hồi.');
+    }
+  }
+
+  /** Close a loan repaid in full. See memory/loan-receivable.md. */
+  async closeCollectedLoan(householdId: string, assetId: string) {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (asset.type !== 'loan_receivable' || !asset.calculationTerm) return;
+    await this.assetsRepository.updateAsset(assetId, {
+      ...asset,
+      status: 'closed',
+      calculationTerm: { ...asset.calculationTerm, status: 'matured' },
+    });
+  }
+
+  /** Undo `closeCollectedLoan` when its `loan_collection` is edited/deleted. */
+  async reopenCollectedLoan(householdId: string, assetId: string) {
+    const asset = await this.ensureAsset(householdId, assetId);
+    if (asset.type !== 'loan_receivable' || !asset.calculationTerm) return;
+    const next: Asset = {
+      ...asset,
+      status: 'active',
+      calculationTerm: { ...asset.calculationTerm, status: 'active' },
+    };
+    await this.assetsRepository.updateAsset(assetId, next);
+    await this.upsertCurrentValuation(next);
   }
 
   /** Fetch the raw asset entity (with its calculation term). Used by accrual. */
