@@ -94,6 +94,7 @@ export interface BankNotificationEvent {
   notificationAt: Date | null;
   timeSource: BankTimeSource | null;
   externalReference: string | null;
+  description: string | null;
   parserVersion: string | null;
   status: BankEventStatus;
   statusReason: string | null;

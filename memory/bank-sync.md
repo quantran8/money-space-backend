@@ -84,9 +84,11 @@ event "chờ duyệt" sẽ làm lệch số dư ngay. Event chỉ thành money e
 `BankPostingService.post` chạy trong `runInTransactionAndInvalidate`: khoá dòng
 event (`FOR UPDATE`), gọi `MoneyEventsService.createMoneyEvent` (income vào ví
 với IN, expense từ ví với OUT; category hệ thống `income` / `other`), đánh dấu
-`PROCESSED`. Event date = ngày giao dịch theo giờ Việt Nam. Note để trống —
-nhãn "từ ngân hàng" đến từ `origin`, không chèn chữ giả vào note
-([[money-events]]). `money_events.notification_event_id UNIQUE` là chốt cuối chống
+`PROCESSED`. Event date = ngày giao dịch theo giờ Việt Nam. Note = nội dung
+thông báo (body) với số tài khoản đầy đủ thay bằng `••` + 4 số cuối — đây là
+chữ thật từ ngân hàng, không phải chữ hệ thống tự bịa ([[money-events]]). Body
+được che và lưu vào `bank_notification_events.description` lúc parse, vì bản
+gốc mã hoá có thể đã tắt hoặc hết hạn khi người dùng xác nhận từ hộp thư. `money_events.notification_event_id UNIQUE` là chốt cuối chống
 post hai lần khi hai luồng chạy song song. `created_by` = user của credential
 (hoặc người bấm xác nhận trong inbox), không phải người tạo household.
 

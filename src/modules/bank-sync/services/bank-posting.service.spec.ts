@@ -12,6 +12,7 @@ const EVENT = {
   amountMinor: 2000,
   direction: 'IN',
   transactionAt: new Date('2026-10-12T17:30:00Z'),
+  description: 'Tài khoản: ••1016\nSố dư: VND 2,202,538',
   notificationAt: null,
   receivedAt: new Date(),
 };
@@ -61,6 +62,7 @@ describe('BankPostingService.post', () => {
         toAssetId: 'wallet-1',
         fromAssetId: undefined,
         isoDate: '2026-10-13',
+        note: 'Tài khoản: ••1016\nSố dư: VND 2,202,538',
       }),
       {
         actorId: 'user-1',

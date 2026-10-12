@@ -1798,6 +1798,8 @@ model BankNotificationEvent {
   notificationAt       DateTime?            @map("notification_at") @db.Timestamptz(6)
   timeSource           BankTimeSource?      @map("time_source")
   externalReference    String?              @map("external_reference")
+  // Body with the account number masked; becomes the money event's note.
+  description          String?
   parserVersion        String?              @map("parser_version")
   status               BankEventStatus      @default(RECEIVED)
   statusReason         String?              @map("status_reason")

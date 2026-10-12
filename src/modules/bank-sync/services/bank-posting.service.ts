@@ -87,7 +87,7 @@ export class BankPostingService {
               categoryId,
               toAssetId: inflow ? targetId : undefined,
               fromAssetId: inflow ? undefined : targetId,
-              note: '',
+              note: event.description ?? '',
             },
             {
               actorId,
