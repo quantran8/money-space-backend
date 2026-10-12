@@ -1,7 +1,8 @@
 import { BadRequestException } from '@nestjs/common';
 
 export interface IngestBankNotificationDto {
-  clientEventId: string;
+  /** Null when the Shortcut sent none; the service derives one. */
+  clientEventId: string | null;
   app: string;
   title: string;
   body: string;
@@ -32,12 +33,19 @@ export function parseIngestBody(raw: unknown): IngestBankNotificationDto {
   }
 
   const clientEventId = body.clientEventId;
-  if (typeof clientEventId !== 'string' || !UUID.test(clientEventId.trim())) {
+  const hasClientEventId =
+    clientEventId !== undefined &&
+    clientEventId !== null &&
+    clientEventId !== '';
+  if (
+    hasClientEventId &&
+    (typeof clientEventId !== 'string' || !UUID.test(clientEventId.trim()))
+  ) {
     throw new BadRequestException('clientEventId must be a UUID.');
   }
 
   return {
-    clientEventId: clientEventId.trim().toLowerCase(),
+    clientEventId: hasClientEventId ? clientEventId.trim().toLowerCase() : null,
     app: text(body.app, 'app', LIMITS.app, true),
     title: text(body.title, 'title', LIMITS.title, false),
     body: text(body.body, 'body', LIMITS.body, true),

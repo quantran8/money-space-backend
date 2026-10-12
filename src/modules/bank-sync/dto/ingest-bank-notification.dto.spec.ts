@@ -22,8 +22,14 @@ describe('parseIngestBody', () => {
     },
   );
 
-  it('rejects a missing or malformed clientEventId', () => {
+  it('rejects a malformed clientEventId', () => {
     expect(() => parseIngestBody({ ...VALID, clientEventId: 'abc' })).toThrow();
+  });
+
+  it('accepts a payload without clientEventId', () => {
+    const { clientEventId: _omit, ...rest } = VALID;
+    void _omit;
+    expect(parseIngestBody(rest).clientEventId).toBeNull();
   });
 
   it('enforces length caps', () => {

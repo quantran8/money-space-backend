@@ -111,6 +111,20 @@ describe('BankIngestService.ingest', () => {
     }
   });
 
+  it('derives the same clientEventId for the same notification', async () => {
+    const { service, repo } = setup();
+    const noId = { ...VCB(), clientEventId: null };
+    await service.ingest(CTX, noId);
+    await service.ingest(CTX, noId);
+    const ids = (
+      repo.insertEvent.mock.calls as unknown as [BankNotificationEvent][]
+    ).map(([row]) => row.clientEventId);
+    expect(ids[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(ids[1]).toBe(ids[0]);
+  });
+
   it('answers a retried clientEventId without reprocessing', async () => {
     const { service, repo, posting } = setup();
     repo.insertEvent.mockResolvedValue(false);

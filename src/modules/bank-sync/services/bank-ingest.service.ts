@@ -4,7 +4,7 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { bankSyncConfig } from '../../../config/bank-sync.config';
 import type {
   BankEventPatch,
@@ -68,13 +68,21 @@ export class BankIngestService {
     const now = new Date();
     const provider = providerForApp(dto.app);
     const input: BankNotificationInput = { title: dto.title, body: dto.body };
+    const payloadFingerprint = fingerprint(hmacKey, dto);
+    const clientEventId =
+      dto.clientEventId ??
+      derivedClientEventId(
+        ctx.credentialId,
+        payloadFingerprint,
+        dto.notificationAt,
+      );
 
     const event: BankNotificationEvent = {
       id: this.repo.createId(),
       householdId: ctx.householdId,
       userId: ctx.userId,
       ingestCredentialId: ctx.credentialId,
-      clientEventId: dto.clientEventId,
+      clientEventId,
       providerCode: provider,
       appName: dto.app.trim().slice(0, 100),
       titleRedacted: redact(dto.title),
@@ -86,7 +94,7 @@ export class BankIngestService {
             now.getTime() + bankSyncConfig.rawRetentionDays * 24 * 60 * MINUTE,
           )
         : null,
-      payloadFingerprint: fingerprint(hmacKey, dto),
+      payloadFingerprint,
       identifierHmac: null,
       identifierLast4: null,
       sourceId: null,
@@ -110,7 +118,7 @@ export class BankIngestService {
     if (!(await this.repo.insertEvent(event))) {
       const stored = await this.repo.findEventByClientId(
         ctx.credentialId,
-        dto.clientEventId,
+        clientEventId,
       );
       return {
         eventId: stored?.id ?? event.id,
@@ -359,6 +367,25 @@ function payloadKeyOrThrow(): Buffer {
     );
   }
   return payloadKey;
+}
+
+/**
+ * A stable id for a Shortcut that sends no clientEventId: the same notification
+ * retried maps to the same id. See memory/bank-sync.md.
+ */
+function derivedClientEventId(
+  credentialId: string,
+  payloadFingerprint: string,
+  notificationAt: Date | null,
+): string {
+  const hex = createHash('sha256')
+    .update(
+      `${credentialId}|${payloadFingerprint}|${notificationAt?.toISOString() ?? ''}`,
+    )
+    .digest('hex');
+  // UUID layout with version 8 (custom) and the RFC 4122 variant bits.
+  const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 function fingerprint(key: Buffer, dto: IngestBankNotificationDto): string {
