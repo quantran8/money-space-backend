@@ -723,6 +723,7 @@ export function toMoneyEventCard(event: MoneyEvent) {
     // member list and resolves it there, so a member who was renamed or has left
     // is never reported under a stale name copied onto the row.
     createdById: event.createdById,
+    origin: event.origin ?? 'manual',
   };
 }
 

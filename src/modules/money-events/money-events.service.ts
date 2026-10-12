@@ -11,6 +11,7 @@ import { AssetsService } from '../assets/assets.service';
 import type { WalletBaseline } from '../assets/assets.service';
 import type { Asset } from '../assets/entities/asset.entity';
 import { MoneyEvent } from './entities/money-event.entity';
+import type { MoneyEventOrigin } from './entities/money-event.entity';
 import type { MoneyEventImpact } from './entities/money-event-impact.entity';
 import {
   computeSavingInterestPeriods,
@@ -22,6 +23,14 @@ import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
 import { MONEY_EVENTS_REPOSITORY } from './repositories/money-events.repository.interface';
 import type { MoneyEventsRepository } from './repositories/money-events.repository.interface';
+
+/** Internal-caller extras; the public API never sets these. */
+export interface CreateMoneyEventOptions {
+  /** Profile id recorded as `created_by`; falls back to the household creator. */
+  actorId?: string;
+  origin?: MoneyEventOrigin;
+  notificationEventId?: string;
+}
 
 @Injectable()
 export class MoneyEventsService {
@@ -187,7 +196,11 @@ export class MoneyEventsService {
     return resolved;
   }
 
-  async createMoneyEvent(householdId: string, payload: CreateMoneyEventDto) {
+  async createMoneyEvent(
+    householdId: string,
+    payload: CreateMoneyEventDto,
+    opts: CreateMoneyEventOptions = {},
+  ) {
     // `category` is mandatory — every event must be classified (the `title`
     // field was dropped, so category is the primary way an event is labelled).
     // Reject an empty/whitespace category up front (400). Internal callers
@@ -229,6 +242,9 @@ export class MoneyEventsService {
       // `upcomingPaymentId` the pre-rename one still used by the entity.
       upcomingPaymentId: payload.cashflowEventId ?? payload.upcomingPaymentId,
       debtId: payload.debtId,
+      createdById: opts.actorId,
+      origin: opts.origin,
+      notificationEventId: opts.notificationEventId,
     };
 
     // An event moves money between wallets: the `fromAsset` is debited and the

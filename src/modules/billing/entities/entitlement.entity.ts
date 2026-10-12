@@ -10,7 +10,8 @@ export type { EntitlementSource, SubscriptionStatus, SubscriptionTier };
 export type PremiumFeature =
   | 'forecast_horizon_extended'
   | 'history_full'
-  | 'export_data';
+  | 'export_data'
+  | 'bank_sync';
 
 /** Counted quotas. A guard cannot check these — the service must, see §B.5. */
 export type CountableQuota = 'goals' | 'whatIfPerMonth' | 'marketPricedAssets';
@@ -34,6 +35,8 @@ export interface PlanLimits {
   /** Months of snapshot history that can be read back. */
   historyMonths: number | null;
   exportData: boolean;
+  /** Bank notification sync via iOS Shortcuts. See memory/bank-sync.md. */
+  bankSync: boolean;
 }
 
 /** Current usage of the counted quotas. Only computed for `GET /entitlement`. */

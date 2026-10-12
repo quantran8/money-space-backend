@@ -173,9 +173,9 @@ describe('analytics event catalog', () => {
   });
 
   it('keeps the paywall reasons the 402 body can actually carry', () => {
-    // Eight. `trial_ending` and `manage` are client entries — nothing refused
+    // Nine. `trial_ending` and `manage` are client entries — nothing refused
     // them, so no 402 exists to carry them.
-    expect(PAYWALL_REASONS).toHaveLength(8);
+    expect(PAYWALL_REASONS).toHaveLength(9);
     expect(isPaywallReason('goal_quota')).toBe(true);
     expect(isPaywallReason('trial_ending')).toBe(false);
     expect(isPaywallReason('manage')).toBe(false);

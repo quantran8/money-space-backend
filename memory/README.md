@@ -70,3 +70,4 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [feedback.md](feedback.md) — báo lỗi / góp ý: why it is user-scoped, Postgres-only, and not in the journal
 - [billing-and-entitlement.md](billing-and-entitlement.md) — tiers, limits, granting, the expiry sweep
 - [data-export.md](data-export.md) — taking the household's data out (JSON + CSV)
+- [bank-sync.md](bank-sync.md) — bank notification → inbox → money event; device tokens, sources, links

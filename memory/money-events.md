@@ -261,6 +261,11 @@ A sale is a single `asset_sale` money event (`direction = neutral`), created fro
 
 Every money event carries `createdById` — the auth **profile id** of whoever recorded it. The API sends **no name**: resolve it against the household's members via `MemberItem.profileId` (`useMembers`). A creator who has left the household therefore goes unnamed ("Không rõ") instead of being shown under a stale name. Rendered today as the "Người ghi" column in the goal detail contribution history.
 
+**`origin`** (`manual` | `bank_notification`) says how the row came to exist.
+Bank-posted rows carry `notification_event_id` (unique) and `createdById` is the
+person whose device sent it — or who confirmed it from the inbox — not the
+household creator. See [[bank-sync]].
+
 Not trustworthy for **system-generated** events (saving-interest accrual): those have no acting member and the backend falls back to the household creator, because the column is NOT NULL. Don't build a UI that asserts who did something on an event a person did not record. See the backend's [[money-events]] for the write rule.
 
 ## Timeline grouping (`getTimelineGroupKey`)

@@ -34,7 +34,9 @@ type BannedFragment =
   | 'note'
   | 'label'
   | 'title'
-  | 'description';
+  | 'description'
+  | 'account'
+  | 'payload';
 
 /**
  * Two exceptions, each carved out of a fragment that is otherwise pulling its
@@ -77,6 +79,7 @@ export type PaywallReasonName =
   | 'forecast_horizon'
   | 'history'
   | 'export'
+  | 'bank_sync'
   | 'expired'
   | 'general';
 
@@ -329,6 +332,8 @@ export const BANNED_PROPERTY_FRAGMENTS: readonly string[] = [
   'label',
   'title',
   'description',
+  'account',
+  'payload',
 ] as const;
 
 export const ALLOWED_PROPERTY_EXCEPTIONS: readonly string[] = [

@@ -490,6 +490,9 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
     // Who recorded it. Read both spellings: raw SQL yields snake_case rows while
     // the Prisma client yields camelCase.
     createdById: row.createdById ?? row.created_by ?? undefined,
+    origin: row.origin ?? 'manual',
+    notificationEventId:
+      row.notificationEventId ?? row.notification_event_id ?? undefined,
   };
 }
 

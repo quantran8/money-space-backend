@@ -205,7 +205,8 @@ export class PrismaMoneyEventsRepository
         (id, household_id, description, event_type, category_id, amount,
          fee_amount, sold_quantity, sold_value, currency, event_date, direction,
          from_asset_id, to_asset_id,
-         cashflow_event_id, debt_id, created_by, updated_at)
+         cashflow_event_id, debt_id, created_by, origin, notification_event_id,
+         updated_at)
       SELECT
         ${event.id}::uuid,
         h.id,
@@ -223,7 +224,9 @@ export class PrismaMoneyEventsRepository
         ${event.toAssetId ?? null}::uuid,
         ${event.upcomingPaymentId ?? null}::uuid,
         ${event.debtId ?? null}::uuid,
-        h.created_by,
+        COALESCE(${event.createdById ?? null}::uuid, h.created_by),
+        ${event.origin ?? 'manual'}::"MoneyEventOrigin",
+        ${event.notificationEventId ?? null}::uuid,
         now()
       FROM households h
       WHERE h.id = ${event.householdId}::uuid

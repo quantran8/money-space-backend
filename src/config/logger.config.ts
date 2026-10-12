@@ -30,6 +30,9 @@ export const SENSITIVE_KEYS = new Set([
   'secret',
   'clientsecret',
   'client_secret',
+  // Bank sync: full account numbers and raw notification text. See memory/bank-sync.md.
+  'accountnumber',
+  'rawpayload',
 ]);
 
 const CENSOR = '[REDACTED]';

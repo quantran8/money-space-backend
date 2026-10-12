@@ -31,6 +31,8 @@ export type MoneyEventType =
 
 export type MoneyDirection = 'inflow' | 'outflow' | 'neutral';
 
+export type MoneyEventOrigin = 'manual' | 'bank_notification';
+
 export interface MoneyEvent {
   id: string;
   householdId: string;
@@ -70,4 +72,7 @@ export interface MoneyEvent {
    * household resolves to nothing and the row falls back to the household.
    */
   createdById?: string;
+  /** `bank_notification` rows were posted from the bank inbox. See memory/bank-sync.md. */
+  origin?: MoneyEventOrigin;
+  notificationEventId?: string;
 }
