@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import type { BankNotificationEvent } from '../entities/bank-sync.entity';
-import { BankIngestService } from './bank-ingest.service';
+import { BankIngestService, noteFromBody } from './bank-ingest.service';
 import type { BankPostingService } from './bank-posting.service';
 
 const CTX = { credentialId: 'cred-1', userId: 'user-1', householdId: 'hh-1' };
@@ -76,6 +76,14 @@ beforeAll(() => {
 });
 
 describe('BankIngestService.ingest', () => {
+  it('stores the masked body as the event description', async () => {
+    const { service, updates } = setup();
+    await service.ingest(CTX, VCB());
+    const parsed = updates.find((u) => 'description' in u.patch)?.patch;
+    expect(parsed?.description).toContain('Số dư TK VCB ••6789 +2,000 VND');
+    expect(parsed?.description).not.toContain('0123456789');
+  });
+
   it('auto-posts a valid event on an AUTO link', async () => {
     const { service, posting } = setup();
     const out = await service.ingest(CTX, VCB());
@@ -239,5 +247,20 @@ describe('BankIngestService.reprocessUnmapped', () => {
       status: 'REVIEW',
       statusReason: 'MANUAL_MODE',
     });
+  });
+});
+
+describe('noteFromBody', () => {
+  it('keeps the body but masks the full account number', () => {
+    const body =
+      'Tài khoản: 1903 5020 891016\nSố dư: VND 2,202,538\nMBVCB.16498389245 chuyen tien';
+    const note = noteFromBody(body, '19035020891016');
+    expect(note).toBe(
+      'Tài khoản: ••1016\nSố dư: VND 2,202,538\nMBVCB.16498389245 chuyen tien',
+    );
+  });
+
+  it('leaves the body untouched when no account was parsed', () => {
+    expect(noteFromBody('  + VND 2,000  ', null)).toBe('+ VND 2,000');
   });
 });

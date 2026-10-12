@@ -457,6 +457,7 @@ function mapEvent(row: EventRow): BankNotificationEvent {
     notificationAt: row.notificationAt,
     timeSource: row.timeSource,
     externalReference: row.externalReference,
+    description: row.description,
     parserVersion: row.parserVersion,
     status: row.status,
     statusReason: row.statusReason,

@@ -106,6 +106,7 @@ export class BankIngestService {
       notificationAt: dto.notificationAt,
       timeSource: null,
       externalReference: null,
+      description: null,
       parserVersion: null,
       status: 'RECEIVED',
       statusReason: null,
@@ -231,6 +232,7 @@ export class BankIngestService {
           ? 'NOTIFICATION'
           : 'RECEIVED',
       externalReference: parsed.externalReference,
+      description: noteFromBody(input.body, parsed.accountNumber),
       parserVersion: parsed.parserVersion,
       identifierHmac: parsed.accountNumber
         ? identifierHmac(hmacKey, provider, parsed.accountNumber)
@@ -386,6 +388,20 @@ function derivedClientEventId(
   // UUID layout with version 8 (custom) and the RFC 4122 variant bits.
   const variant = ((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** The notification body as the event note, full account number masked to last 4. */
+export function noteFromBody(
+  body: string,
+  accountNumber: string | null,
+): string {
+  let note = body.normalize('NFC').trim();
+  if (accountNumber) {
+    // Matches the number even when the bank prints it with spaces or dots.
+    const pattern = new RegExp(accountNumber.split('').join('[\\s.-]?'), 'g');
+    note = note.replace(pattern, `••${accountNumber.slice(-4)}`);
+  }
+  return note.slice(0, 3000);
 }
 
 function fingerprint(key: Buffer, dto: IngestBankNotificationDto): string {
