@@ -44,7 +44,10 @@ Tính năng Premium (`bank_sync`). Related: [[money-events]], [[assets]],
    nằm trong RAM của process: đúng khi chỉ có một instance. Không có giới hạn
    theo IP — Caddy bản chuẩn không có.
 3. Insert event `RECEIVED` (raw mã hoá). Trùng `(credential, clientEventId)` →
-   trả event cũ, `200 DUPLICATE`.
+   trả event cũ, `200 DUPLICATE`. `clientEventId` không bắt buộc: Phím tắt có
+   thể không có thao tác tạo UUID, nên khi thiếu, server tự suy ra một UUID cố
+   định từ `sha256(credential | fingerprint nội dung | notificationAt)` — gửi lại
+   cùng thông báo vẫn ra cùng id.
 4. Parse theo `app` allowlist → `PARSE_FAILED` / `REVIEW` khi không chắc.
 5. HMAC số TK → source. Không có → `UNMAPPED`. Source DISABLED → `REVIEW`.
 6. Link mở tại thời điểm giao dịch; nếu link vừa đổi trong ±10 phút → `REVIEW`.
