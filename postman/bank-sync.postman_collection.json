@@ -1,0 +1,1941 @@
+{
+  "info": {
+    "name": "Oursight — Bank notification sync",
+    "description": "Test bank-sync end to end. Fill email/password (Premium household), run 0 → 1 → 2 → 3 → 4 in order. Account numbers are fake. See memory/bank-sync.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Auth",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200/201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const data = pm.response.json().data;",
+                  "pm.collectionVariables.set('accessToken', data.session.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List households (sets householdId)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const data = pm.response.json().data;",
+                  "const list = Array.isArray(data) ? data : (data.items ?? data.households ?? []);",
+                  "if (!pm.collectionVariables.get('householdId') && list[0]) pm.collectionVariables.set('householdId', list[0].id);",
+                  "console.log('householdId =', pm.collectionVariables.get('householdId'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List assets (sets walletAssetId)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/assets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "assets"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const data = pm.response.json().data;",
+                  "const items = data.items ?? data;",
+                  "const wallet = items.find((a) => ['cash', 'bank_account'].includes(a.type) && (a.status ?? 'active') === 'active');",
+                  "if (wallet && !pm.collectionVariables.get('walletAssetId')) pm.collectionVariables.set('walletAssetId', wallet.id);",
+                  "console.log('walletAssetId =', pm.collectionVariables.get('walletAssetId'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Credentials (thiết bị)",
+      "item": [
+        {
+          "name": "Create credential (sets ingestToken)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "credentials"
+              ]
+            },
+            "description": "Premium only — Free households get 402 with reason bank_sync.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceLabel\": \"Postman iPhone\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201/200', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('raw token returned once', () => pm.expect(data.token).to.match(/^msk_live_/));",
+                  "pm.collectionVariables.set('ingestToken', data.token);",
+                  "pm.collectionVariables.set('credentialId', data.credential.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List credentials (no token/hash)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/credentials",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "credentials"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "pm.test('never exposes token or hash', () => {",
+                  "  const raw = pm.response.text();",
+                  "  pm.expect(raw).to.not.include('tokenHash');",
+                  "  pm.expect(raw).to.not.include(pm.collectionVariables.get('ingestToken'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Revoke credential",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/credentials/{{credentialId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "credentials",
+                "{{credentialId}}"
+              ]
+            },
+            "description": "Run last: afterwards ingest with this token must return 401."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Sources & links (tài khoản ngân hàng)",
+      "item": [
+        {
+          "name": "Create VCB source (sets sourceId)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"providerCode\": \"VCB\",\n  \"accountNumber\": \"{{vcbAccountNumber}}\",\n  \"displayLabel\": \"VCB Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201/200', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('only last4 exposed', () => {",
+                  "  pm.expect(data.last4).to.eql(pm.collectionVariables.get('vcbAccountNumber').slice(-4));",
+                  "  pm.expect(pm.response.text()).to.not.include(pm.collectionVariables.get('vcbAccountNumber'));",
+                  "});",
+                  "pm.collectionVariables.set('sourceId', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create source — masked number (400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"providerCode\": \"VCB\",\n  \"accountNumber\": \"0123xxxx89\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.expect(pm.response.code).to.be.oneOf([400]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List sources",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Link → wallet, REVIEW",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources/{{sourceId}}/link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources",
+                "{{sourceId}}",
+                "link"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetId\": \"{{walletAssetId}}\",\n  \"postingMode\": \"REVIEW\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201/200', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('link is REVIEW', () => pm.expect(data.link.postingMode).to.eql('REVIEW'));",
+                  "console.log('reprocessed unmapped events:', data.reprocessed);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Link → wallet, AUTO",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources/{{sourceId}}/link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources",
+                "{{sourceId}}",
+                "link"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assetId\": \"{{walletAssetId}}\",\n  \"postingMode\": \"AUTO\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 201/200', () => pm.expect(pm.response.code).to.be.oneOf([201, 200]));",
+                  "pm.test('link is AUTO', () => pm.expect(pm.response.json().data.link.postingMode).to.eql('AUTO'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pause source",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources/{{sourceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources",
+                "{{sourceId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"DISABLED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resume source",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources/{{sourceId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources",
+                "{{sourceId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unlink",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/sources/{{sourceId}}/link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "sources",
+                "{{sourceId}}",
+                "link"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Ingest (giả lập Shortcut)",
+      "item": [
+        {
+          "name": "VCB +2,000 (new event)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "description": "UNMAPPED before linking, REVIEW on a REVIEW link, PROCESSED on an AUTO link.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "const json = pm.response.json();",
+                  "const data = json.data ?? json;",
+                  "if (data.eventId) pm.collectionVariables.set('eventId', data.eventId);",
+                  "pm.test('has eventId + status', () => { pm.expect(data.eventId).to.be.a('string'); pm.expect(data.status).to.be.a('string'); });",
+                  "console.log('ingest →', pm.response.code, data.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry same clientEventId → 200 DUPLICATE",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "description": "Run right after the previous request — it reuses clientEventId, vcbTime and notificationAt.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('replayed', () => pm.expect(data.status).to.eql('DUPLICATE'));",
+                  "pm.test('same event', () => pm.expect(data.eventId).to.eql(pm.collectionVariables.get('eventId')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same payload, new UUID → DUPLICATE (SAME_PAYLOAD)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));pm.test('duplicate', () => pm.expect(pm.response.json().data.status).to.eql('DUPLICATE'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "VCB -150,000 (OUT → REVIEW OUT_UNVERIFIED)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} -150,000 VND lúc {{vcbTime}}. Số dư 23,906,118 VND. Ref EXAMPLE456\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "const json = pm.response.json();",
+                  "const data = json.data ?? json;",
+                  "if (data.eventId) pm.collectionVariables.set('eventId', data.eventId);",
+                  "pm.test('has eventId + status', () => { pm.expect(data.eventId).to.be.a('string'); pm.expect(data.status).to.be.a('string'); });",
+                  "console.log('ingest →', pm.response.code, data.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Techcombank +2,000",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "description": "UNMAPPED unless a TECHCOMBANK source with tcbAccountNumber exists.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"Techcombank\",\n  \"title\": \"+ VND 2,000\",\n  \"body\": \"Tài khoản: {{tcbAccountNumber}}\\nSố dư: VND 2,190,538\\nNGUYEN VAN A chuyen tien\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "const json = pm.response.json();",
+                  "const data = json.data ?? json;",
+                  "if (data.eventId) pm.collectionVariables.set('eventId', data.eventId);",
+                  "pm.test('has eventId + status', () => { pm.expect(data.eventId).to.be.a('string'); pm.expect(data.status).to.be.a('string'); });",
+                  "console.log('ingest →', pm.response.code, data.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "VCB unreadable body → PARSE_FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB bị cắt cụt\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "const json = pm.response.json();",
+                  "const data = json.data ?? json;",
+                  "if (data.eventId) pm.collectionVariables.set('eventId', data.eventId);",
+                  "pm.test('has eventId + status', () => { pm.expect(data.eventId).to.be.a('string'); pm.expect(data.status).to.be.a('string'); });",
+                  "console.log('ingest →', pm.response.code, data.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unsupported app → PARSE_FAILED",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"Zalo\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 202', () => pm.expect(pm.response.code).to.be.oneOf([202]));",
+                  "pm.test('parse failed', () => pm.expect(pm.response.json().data.status).to.eql('PARSE_FAILED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Client-supplied userId → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\",\n  \"userId\": \"someone-else\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.expect(pm.response.code).to.be.oneOf([400]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Bad clientEventId → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"not-a-uuid\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 400', () => pm.expect(pm.response.code).to.be.oneOf([400]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "No token → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 401', () => pm.expect(pm.response.code).to.be.oneOf([401]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid token → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer msk_live_invalidinvalidinvalidinvalidinvalidinvalid0"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"Thông báo VCB\",\n  \"body\": \"Số dư TK VCB {{vcbAccountNumber}} +2,000 VND lúc {{vcbTime}}. Số dư 24,056,118 VND. Ref EXAMPLE123\",\n  \"notificationAt\": \"{{notificationAt}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 401', () => pm.expect(pm.response.code).to.be.oneOf([401]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Oversized body → 413",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{ingestToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/bank-notifications/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "bank-notifications",
+                "ingest"
+              ]
+            },
+            "description": "413 from the guard/Caddy; 400 if a proxy is absent and the length cap trips first.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clientEventId\": \"{{clientEventId}}\",\n  \"app\": \"VCB Digibank\",\n  \"title\": \"x\",\n  \"body\": \"{{bigBody}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('clientEventId', pm.variables.replaceIn('{{$guid}}'));",
+                  "// VCB time is dd-MM-yyyy HH:mm:ss in Vietnam time; a unique second avoids SAME_PAYLOAD.",
+                  "const vn = new Date(Date.now() + 7 * 3600 * 1000);",
+                  "const p = (n) => String(n).padStart(2, '0');",
+                  "pm.collectionVariables.set('vcbTime', `${p(vn.getUTCDate())}-${p(vn.getUTCMonth() + 1)}-${vn.getUTCFullYear()} ${p(vn.getUTCHours())}:${p(vn.getUTCMinutes())}:${p(vn.getUTCSeconds())}`);",
+                  "pm.collectionVariables.set('notificationAt', new Date().toISOString());",
+                  "",
+                  "pm.collectionVariables.set('bigBody', 'x'.repeat(5000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 413/400', () => pm.expect(pm.response.code).to.be.oneOf([413, 400]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Inbox (hộp thư)",
+      "item": [
+        {
+          "name": "Counts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events/counts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events",
+                "counts"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List open events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List REVIEW + FAILED",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events?status=REVIEW,FAILED&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "REVIEW,FAILED"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List all",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events?status=all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "all"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get event",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events",
+                "{{eventId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.expect(pm.response.code).to.be.oneOf([200]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve: post into wallet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events/{{eventId}}/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events",
+                "{{eventId}}",
+                "resolve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"post\",\n  \"assetId\": \"{{walletAssetId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200/201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const data = pm.response.json().data;",
+                  "pm.test('processed with a money event', () => { pm.expect(data.status).to.eql('PROCESSED'); pm.expect(data.moneyEventId).to.be.a('string'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve again → idempotent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events/{{eventId}}/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events",
+                "{{eventId}}",
+                "resolve"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"post\",\n  \"assetId\": \"{{walletAssetId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200/201', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "pm.test('still one money event', () => pm.expect(pm.response.json().data.status).to.eql('PROCESSED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resolve: ignore",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events/{{eventId}}/resolve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events",
+                "{{eventId}}",
+                "resolve"
+              ]
+            },
+            "description": "409 when the event is already PROCESSED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ignore\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200/201/409', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 409]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reparse",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/households/{{householdId}}/bank-sync/events/{{eventId}}/reparse",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "households",
+                "{{householdId}}",
+                "bank-sync",
+                "events",
+                "{{eventId}}",
+                "reparse"
+              ]
+            },
+            "description": "409 when settled or when raw payload storage is off/expired."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200/201/409', () => pm.expect(pm.response.code).to.be.oneOf([200, 201, 409]));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "email",
+      "value": ""
+    },
+    {
+      "key": "password",
+      "value": ""
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "householdId",
+      "value": ""
+    },
+    {
+      "key": "walletAssetId",
+      "value": ""
+    },
+    {
+      "key": "ingestToken",
+      "value": ""
+    },
+    {
+      "key": "credentialId",
+      "value": ""
+    },
+    {
+      "key": "sourceId",
+      "value": ""
+    },
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "clientEventId",
+      "value": ""
+    },
+    {
+      "key": "vcbTime",
+      "value": ""
+    },
+    {
+      "key": "notificationAt",
+      "value": ""
+    },
+    {
+      "key": "bigBody",
+      "value": ""
+    },
+    {
+      "key": "vcbAccountNumber",
+      "value": "0123456789"
+    },
+    {
+      "key": "tcbAccountNumber",
+      "value": "19031234567801"
+    }
+  ]
+}

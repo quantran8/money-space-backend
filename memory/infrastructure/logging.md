@@ -76,6 +76,12 @@ query span two streams across a release.
   authenticates against the portal and returns 401 from the push endpoint, with
   no other symptom.
 
+## Bank sync
+
+`accountNumber` and `rawPayload` are in `SENSITIVE_KEYS`. The ingest code never
+logs a notification's title or body; failures log the event id only. See
+`memory/bank-sync.md`.
+
 ## Where it lives in code
 
 - `src/config/logger.config.ts` — the whole Pino configuration, including

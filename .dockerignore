@@ -3,6 +3,9 @@ dist
 build
 coverage
 .nyc_output
+# Must not enter the image: dist/ is excluded above, so a stale cache makes tsc
+# report everything up to date and emit nothing.
+*.tsbuildinfo
 
 .git
 .gitignore

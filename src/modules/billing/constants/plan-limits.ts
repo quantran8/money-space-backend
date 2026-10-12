@@ -42,6 +42,7 @@ export const PLAN_LIMITS: Record<SubscriptionTier, PlanLimits> = {
     forecastHorizons: [7, 30],
     historyMonths: 3,
     exportData: false,
+    bankSync: false,
   },
   premium: {
     goals: null,
@@ -50,6 +51,7 @@ export const PLAN_LIMITS: Record<SubscriptionTier, PlanLimits> = {
     forecastHorizons: [7, 30, 60, 90],
     historyMonths: null,
     exportData: true,
+    bankSync: true,
   },
 } as const;
 
@@ -66,5 +68,7 @@ export function hasFeature(
       return limits.historyMonths === null;
     case 'export_data':
       return limits.exportData;
+    case 'bank_sync':
+      return limits.bankSync;
   }
 }

@@ -244,6 +244,10 @@ jobs:
           COIN_MARKETCAP_BASE_URL: ${{ vars.COIN_MARKETCAP_BASE_URL }}
           TWELVEDATA_API_KEY: ${{ secrets.TWELVEDATA_API_KEY }}
           TWELVEDATA_BASE_URL: ${{ vars.TWELVEDATA_BASE_URL }}
+          # Bank notification sync; ingest answers 503 while either is unset.
+          BANK_SYNC_HMAC_KEY: ${{ secrets.BANK_SYNC_HMAC_KEY }}
+          BANK_SYNC_PAYLOAD_KEY: ${{ secrets.BANK_SYNC_PAYLOAD_KEY }}
+          BANK_SYNC_STORE_RAW_PAYLOAD: ${{ vars.BANK_SYNC_STORE_RAW_PAYLOAD }}
           BACKEND_IMAGE: ${{ env.OCIR_REGISTRY }}/${{ env.OCIR_NAMESPACE }}/${{ env.OCIR_REPOSITORY }}:${{ github.sha }}
           APP_PORT: ${{ vars.APP_PORT || '3000' }}
           # Comma-separated browser origins. Unset falls back to the defaults in
@@ -276,6 +280,8 @@ jobs:
                        SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWKS_URL \
                        COIN_MARKETCAP_API_KEY COIN_MARKETCAP_BASE_URL \
                        TWELVEDATA_API_KEY TWELVEDATA_BASE_URL \
+                       BANK_SYNC_HMAC_KEY BANK_SYNC_PAYLOAD_KEY \
+                       BANK_SYNC_STORE_RAW_PAYLOAD \
                        BACKEND_IMAGE APP_PORT CORS_ORIGINS DOMAIN_NAME ACME_EMAIL \
                        REDIS_MAXMEMORY HOSTNAME_LABEL \
                        LOG_LEVEL SERVICE_NAME; do

@@ -132,6 +132,8 @@ Copy these from your local `.env` — the same values the app already uses:
 | `SUPABASE_JWKS_URL` |
 | `COIN_MARKETCAP_API_KEY` |
 | `TWELVEDATA_API_KEY` |
+| `BANK_SYNC_HMAC_KEY` |
+| `BANK_SYNC_PAYLOAD_KEY` |
 
 `REDIS_URL` is deliberately **not** a secret: Compose sets it to
 `redis://redis:6379` on the server, because inside the Docker network the host
@@ -144,6 +146,18 @@ provider serves. Without `COIN_MARKETCAP_API_KEY` crypto prices come back empty
 without `TWELVEDATA_API_KEY` the equity/FX routes go the same way. Set both
 unless you mean to turn a class off. An unset key is written as no line at all,
 never `KEY=""`, because the routing code decides by truthiness.
+
+The two `BANK_SYNC_*` keys are each 32 random bytes, hex or base64
+(`openssl rand -hex 32` or `openssl rand -base64 32`). Without them the bank-notification ingest answers
+503. **Never rotate `BANK_SYNC_HMAC_KEY` casually**: every linked bank account
+is looked up by that HMAC, so a new key orphans all of them. A new
+`BANK_SYNC_PAYLOAD_KEY` only makes raw payloads stored before it unreadable
+(they expire after 30 days anyway). Set the variable
+`BANK_SYNC_STORE_RAW_PAYLOAD=false` to stop keeping originals at all: only an
+HMAC fingerprint is stored, "read again" is gone for new notifications, and
+`BANK_SYNC_PAYLOAD_KEY` becomes optional (keep it while older rows exist). Rate limiting for that route is per device
+token inside the app; Caddy caps its body at 4 KB. There is no per-IP limit —
+stock Caddy has none. See memory/bank-sync.md.
 
 ---
 

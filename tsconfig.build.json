@@ -1,4 +1,14 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // `rootDir` pins the build output to dist/main.js. Without it a single .ts
+  // outside src/ (scripts/) widens the root to the repo and emits dist/src/,
+  // which the Dockerfile's `node dist/main` cannot find.
+  // The build-info file lives inside dist/ so `deleteOutDir` wipes it too;
+  // left at the root it survives the wipe and tsc emits nothing.
+  "compilerOptions": {
+    "rootDir": "./src",
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "test", "dist", "scripts", "**/*spec.ts"]
 }

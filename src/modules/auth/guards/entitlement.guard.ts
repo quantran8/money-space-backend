@@ -67,5 +67,7 @@ function reasonFor(feature: PremiumFeature) {
       return 'history' as const;
     case 'export_data':
       return 'export' as const;
+    case 'bank_sync':
+      return 'bank_sync' as const;
   }
 }

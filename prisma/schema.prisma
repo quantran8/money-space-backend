@@ -473,6 +473,11 @@ model Profile {
   revenuecatSubscribers    RevenuecatSubscriber[] @relation("RevenuecatSubscriberProfile")
   redeemCodesRedeemed      RedeemCodeRedemption[] @relation("RedeemCodeRedeemedBy")
   paymentOrdersCreated     PaymentOrder[]         @relation("PaymentOrderCreatedBy")
+  bankIngestCredentials    BankIngestCredential[] @relation("BankIngestCredentialUser")
+  bankSourcesCreated       BankExternalSource[] @relation("BankExternalSourceCreatedBy")
+  bankSourceLinksCreated   BankSourceLink[] @relation("BankSourceLinkCreatedBy")
+  bankEventsReceived       BankNotificationEvent[] @relation("BankNotificationEventUser")
+  bankEventsProcessed      BankNotificationEvent[] @relation("BankNotificationEventProcessedBy")
 
   @@map("profiles")
 }
@@ -515,6 +520,10 @@ model Household {
   redeemRedemptions       RedeemCodeRedemption[]
   paymentOrders           PaymentOrder[]
   revenuecatSubscribers   RevenuecatSubscriber[]
+  bankIngestCredentials   BankIngestCredential[]
+  bankExternalSources     BankExternalSource[]
+  bankSourceLinks         BankSourceLink[]
+  bankNotificationEvents  BankNotificationEvent[]
 
   @@index([createdById])
   @@index([deletedAt])
@@ -957,6 +966,8 @@ model Asset {
   receivedDebts               Debt[]                 @relation("DebtReceivedToAsset")
   repaymentDebts              Debt[]                 @relation("DebtRepaymentAsset")
   goalAllocations             GoalAssetAllocation[]
+  bankSourceLinks             BankSourceLink[]
+  bankMatchedEvents           BankNotificationEvent[]
 
   @@index([holderMemberId])
   // Backs the canonical `WHERE household_id = ? AND deleted_at IS NULL
@@ -1541,6 +1552,10 @@ model MoneyEvent {
   // read time instead — see backend memory/attention-items.md.
   // Who owns the privacy right (spec §30) — distinct from `createdById`.
   status          MoneyEventStatus   @default(recorded)
+  // How the row came to exist; bank_notification rows carry their inbox event.
+  origin              MoneyEventOrigin       @default(manual)
+  notificationEventId String?                @unique @map("notification_event_id") @db.Uuid
+  notificationEvent   BankNotificationEvent? @relation(fields: [notificationEventId], references: [id], onDelete: SetNull)
   createdById     String             @map("created_by") @db.Uuid
   createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedById     String?            @map("updated_by") @db.Uuid
@@ -1653,4 +1668,154 @@ enum FeedbackType {
   other
 
   @@map("feedback_type")
+}
+
+// ── Bank notification sync. See memory/bank-sync.md. ──
+
+enum MoneyEventOrigin {
+  manual
+  bank_notification
+}
+
+enum BankCredentialStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum BankSourceType {
+  BANK_ACCOUNT
+  EWALLET
+}
+
+enum BankSourceStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum BankPostingMode {
+  REVIEW
+  AUTO
+}
+
+enum BankEventStatus {
+  RECEIVED
+  PARSE_FAILED
+  UNMAPPED
+  REVIEW
+  PROCESSED
+  DUPLICATE
+  FAILED
+  IGNORED
+}
+
+enum BankTimeSource {
+  CONTENT
+  NOTIFICATION
+  RECEIVED
+}
+
+model BankIngestCredential {
+  id          String                  @id @default(uuid(7)) @db.Uuid
+  userId      String                  @map("user_id") @db.Uuid
+  householdId String                  @map("household_id") @db.Uuid
+  deviceLabel String                  @map("device_label")
+  tokenHash   String                  @unique @map("token_hash")
+  tokenPrefix String?                 @map("token_prefix")
+  status      BankCredentialStatus    @default(ACTIVE)
+  expiresAt   DateTime?               @map("expires_at") @db.Timestamptz(6)
+  lastUsedAt  DateTime?               @map("last_used_at") @db.Timestamptz(6)
+  createdAt   DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt   DateTime?               @map("revoked_at") @db.Timestamptz(6)
+  user        Profile                 @relation("BankIngestCredentialUser", fields: [userId], references: [id])
+  household   Household               @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  events      BankNotificationEvent[]
+
+  @@index([householdId, userId], map: "bank_ingest_credentials_household_user_idx")
+  @@map("bank_ingest_credentials")
+}
+
+model BankExternalSource {
+  id              String                  @id @default(uuid(7)) @db.Uuid
+  householdId     String                  @map("household_id") @db.Uuid
+  createdById     String                  @map("created_by") @db.Uuid
+  sourceType      BankSourceType          @default(BANK_ACCOUNT) @map("source_type")
+  providerCode    String                  @map("provider_code")
+  identifierHmac  String                  @map("identifier_hmac")
+  identifierLast4 String?                 @map("identifier_last4")
+  displayLabel    String?                 @map("display_label")
+  status          BankSourceStatus        @default(ACTIVE)
+  createdAt       DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  household       Household               @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy       Profile                 @relation("BankExternalSourceCreatedBy", fields: [createdById], references: [id])
+  links           BankSourceLink[]
+  events          BankNotificationEvent[]
+
+  @@unique([householdId, providerCode, identifierHmac], map: "bank_external_sources_identity_uniq")
+  @@map("bank_external_sources")
+}
+
+model BankSourceLink {
+  id               String             @id @default(uuid(7)) @db.Uuid
+  householdId      String             @map("household_id") @db.Uuid
+  externalSourceId String             @map("external_source_id") @db.Uuid
+  assetId          String             @map("asset_id") @db.Uuid
+  postingMode      BankPostingMode    @default(REVIEW) @map("posting_mode")
+  validFrom        DateTime           @default(now()) @map("valid_from") @db.Timestamptz(6)
+  // NULL = the open link. One open link per source (partial unique index in SQL).
+  validTo          DateTime?          @map("valid_to") @db.Timestamptz(6)
+  createdById      String             @map("created_by") @db.Uuid
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  household        Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  externalSource   BankExternalSource @relation(fields: [externalSourceId], references: [id], onDelete: Cascade)
+  asset            Asset              @relation(fields: [assetId], references: [id])
+  createdBy        Profile            @relation("BankSourceLinkCreatedBy", fields: [createdById], references: [id])
+
+  @@index([externalSourceId, validFrom], map: "bank_source_links_source_range_idx")
+  @@map("bank_source_links")
+}
+
+model BankNotificationEvent {
+  id                   String               @id @default(uuid(7)) @db.Uuid
+  householdId          String               @map("household_id") @db.Uuid
+  userId               String               @map("user_id") @db.Uuid
+  ingestCredentialId   String               @map("ingest_credential_id") @db.Uuid
+  clientEventId        String               @map("client_event_id") @db.Uuid
+  providerCode         String?              @map("provider_code")
+  appName              String               @map("app_name")
+  titleRedacted        String?              @map("title_redacted")
+  rawPayloadCiphertext Bytes?               @map("raw_payload_ciphertext")
+  rawExpiresAt         DateTime?            @map("raw_expires_at") @db.Timestamptz(6)
+  payloadFingerprint   String?              @map("payload_fingerprint")
+  identifierHmac       String?              @map("identifier_hmac")
+  identifierLast4      String?              @map("identifier_last4")
+  sourceId             String?              @map("source_id") @db.Uuid
+  matchedAssetId       String?              @map("matched_asset_id") @db.Uuid
+  amountMinor          BigInt?              @map("amount_minor")
+  direction            String?
+  reportedBalanceMinor BigInt?              @map("reported_balance_minor")
+  transactionAt        DateTime?            @map("transaction_at") @db.Timestamptz(6)
+  notificationAt       DateTime?            @map("notification_at") @db.Timestamptz(6)
+  timeSource           BankTimeSource?      @map("time_source")
+  externalReference    String?              @map("external_reference")
+  parserVersion        String?              @map("parser_version")
+  status               BankEventStatus      @default(RECEIVED)
+  statusReason         String?              @map("status_reason")
+  receivedAt           DateTime             @default(now()) @map("received_at") @db.Timestamptz(6)
+  processedAt          DateTime?            @map("processed_at") @db.Timestamptz(6)
+  processedById        String?              @map("processed_by") @db.Uuid
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  household            Household            @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user                 Profile              @relation("BankNotificationEventUser", fields: [userId], references: [id])
+  processedBy          Profile?             @relation("BankNotificationEventProcessedBy", fields: [processedById], references: [id])
+  credential           BankIngestCredential @relation(fields: [ingestCredentialId], references: [id])
+  source               BankExternalSource?  @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  matchedAsset         Asset?               @relation(fields: [matchedAssetId], references: [id])
+  moneyEvent           MoneyEvent?
+
+  @@unique([ingestCredentialId, clientEventId], map: "bank_notification_events_client_event_uniq")
+  @@index([householdId, status, receivedAt(sort: Desc)], map: "bank_notification_events_inbox_idx")
+  @@index([householdId, sourceId, transactionAt], map: "bank_notification_events_source_time_idx")
+  @@index([householdId, identifierHmac, status], map: "bank_notification_events_identifier_idx")
+  @@map("bank_notification_events")
 }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AssetsModule } from './assets/assets.module';
 import { AuthModule } from './auth/auth.module';
+import { BankSyncModule } from './bank-sync/bank-sync.module';
 import { BillingModule } from './billing/billing.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { DebtsModule } from './debts/debts.module';
@@ -40,6 +41,7 @@ import { ExportModule } from './export/export.module';
     ActivityModule,
     FeedbackModule,
     ExportModule,
+    BankSyncModule,
   ],
   exports: [
     AuthModule,

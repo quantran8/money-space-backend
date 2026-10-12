@@ -57,7 +57,7 @@ which has already dropped to Free.
 ## Enforcement, in two halves
 
 - **Boolean features** (`forecast_horizon_extended`, `history_full`,
-  `export_data`) — `@RequirePremium()` + `EntitlementGuard`, registered
+  `export_data`, `bank_sync`) — `@RequirePremium()` + `EntitlementGuard`, registered
   globally. It returns `true` immediately for a route with no decorator, so
   almost every request pays one `Reflector` lookup and nothing else.
 - **Counted quotas** (`goals`, `whatIfPerMonth`, `marketPricedAssets`) — checked
@@ -318,3 +318,11 @@ answers read:
   gap to fill by inventing a value.
 - **The expiry sweep now writes a `subscription.expired` audit row** and emits
   the matching event. Before that, churn left no trace anywhere.
+
+## Bank sync is Premium
+
+`bank_sync` gates creating a device token, adding a bank source and linking it.
+The ingest route is not household-scoped, so `EntitlementGuard` cannot see it;
+`BankIngestTokenGuard` checks the same `limits.bankSync` itself and answers 402
+with reason `bank_sync`. Listing, revoking and the inbox stay open after a lapse
+so a household can still clean up. See [[bank-sync]].
