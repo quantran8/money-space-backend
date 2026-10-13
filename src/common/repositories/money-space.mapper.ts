@@ -477,6 +477,10 @@ export function mapMoneyEvent(row: DbRow): MoneyEvent {
         : undefined,
     note: row.description ?? '',
     isoDate: dateOnly(row.eventDate ?? row.event_date),
+    createdAt:
+      (row.createdAt ?? row.created_at) != null
+        ? new Date(row.createdAt ?? row.created_at).toISOString()
+        : undefined,
     type: row.eventType ?? row.event_type,
     categoryId: row.categoryId ?? row.category_id,
     direction: row.direction,

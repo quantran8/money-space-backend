@@ -10,6 +10,8 @@ export interface BalanceObservation {
   /** Ledger balance right after this event's money event; null when no point exists. */
   ledgerBalance: number | null;
   currentValue: number;
+  /** Signed sum of `asset_update` adjustments recorded after this event. */
+  adjustedSince: number;
 }
 
 export interface WalletDrift {
@@ -27,7 +29,7 @@ export interface WalletDrift {
 
 export function toWalletDrift(obs: BalanceObservation): WalletDrift | null {
   if (obs.ledgerBalance === null) return null;
-  const drift = obs.reportedBalance - obs.ledgerBalance;
+  const drift = obs.reportedBalance - obs.ledgerBalance - obs.adjustedSince;
   return {
     assetId: obs.assetId,
     assetName: obs.assetName,

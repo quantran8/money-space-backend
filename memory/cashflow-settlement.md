@@ -92,6 +92,12 @@ Số dư ví vẫn là ledger replay. `reported_balance_minor` của bank event 
 `asset_update` — không bao giờ tự sửa. Techcombank không có giờ giao dịch nên
 thứ tự trong cùng ngày có thể sai; vì thế chỉ là cảnh báo.
 
+Điểm valuation gắn ME là số **lịch sử**, không đổi khi user bấm điều chỉnh sau
+đó — nên drift = `reported − ledger − Σ asset_update` của ví ghi **sau** ME đó
+(theo `created_at`). Thiếu phần trừ này thì cảnh báo không bao giờ tắt (bug
+2026-10-13). Hệ quả: mọi chỉnh tay `manualValue` sau bank event đều được coi là
+đối soát.
+
 ## Auto post khi đã khớp
 
 Link `AUTO` + `matched` → post và settle trong một transaction. Nếu settle
