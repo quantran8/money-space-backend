@@ -263,4 +263,5 @@ describe('noteFromBody', () => {
   it('leaves the body untouched when no account was parsed', () => {
     expect(noteFromBody('  + VND 2,000  ', null)).toBe('+ VND 2,000');
   });
+
 });
