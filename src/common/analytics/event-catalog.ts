@@ -80,6 +80,7 @@ export type PaywallReasonName =
   | 'history'
   | 'export'
   | 'bank_sync'
+  | 'space_quota'
   | 'expired'
   | 'general';
 

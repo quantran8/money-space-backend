@@ -4,6 +4,12 @@ import type { CreateHouseholdDto } from './dto/create-household.dto';
 import { AnalyticsService } from '../../common/analytics/analytics.service';
 import { HOUSEHOLDS_REPOSITORY } from './repositories/households.repository.interface';
 import type { HouseholdsRepository } from './repositories/households.repository.interface';
+import { EntitlementService } from '../billing/entitlement.service';
+import { PremiumRequiredException } from '../billing/entitlement.errors';
+import { FREE_OWNED_SPACE_LIMIT } from '../billing/constants/plan-limits';
+import type { Entitlement } from '../billing/entities/entitlement.entity';
+import type { Household } from './entities/household.entity';
+import { freeOwnedSpaces, type SpaceQuota } from './domain/space-quota';
 
 const ALLOWED_FREQUENCIES = ['weekly', 'monthly', 'manual'] as const;
 const ALLOWED_CURRENCIES = ['VND', 'USD', 'EUR'] as const;
@@ -16,15 +22,57 @@ export class HouseholdsService {
     @Inject(HOUSEHOLDS_REPOSITORY)
     private readonly householdsRepository: HouseholdsRepository,
     private readonly analytics: AnalyticsService,
+    private readonly entitlements: EntitlementService,
   ) {}
 
   /** Households the given user belongs to. Drives onboarding gating on the client. */
   async listMyHouseholds(user: AuthUser) {
     const items = await this.householdsRepository.getHouseholdsForUser(user.id);
+    const { quota } = await this.spaceQuota(items, user.id);
     return {
       items,
       total: items.length,
+      spaceQuota: quota,
     };
+  }
+
+  /** Free spaces this user created, against the per-account ceiling. */
+  private async spaceQuota(spaces: Household[], userId: string) {
+    const owned = spaces.filter((space) => space.createdBy === userId);
+    const entitlements = new Map<string, Entitlement>(
+      await Promise.all(
+        owned.map(
+          async (space) =>
+            [space.id, await this.entitlements.forHousehold(space.id)] as const,
+        ),
+      ),
+    );
+    const free = freeOwnedSpaces(owned, userId, entitlements);
+    const quota: SpaceQuota = {
+      used: free.length,
+      limit: FREE_OWNED_SPACE_LIMIT,
+    };
+    return { quota, free, entitlements };
+  }
+
+  // Not locked: two creates racing can both pass. Accepted — see memory/billing-and-entitlement.md.
+  private async assertSpaceQuota(userId: string) {
+    const spaces = await this.householdsRepository.getHouseholdsForUser(userId);
+    const { quota, free, entitlements } = await this.spaceQuota(spaces, userId);
+    if (quota.used < quota.limit) return;
+
+    const entitlement = entitlements.get(free[0].id)!;
+    this.analytics.capture(entitlement.householdId, 'paywall_hit', {
+      reason: 'space_quota',
+      tier: entitlement.tier,
+      limit: quota.limit,
+      used: quota.used,
+      household_age_days: null,
+    });
+    throw new PremiumRequiredException('space_quota', entitlement, {
+      limit: quota.limit,
+      used: quota.used,
+    });
   }
 
   async getHousehold(householdId: string) {
@@ -90,6 +138,8 @@ export class HouseholdsService {
     )
       ? payload.updateFrequency!
       : 'manual';
+
+    await this.assertSpaceQuota(user.id);
 
     const household = await this.householdsRepository.createHousehold({
       name,

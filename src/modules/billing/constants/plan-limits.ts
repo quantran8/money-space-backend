@@ -55,6 +55,12 @@ export const PLAN_LIMITS: Record<SubscriptionTier, PlanLimits> = {
   },
 } as const;
 
+/**
+ * Free spaces one account may have created. Per account, not per tier: Premium
+ * spaces do not count. See memory/billing-and-entitlement.md.
+ */
+export const FREE_OWNED_SPACE_LIMIT = 2;
+
 /** Whether a tier's limits grant one boolean feature. */
 export function hasFeature(
   limits: PlanLimits,
