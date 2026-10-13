@@ -8,6 +8,7 @@ import { isUniqueViolation } from '../../../common/repositories/prisma-errors';
 import { uuidv7 } from '../../../common/utils/uuid';
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import type { BalanceObservation } from '../domain/wallet-drift';
+import { OUT_UNVERIFIED } from '../parsers/bank-notification-parser';
 import type {
   BankCredential,
   BankEventPatch,
@@ -503,6 +504,74 @@ export class PrismaBankSyncRepository
               { moneyEvent: { is: null } },
               {
                 moneyEvent: { is: { cashflowEventId: null, deletedAt: null } },
+              },
+            ],
+          },
+        ],
+      },
+      orderBy: { receivedAt: 'asc' },
+      include: EVENT_INCLUDE,
+    });
+    return row ? mapEvent(row) : null;
+  }
+
+  async findLateTransferPeer(params: {
+    householdId: string;
+    eventId: string;
+    direction: string;
+    amountMinor: number;
+    sourceId: string;
+    counterpartSourceId: string | null;
+    walletId: string;
+    from: Date;
+    to: Date;
+  }) {
+    const window = { gte: params.from, lte: params.to };
+    const pointsAtUs: Prisma.BankNotificationEventWhereInput[] = [
+      { counterpartSourceId: params.sourceId },
+    ];
+    if (params.counterpartSourceId) {
+      pointsAtUs.push({ sourceId: params.counterpartSourceId });
+    }
+    const ownSide =
+      params.direction === 'IN'
+        ? { toAssetId: params.walletId }
+        : { fromAssetId: params.walletId };
+    const row = await this.prisma.bankNotificationEvent.findFirst({
+      where: {
+        householdId: params.householdId,
+        id: { not: params.eventId },
+        direction: params.direction === 'IN' ? 'OUT' : 'IN',
+        amountMinor: BigInt(params.amountMinor),
+        transferPeerEventId: null,
+        sourceId: { not: params.sourceId },
+        matchedAssetId: { not: null },
+        AND: [
+          { OR: pointsAtUs },
+          {
+            OR: [
+              { transactionAt: window },
+              { transactionAt: null, notificationAt: window },
+              { transactionAt: null, notificationAt: null, receivedAt: window },
+            ],
+          },
+          {
+            OR: [
+              {
+                status: 'PROCESSED',
+                moneyEvent: {
+                  is: {
+                    eventType: 'transfer',
+                    cashflowEventId: null,
+                    deletedAt: null,
+                    ...ownSide,
+                  },
+                },
+              },
+              {
+                status: 'REVIEW',
+                statusReason: OUT_UNVERIFIED,
+                moneyEvent: { is: null },
               },
             ],
           },

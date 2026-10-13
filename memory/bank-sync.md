@@ -6,7 +6,8 @@ iPhone nhận notification biến động số dư (Techcombank, VCB Digibank). 
 iOS Shortcut gửi `app/title/body` về `POST /api/v1/bank-notifications/ingest`.
 Backend parse, tìm ví (wallet asset) mà household đã liên kết với tài khoản
 ngân hàng đó, rồi ghi một money event **đúng một lần**. Mọi thứ không chắc chắn
-nằm trong inbox chờ người dùng xử lý, **không bao giờ tự sửa số dư**.
+nằm trong inbox chờ người dùng xử lý. Số dư ví ngân hàng thì **luôn theo số dư
+trong thông báo** — xem mục Số dư.
 
 Tính năng Premium (`bank_sync`). Related: [[money-events]], [[assets]],
 [[billing-and-entitlement]], [[auth]].
@@ -50,7 +51,8 @@ Tính năng Premium (`bank_sync`). Related: [[money-events]], [[assets]],
    `Số dư <số> VND`. Quảng cáo/ưu đãi/kích hoạt tài khoản rơi ở đây. Ngưỡng cố
    ý lỏng: một biến động đổi format mà còn dòng số dư vẫn đi tiếp và thành
    `PARSE_FAILED` để người dùng thấy, thay vì bị bỏ âm thầm. Nếu một biến động
-   thật vẫn lọt bước này, cảnh báo lệch số dư ([[cashflow-settlement]]) sẽ lộ ra.
+   thật vẫn lọt bước này, lần post kế tiếp sẽ tự đồng bộ số dư (mục Số dư) nhưng
+   giao dịch đó vẫn thiếu trong lịch sử.
    App ngoài allowlist vẫn đi tiếp như cũ (`APP_NOT_SUPPORTED`).
 3. Insert event `RECEIVED` (raw mã hoá). Trùng `(credential, clientEventId)` →
    trả event cũ, `200 DUPLICATE`. `clientEventId` không bắt buộc: Phím tắt có
@@ -116,7 +118,7 @@ post hai lần khi hai luồng chạy song song. `created_by` = user của crede
 
 Chuyển TCB → VCB sinh hai notification (TCB `-x`, VCB `+x`) đến lệch nhau,
 thứ tự bất kỳ. Ghi thành **một** money event `transfer` (category hệ thống
-`other`, neutral — không tính thu/chi), không phải expense + income.
+`transfer`, neutral — không tính thu/chi), không phải expense + income.
 
 **Nhận ra đối ứng.** Body của cả hai chiều chứa số TK bên kia ở dạng đầy đủ:
 VCB nhận có `…FT….20261013.114711.19035020891016.VND…` (số TCB gửi); TCB nhận
@@ -139,7 +141,21 @@ notification đến cách nhau 5–10 giây (quyết định của chủ sản p
 cửa sổ hẹp để hai lần chuyển cùng số tiền liên tiếp không bị ghép chéo. Đánh
 đổi: bên đến sau quá 1 phút (máy tắt, Phím tắt chạy trễ, TCB không có giờ trong
 nội dung nên dùng giờ notification) sẽ không ghép được và cũng tự post transfer
-→ **ghi hai lần**; lệch số dư sẽ lộ ra.
+→ trước đây **ghi hai lần**, hoặc bên OUT kẹt REVIEW (`OUT_UNVERIFIED`) cạnh
+transfer đã post. Nay có lượt ghép muộn bên dưới.
+
+**Ghép muộn** (`findLateTransferPeer`, 2026-10-13): lượt 1 phút trượt thì thử lại
+với cửa sổ **24h**, nhưng chỉ nhận peer đã gắn chặt với ví của event (vẫn cần
+một bên chỉ đích danh bên kia):
+- peer `PROCESSED` có money event `transfer` (chưa settle cashflow) mà phía của
+  event này (`to_asset_id` nếu IN, `from_asset_id` nếu OUT) đúng ví của event; hoặc
+- peer chưa post, REVIEW vì `OUT_UNVERIFIED`.
+
+Ghép chéo hai lần chuyển cùng số tiền giữa cùng hai ví vẫn ra cùng kết quả, nên
+cửa sổ rộng không có hại ở đây. Inbox "Ghi nhận" (không kèm cashflow) cũng chạy
+`pairTransferLeg` trước khi post, để một chân đang kẹt bấm vào thành
+`TRANSFER_PAIRED` thay vì tạo transfer thứ hai. Ngoài 24h vẫn có thể ghi hai lần;
+số dư khi đó được đồng bộ bù (mục Số dư).
 
 **Post** (`BankPostingService.post`, khoá cả hai dòng theo thứ tự id):
 - Peer đã có money event `transfer` → event này chỉ thành `PROCESSED`
@@ -167,9 +183,17 @@ nội dung nên dùng giờ notification) sẽ không ghép được và cũng t
 - Không đủ điều kiện → giữ lý do REVIEW cũ; người dùng bấm Ghi nhận trong inbox
   sẽ ra transfer.
 
-Race: hai bên đến gần như cùng lúc có thể không thấy nhau (sourceId của bên kia
-chưa ghi) — chấp nhận như kiểm tra cùng payload; inbox/lệch số dư sẽ lộ ra.
-Lệch số dư: event `TRANSFER_PAIRED` dùng money event của peer làm mốc.
+**Race** — thực tế là trường hợp **phổ biến nhất**: Phím tắt gửi hai thông báo
+gần như cùng lúc (đo 2026-10-13, TCB → VCB: nhận cách nhau 4ms). Hai luồng route
+song song, mỗi bên tìm cặp lúc bên kia chưa ghi `matched_asset_id` /
+`counterpart_source_id` → VCB IN tự post transfer qua counterpart, TCB OUT (body
+không có số TK VCB) kẹt REVIEW `OUT_UNVERIFIED`. Sửa bằng `closeTransferRace`
+(chỉ ingest live): sau khi trạng thái đã chốt, đọc lại event và chạy
+`findLateTransferPeer` một lần nữa. Mỗi luồng *ghi xong rồi mới kiểm tra*, nên
+luồng kiểm tra sau cùng chắc chắn thấy trạng thái cuối của luồng kia. Ghép được
+thì post chân đang chờ → `TRANSFER_PAIRED`. Một chân đã post chỉ đóng chân đang
+REVIEW, không bao giờ ghép hai transfer đã post với nhau.
+Đồng bộ số dư: event `TRANSFER_PAIRED` dùng money event của peer làm mốc.
 
 ## Xử lý lại sau khi liên kết
 
@@ -201,11 +225,29 @@ là `AUTO`, vì người dùng chưa nhìn thấy chúng.
 - Thiếu `BANK_SYNC_HMAC_KEY` → ingest trả 503. Thiếu `BANK_SYNC_PAYLOAD_KEY` chỉ
   503 khi đang bật lưu bản gốc.
 
-## Lệch số dư
+## Số dư
 
-`reported_balance_minor` được so với số dư ledger ngay sau ME của chính event
-đó (`GET …/bank-sync/wallet-drift`). Chỉ hiển thị, không tự sửa — xem
-[[cashflow-settlement]].
+Số dư trong thông báo là **source of truth** cho ví ngân hàng (quyết định
+2026-10-13; trước đó chỉ cảnh báo lệch và chờ user bấm điều chỉnh — bỏ vì user
+không cần biết, chỉ cần số đúng). Không còn endpoint `wallet-drift` hay UI cảnh
+báo.
+
+Mỗi lần post (auto hoặc từ inbox), trong cùng transaction,
+`BankPostingService.syncReportedBalances` lấy observation mới nhất của các ví
+vừa chạm (ví đích, và ví bên kia nếu là transfer), tính drift như cũ
+(`reported − ledger sau ME − Σ asset_update sau ME`, `domain/wallet-drift.ts`)
+và nếu ≠ 0 thì `AssetsService.syncWalletBalance` ghi một `asset_update` (note
+"Đồng bộ số dư ngân hàng") đưa ví về đúng số ngân hàng.
+
+- Chỉ đồng bộ khi **post**, không đồng bộ khi event vào REVIEW/UNMAPPED: đồng bộ
+  trước rồi post sau sẽ cộng khoản đó hai lần cho tới thông báo kế tiếp.
+- Luôn dùng observation **mới nhất** của ví, không phải của event vừa post, nên
+  post muộn một event cũ trong inbox không kéo số dư lùi về quá khứ.
+- `insertRevaluationEvent` ghi `created_at = clock_timestamp()`: ME và
+  `asset_update` cùng transaction đều có `now()` bằng nhau, khi đó `Σ asset_update
+  sau ME` bỏ sót lần đồng bộ và lần sau sẽ trừ lệch thêm một lần.
+- Techcombank không có giờ giao dịch: thứ tự trong ngày có thể sai, chấp nhận —
+  thông báo kế tiếp sẽ sửa lại.
 
 ## Trust model
 

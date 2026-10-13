@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { BillingModule } from '../billing/billing.module';
+import { AssetsModule } from '../assets/assets.module';
 import { MoneyEventsModule } from '../money-events/money-events.module';
 import { CashflowEventsModule } from '../cashflow-events/cashflow-events.module';
 import { BankIngestController } from './controllers/bank-ingest.controller';
@@ -19,6 +20,7 @@ import { BankSourcesService } from './services/bank-sources.service';
   imports: [
     CommonModule,
     BillingModule,
+    AssetsModule,
     MoneyEventsModule,
     CashflowEventsModule,
   ],

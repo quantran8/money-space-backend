@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { CacheInvalidator } from '../../../common/cache/cache-invalidator.service';
 import { isUniqueViolation } from '../../../common/repositories/prisma-errors';
+import { AssetsService } from '../../assets/assets.service';
 import { MoneyEventsService } from '../../money-events/money-events.service';
 import { CashflowSettlementService } from '../../cashflow-events/services/cashflow-settlement.service';
 import type {
@@ -15,6 +16,7 @@ import type {
 } from '../entities/bank-sync.entity';
 import { moneyEventNote } from '../domain/money-event-note';
 import { vnIsoDate } from '../domain/vn-time';
+import { toWalletDrift } from '../domain/wallet-drift';
 import { isPostableWallet } from '../domain/wallet';
 import { BANK_SYNC_REPOSITORY } from '../repositories/bank-sync.repository.interface';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
@@ -49,6 +51,7 @@ export class BankPostingService {
     private readonly moneyEvents: MoneyEventsService,
     private readonly cache: CacheInvalidator,
     private readonly settlement: CashflowSettlementService,
+    private readonly assets: AssetsService,
   ) {}
 
   /**
@@ -85,16 +88,19 @@ export class BankPostingService {
               'Target asset is not an active wallet.',
             );
           }
-          if (
-            await this.postTransfer(
-              householdId,
-              event,
-              peer,
+          const transferWallet = await this.postTransfer(
+            householdId,
+            event,
+            peer,
+            targetId,
+            actorId,
+            settle,
+          );
+          if (transferWallet) {
+            await this.syncReportedBalances(householdId, [
               targetId,
-              actorId,
-              settle,
-            )
-          ) {
+              transferWallet,
+            ]);
             return 'posted' as const;
           }
           const inflow = event.direction === 'IN';
@@ -140,6 +146,7 @@ export class BankPostingService {
               actorId,
             );
           }
+          await this.syncReportedBalances(householdId, [targetId]);
           return 'posted' as const;
         },
         { timeout: 30000, maxWait: 10000 },
@@ -147,6 +154,22 @@ export class BankPostingService {
     } catch (error) {
       if (isUniqueViolation(error)) return 'already_posted';
       throw error;
+    }
+  }
+
+  /** The bank's reported balance always wins. See memory/bank-sync.md (Số dư). */
+  private async syncReportedBalances(householdId: string, assetIds: string[]) {
+    const observations =
+      await this.repo.findLatestBalanceObservations(householdId);
+    for (const obs of observations) {
+      if (!assetIds.includes(obs.assetId)) continue;
+      const drift = toWalletDrift(obs);
+      if (!drift || drift.drift === 0) continue;
+      await this.assets.syncWalletBalance(
+        householdId,
+        obs.assetId,
+        drift.suggestedValue,
+      );
     }
   }
 
@@ -177,7 +200,7 @@ export class BankPostingService {
     targetId: string,
     actorId: string,
     settle: PostSettle | undefined,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const inflow = event.direction === 'IN';
     // An ignored leg no longer vouches for the wallet on its side.
     const peer = leg?.status === 'IGNORED' ? null : leg;
@@ -190,16 +213,20 @@ export class BankPostingService {
         targetId,
       );
       await this.markProcessed(event.id, targetId, actorId, TRANSFER_PAIRED);
-      return true;
+      const posted = await this.moneyEvents.getMoneyEvent(
+        householdId,
+        peer.moneyEventId,
+      );
+      return (inflow ? posted.fromAssetId : posted.toAssetId) ?? null;
     }
     const otherId = peer
       ? peer.matchedAssetId
       : await this.counterpartWallet(householdId, event);
-    if (!otherId || otherId === targetId) return false;
+    if (!otherId || otherId === targetId) return null;
     if (!isPostableWallet(await this.repo.findWallet(householdId, otherId))) {
       if (peer)
         throw new BadRequestException('Transfer leg wallet is not active.');
-      return false;
+      return null;
     }
     if (settle) throw new BadRequestException(TRANSFER_NO_SETTLE);
     const out = inflow ? peer : event;
@@ -227,7 +254,7 @@ export class BankPostingService {
     if (peer) {
       await this.markProcessed(peer.id, otherId, actorId, TRANSFER_PAIRED);
     }
-    return true;
+    return otherId;
   }
 
   /** The other leg already posted: reuse its money event, turning it into a transfer if needed. */
@@ -255,7 +282,10 @@ export class BankPostingService {
     await this.moneyEvents.updateMoneyEvent(householdId, moneyEventId, {
       type: 'transfer',
       direction: 'neutral',
-      categoryId: await this.moneyEvents.systemCategoryId(householdId, 'other'),
+      categoryId: await this.moneyEvents.systemCategoryId(
+        householdId,
+        'transfer',
+      ),
       fromAssetId: inflow ? otherSide : targetId,
       toAssetId: inflow ? targetId : otherSide,
     });

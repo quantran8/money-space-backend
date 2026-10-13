@@ -958,6 +958,23 @@ export class AssetsService {
     return this.toAssetRecord(next, currentValue);
   }
 
+  /** Sets a wallet to the bank-reported balance. See memory/bank-sync.md (Số dư). */
+  async syncWalletBalance(householdId: string, assetId: string, value: number) {
+    const current = await this.ensureAsset(householdId, assetId);
+    const next: Asset = { ...current, manualValue: value };
+    const oldValue = await this.computeValueAsync(current);
+    await this.prisma.runInTransaction(async () => {
+      await this.assetsRepository.updateAsset(assetId, next);
+      const context = await this.logRevaluation(
+        next,
+        oldValue,
+        await this.computeValueAsync(next),
+        'Đồng bộ số dư ngân hàng',
+      );
+      await this.upsertCurrentValuation(next, context);
+    });
+  }
+
   /**
    * Buy more of a position the household already holds.
    *

@@ -179,7 +179,7 @@ export class PrismaAssetsRepository
       INSERT INTO money_events
         (id, household_id, description, event_type, category_id, amount,
          fee_amount, currency, event_date, direction, to_asset_id,
-         created_by, updated_at)
+         created_by, updated_at, created_at)
       SELECT
         ${event.id}::uuid,
         h.id,
@@ -195,7 +195,9 @@ export class PrismaAssetsRepository
         'neutral'::"MoneyDirection",
         ${event.assetId}::uuid,
         h.created_by,
-        now()
+        now(),
+        -- Later than a money event inserted earlier in the same transaction; wallet drift relies on it.
+        clock_timestamp()
       FROM households h
       WHERE h.id = ${event.householdId}::uuid
         AND h.deleted_at IS NULL

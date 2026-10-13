@@ -1,5 +1,6 @@
 import type { CacheInvalidator } from '../../../common/cache/cache-invalidator.service';
 import type { CashflowSettlementService } from '../../cashflow-events/services/cashflow-settlement.service';
+import type { AssetsService } from '../../assets/assets.service';
 import type { MoneyEventsService } from '../../money-events/money-events.service';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import { BankPostingService, moneyEventNote } from './bank-posting.service';
@@ -48,7 +49,9 @@ function setup(
       .mockResolvedValue({ id: 'src-tcb', status: 'ACTIVE' }),
     findLinksAt: jest.fn().mockResolvedValue([{ assetId: 'wallet-tcb' }]),
     updateEvent: jest.fn().mockResolvedValue(undefined),
+    findLatestBalanceObservations: jest.fn().mockResolvedValue([]),
   };
+  const assets = { syncWalletBalance: jest.fn().mockResolvedValue(undefined) };
   const moneyEvents = {
     systemCategoryId: jest.fn().mockResolvedValue('cat-income'),
     createMoneyEvent: jest.fn().mockResolvedValue({ id: 'me-1' }),
@@ -69,8 +72,9 @@ function setup(
     moneyEvents as unknown as MoneyEventsService,
     cache as unknown as CacheInvalidator,
     settlement as unknown as CashflowSettlementService,
+    assets as unknown as AssetsService,
   );
-  return { repo, moneyEvents, settlement, service };
+  return { repo, moneyEvents, settlement, assets, service };
 }
 
 describe('BankPostingService.post with settlement', () => {
@@ -334,5 +338,43 @@ describe('BankPostingService.post own-account transfer', () => {
         via: 'manual_link',
       }),
     ).rejects.toThrow('transfer');
+  });
+});
+
+describe('BankPostingService.post balance sync', () => {
+  const observation = (assetId: string, reported: number, ledger: number) => ({
+    assetId,
+    assetName: 'VCB',
+    bankEventId: 'evt-1',
+    reportedBalance: reported,
+    observedAt: new Date(),
+    timeSource: null,
+    ledgerBalance: ledger,
+    currentValue: ledger,
+    adjustedSince: 0,
+  });
+
+  it('sets the wallet to the bank-reported balance after posting', async () => {
+    const { service, repo, assets } = setup();
+    repo.findLatestBalanceObservations.mockResolvedValue([
+      observation('wallet-1', 5000, 4200),
+      observation('wallet-other', 100, 0),
+    ]);
+    await service.post('hh-1', 'evt-1', 'user-1');
+    expect(assets.syncWalletBalance).toHaveBeenCalledTimes(1);
+    expect(assets.syncWalletBalance).toHaveBeenCalledWith(
+      'hh-1',
+      'wallet-1',
+      5000,
+    );
+  });
+
+  it('leaves an agreeing wallet alone', async () => {
+    const { service, repo, assets } = setup();
+    repo.findLatestBalanceObservations.mockResolvedValue([
+      observation('wallet-1', 4200, 4200),
+    ]);
+    await service.post('hh-1', 'evt-1', 'user-1');
+    expect(assets.syncWalletBalance).not.toHaveBeenCalled();
   });
 });
