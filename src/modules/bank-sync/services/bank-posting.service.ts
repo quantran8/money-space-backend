@@ -215,7 +215,7 @@ export class BankPostingService {
         direction: 'neutral',
         categoryId: await this.moneyEvents.systemCategoryId(
           householdId,
-          'other',
+          'transfer',
         ),
         fromAssetId: inflow ? otherId : targetId,
         toAssetId: inflow ? targetId : otherId,

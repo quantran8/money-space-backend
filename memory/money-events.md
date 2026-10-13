@@ -85,6 +85,15 @@ movement, saving-deposit interest, an asset purchase or sale — resolve a SYSTE
 category by code through `systemCategoryId(householdId, code)` rather than
 writing a literal, since a code is no longer a storable value.
 
+**Transfer category.** A transfer (move between the household's own wallets)
+has no picker — the form hides it. The backend fills it: a `transfer` event
+created without `categoryId` gets the SYSTEM category `transfer` (seeded in
+migration `20261013150000_transfer_category`, which also re-tagged bank-sync
+transfers that had been filed under `other`). The client sends `categoryId:
+undefined` for a transfer so the household's default category never leaks into
+it, and filters code `transfer` (`TRANSFER_CATEGORY_CODE`) out of the event and
+cashflow pickers — it is not a choice for an expense/income.
+
 **Category UI (not free-text).** The record form's "Danh mục" field is a
 `<Select>` whose option values are category **ids** (what an event stores),
 sourced from the
