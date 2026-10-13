@@ -127,6 +127,18 @@ export interface BankSyncRepository {
     from: Date;
     to: Date;
   }): Promise<BankNotificationEvent | null>;
+  /** Wider window, but only a leg already tied to `walletId`. See memory/bank-sync.md (Ghép muộn). */
+  findLateTransferPeer(params: {
+    householdId: string;
+    eventId: string;
+    direction: string;
+    amountMinor: number;
+    sourceId: string;
+    counterpartSourceId: string | null;
+    walletId: string;
+    from: Date;
+    to: Date;
+  }): Promise<BankNotificationEvent | null>;
   /** False when either event is already paired. */
   pairTransfer(aId: string, bId: string): Promise<boolean>;
   purgeExpiredRaw(now: Date, limit: number): Promise<number>;

@@ -86,17 +86,8 @@ một lần, theo số thật của ngân hàng.
 
 ## Lệch số dư
 
-Số dư ví vẫn là ledger replay. `reported_balance_minor` của bank event chỉ dùng
-để **phát hiện lệch**, so với `asset_valuations.value` gắn đúng ME của event đó
-(số dư ledger ngay sau giao dịch). Hiển thị, kèm một nút điều chỉnh bằng
-`asset_update` — không bao giờ tự sửa. Techcombank không có giờ giao dịch nên
-thứ tự trong cùng ngày có thể sai; vì thế chỉ là cảnh báo.
-
-Điểm valuation gắn ME là số **lịch sử**, không đổi khi user bấm điều chỉnh sau
-đó — nên drift = `reported − ledger − Σ asset_update` của ví ghi **sau** ME đó
-(theo `created_at`). Thiếu phần trừ này thì cảnh báo không bao giờ tắt (bug
-2026-10-13). Hệ quả: mọi chỉnh tay `manualValue` sau bank event đều được coi là
-đối soát.
+Tự đồng bộ theo số dư ngân hàng khi post, không còn cảnh báo — xem
+[[bank-sync]] (mục Số dư).
 
 ## Auto post khi đã khớp
 
@@ -118,7 +109,7 @@ Chưa ghi activity log cho settle/unsettle: provenance nằm trên ME
 - `src/modules/cashflow-events/services/cashflow-settlement.service.ts`,
   `cashflow-matcher.service.ts`
 - `src/modules/cashflow-events/domain/note-match.ts` (matcher thuần)
-- `src/modules/bank-sync/domain/wallet-drift.ts`, `GET …/bank-sync/wallet-drift`
+- `src/modules/bank-sync/domain/wallet-drift.ts` (dùng bởi `BankPostingService`)
 - Endpoints dưới `…/cashflow-events/:eventId/`: `link`, `unlink`,
   `replace-manual`, `link-candidates`, `settlements`, `match-rules`;
   `GET …/cashflow-events/match-rules` (cả household, cho màn Cài đặt),

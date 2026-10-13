@@ -100,11 +100,6 @@ export class BankSyncController {
     return this.events.list(m.householdId, query);
   }
 
-  @Get('wallet-drift')
-  walletDrift(@CurrentMembership() m: HouseholdMembership) {
-    return this.events.walletDrift(m.householdId);
-  }
-
   @Get('events/counts')
   countEvents(@CurrentMembership() m: HouseholdMembership) {
     return this.events.counts(m.householdId);

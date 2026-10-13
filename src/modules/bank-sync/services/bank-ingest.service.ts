@@ -42,6 +42,7 @@ const SAME_PAYLOAD_WINDOW = 24 * 60 * MINUTE;
 const SIMILAR_WINDOW = 10 * MINUTE;
 const LINK_CHANGE_WINDOW = 10 * MINUTE;
 const TRANSFER_PAIR_WINDOW = MINUTE;
+const LATE_TRANSFER_PAIR_WINDOW = 24 * 60 * MINUTE;
 
 export interface IngestOutcome {
   /** Null when nothing was stored. */
@@ -188,7 +189,70 @@ export class BankIngestService {
       allowAuto: true,
       actorId: ctx.userId,
     });
-    return { eventId: event.id, status, replayed: false };
+    return {
+      eventId: event.id,
+      status: await this.closeTransferRace(event, ctx.userId, status),
+      replayed: false,
+    };
+  }
+
+  /** Two legs routed at once miss each other; re-check after the status is final. See memory/bank-sync.md (Race). */
+  private async closeTransferRace(
+    routed: BankNotificationEvent,
+    actorId: string,
+    status: BankEventStatus,
+  ): Promise<BankEventStatus> {
+    const event = await this.repo.findEvent(routed.householdId, routed.id);
+    if (
+      !event ||
+      event.transferPeerEventId ||
+      !event.sourceId ||
+      !event.matchedAssetId ||
+      event.amountMinor === null ||
+      !event.direction
+    ) {
+      return status;
+    }
+    const waiting =
+      event.status === 'REVIEW' && event.statusReason === OUT_UNVERIFIED;
+    const posted =
+      event.status === 'PROCESSED' && event.moneyEventType === 'transfer';
+    if (!waiting && !posted) return status;
+    const at = event.transactionAt ?? event.notificationAt ?? event.receivedAt;
+    const peer = await this.repo.findLateTransferPeer({
+      householdId: event.householdId,
+      eventId: event.id,
+      direction: event.direction,
+      amountMinor: event.amountMinor,
+      sourceId: event.sourceId,
+      counterpartSourceId: event.counterpartSourceId,
+      walletId: event.matchedAssetId,
+      from: new Date(at.getTime() - LATE_TRANSFER_PAIR_WINDOW),
+      to: new Date(at.getTime() + LATE_TRANSFER_PAIR_WINDOW),
+    });
+    // A posted leg only closes a waiting one; two posted transfers stay apart.
+    if (!peer || (posted && peer.status !== 'REVIEW')) return status;
+    if (!(await this.repo.pairTransfer(event.id, peer.id))) return status;
+    try {
+      await this.posting.post(
+        event.householdId,
+        waiting ? event.id : peer.id,
+        actorId,
+      );
+    } catch (error) {
+      this.logger.error(
+        `bank transfer pair close failed id=${event.id}: ${(error as Error).message}`,
+      );
+      return status;
+    }
+    return waiting ? 'PROCESSED' : status;
+  }
+
+  /** Before an inbox post: pair a leg whose peer arrived outside the route's reach. */
+  async pairTransferLeg(event: BankNotificationEvent, walletId: string) {
+    if (event.transferPeerEventId || !event.sourceId) return;
+    const at = event.transactionAt ?? event.notificationAt ?? event.receivedAt;
+    await this.resolveTransfer(event, event.sourceId, walletId, at);
   }
 
   /** Re-run the parser over the stored raw payload. Never auto-posts. */
@@ -447,16 +511,26 @@ export class BankIngestService {
       );
       return { counterpart, peer };
     }
-    const peer = await this.repo.findTransferPeer({
+    const query = {
       householdId: event.householdId,
       eventId: event.id,
       direction: event.direction,
       amountMinor: event.amountMinor,
       sourceId,
       counterpartSourceId: counterpart?.sourceId ?? null,
-      from: new Date(at.getTime() - TRANSFER_PAIR_WINDOW),
-      to: new Date(at.getTime() + TRANSFER_PAIR_WINDOW),
-    });
+    };
+    const peer =
+      (await this.repo.findTransferPeer({
+        ...query,
+        from: new Date(at.getTime() - TRANSFER_PAIR_WINDOW),
+        to: new Date(at.getTime() + TRANSFER_PAIR_WINDOW),
+      })) ??
+      (await this.repo.findLateTransferPeer({
+        ...query,
+        walletId,
+        from: new Date(at.getTime() - LATE_TRANSFER_PAIR_WINDOW),
+        to: new Date(at.getTime() + LATE_TRANSFER_PAIR_WINDOW),
+      }));
     if (!peer || !(await this.repo.pairTransfer(event.id, peer.id))) {
       return { counterpart, peer: null };
     }

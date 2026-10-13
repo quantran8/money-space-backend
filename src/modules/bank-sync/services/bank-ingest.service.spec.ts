@@ -65,6 +65,7 @@ function setup() {
     findEvent: jest.fn().mockResolvedValue(null),
     findSourcesByHmacs: jest.fn().mockResolvedValue([]),
     findTransferPeer: jest.fn().mockResolvedValue(null),
+    findLateTransferPeer: jest.fn().mockResolvedValue(null),
     pairTransfer: jest.fn().mockResolvedValue(true),
   };
   const posting = { post: jest.fn().mockResolvedValue('posted') };
@@ -416,6 +417,100 @@ describe('BankIngestService own-account transfer', () => {
     const out = await service.ingest(CTX, VCB_FROM_TCB);
     expect(out.status).toBe('PROCESSED');
     expect(posting.post).toHaveBeenCalled();
+  });
+
+  it('closes a late OUT against the transfer its IN leg already posted', async () => {
+    const { service, repo, posting } = setup();
+    repo.findLateTransferPeer.mockResolvedValue({
+      ...PEER,
+      sourceId: 'src-vcb',
+      moneyEventId: 'me-0',
+      moneyEventType: 'transfer',
+    });
+    const out = await service.ingest(CTX, TCB_OUT);
+    expect(repo.findLateTransferPeer).toHaveBeenCalledWith(
+      expect.objectContaining({ direction: 'OUT', walletId: 'wallet-1' }),
+    );
+    expect(repo.pairTransfer).toHaveBeenCalledWith('evt-1', 'evt-peer');
+    expect(out.status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenCalled();
+  });
+
+  describe('legs routed at the same moment', () => {
+    const ROUTED = {
+      id: 'evt-1',
+      householdId: 'hh-1',
+      sourceId: 'src-tcb',
+      matchedAssetId: 'wallet-tcb',
+      counterpartSourceId: null,
+      transferPeerEventId: null,
+      amountMinor: 2000,
+      transactionAt: null,
+      notificationAt: null,
+      receivedAt: new Date(),
+    };
+
+    it('closes a waiting OUT once the IN leg has posted the transfer', async () => {
+      const { service, repo, posting } = setup();
+      repo.findEvent.mockResolvedValue({
+        ...ROUTED,
+        direction: 'OUT',
+        status: 'REVIEW',
+        statusReason: 'OUT_UNVERIFIED',
+        moneyEventType: null,
+      });
+      repo.findLateTransferPeer
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          ...PEER,
+          sourceId: 'src-vcb',
+          moneyEventId: 'me-0',
+          moneyEventType: 'transfer',
+        });
+      const out = await service.ingest(CTX, TCB_OUT);
+      expect(repo.pairTransfer).toHaveBeenCalledWith('evt-1', 'evt-peer');
+      expect(posting.post).toHaveBeenCalledWith('hh-1', 'evt-1', 'user-1');
+      expect(out.status).toBe('PROCESSED');
+    });
+
+    it('closes the waiting OUT from the IN that posted the transfer', async () => {
+      const { service, repo, posting } = setup();
+      repo.findEvent.mockResolvedValue({
+        ...ROUTED,
+        direction: 'IN',
+        status: 'PROCESSED',
+        statusReason: null,
+        moneyEventType: 'transfer',
+      });
+      repo.findLateTransferPeer.mockResolvedValue({
+        ...PEER,
+        status: 'REVIEW',
+        statusReason: 'OUT_UNVERIFIED',
+        moneyEventId: null,
+      });
+      await service.ingest(CTX, VCB());
+      expect(posting.post).toHaveBeenLastCalledWith('hh-1', 'evt-peer', 'user-1');
+    });
+
+    it('never pairs two posted transfers', async () => {
+      const { service, repo } = setup();
+      repo.findEvent.mockResolvedValue({
+        ...ROUTED,
+        direction: 'IN',
+        status: 'PROCESSED',
+        statusReason: null,
+        moneyEventType: 'transfer',
+      });
+      repo.findLateTransferPeer
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          ...PEER,
+          moneyEventId: 'me-0',
+          moneyEventType: 'transfer',
+        });
+      await service.ingest(CTX, VCB());
+      expect(repo.pairTransfer).not.toHaveBeenCalled();
+    });
   });
 
   it('treats a lost pairing race as no peer', async () => {

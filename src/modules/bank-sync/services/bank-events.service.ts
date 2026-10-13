@@ -14,7 +14,6 @@ import type { BankSyncRepository } from '../repositories/bank-sync.repository.in
 import { BankIngestService } from './bank-ingest.service';
 import { BankPostingService, type PostSettle } from './bank-posting.service';
 import { moneyEventNote } from '../domain/money-event-note';
-import { toWalletDrift, type WalletDrift } from '../domain/wallet-drift';
 
 const ALL_STATUSES: readonly BankEventStatus[] = [
   'RECEIVED',
@@ -130,21 +129,16 @@ export class BankEventsService {
               cashflowEventId: dto.cashflowEventId,
               via: 'manual_link',
             };
+      const walletId = dto.assetId ?? event.matchedAssetId;
+      if (!settle && walletId) {
+        await this.ingest.pairTransferLeg(event, walletId);
+      }
       await this.posting.post(householdId, id, userId, dto.assetId, settle);
       return this.get(householdId, id);
     }
     throw new BadRequestException(
       'action must be post, replace_manual or ignore.',
     );
-  }
-
-  /** Read-only: never applied automatically. See memory/cashflow-settlement.md. */
-  async walletDrift(householdId: string) {
-    const observations =
-      await this.repo.findLatestBalanceObservations(householdId);
-    return observations
-      .map(toWalletDrift)
-      .filter((drift): drift is WalletDrift => drift !== null);
   }
 
   async reparse(householdId: string, userId: string, id: string) {
