@@ -68,6 +68,7 @@ function setup() {
     pairTransfer: jest.fn().mockResolvedValue(true),
     hasOtherLinkedSource: jest.fn().mockResolvedValue(false),
     claimHeldEvent: jest.fn().mockResolvedValue(true),
+    claimStaleReceived: jest.fn().mockResolvedValue(true),
   };
   const posting = { post: jest.fn().mockResolvedValue('posted') };
   const matcher = {
@@ -255,6 +256,53 @@ describe('BankIngestService.ingest', () => {
       await service.releaseHeld('hh-1', 'evt-1');
       expect(repo.findEvent).not.toHaveBeenCalled();
       expect(posting.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('recoverStale', () => {
+    const STALE = {
+      id: 'evt-1',
+      householdId: 'hh-1',
+      userId: 'user-1',
+      providerCode: 'VCB',
+      identifierHmac: 'h',
+      amountMinor: 150000,
+      direction: 'IN',
+      transactionAt: new Date(),
+      notificationAt: null,
+      receivedAt: new Date(),
+      status: 'FAILED',
+      statusReason: 'INTERRUPTED',
+      transferPeerEventId: null,
+      moneyEventId: null,
+      parserVersion: 'vcb@1',
+      rawPayloadCiphertext: null,
+    };
+
+    it('routes a parsed event to the inbox, never auto-posting', async () => {
+      const { service, repo, posting, lastStatus } = setup();
+      repo.findEvent.mockResolvedValue(STALE);
+      await service.recoverStale('hh-1', 'evt-1');
+      expect(repo.claimStaleReceived).toHaveBeenCalledWith('evt-1');
+      expect(posting.post).not.toHaveBeenCalled();
+      expect(lastStatus()).toMatchObject({
+        status: 'REVIEW',
+        statusReason: 'MANUAL_MODE',
+      });
+    });
+
+    it('leaves an unparsed event without raw payload as INTERRUPTED', async () => {
+      const { service, repo, updates } = setup();
+      repo.findEvent.mockResolvedValue({ ...STALE, parserVersion: null });
+      await service.recoverStale('hh-1', 'evt-1');
+      expect(updates).toHaveLength(0);
+    });
+
+    it('does nothing when another sweep claimed it', async () => {
+      const { service, repo } = setup();
+      repo.claimStaleReceived.mockResolvedValue(false);
+      await service.recoverStale('hh-1', 'evt-1');
+      expect(repo.findEvent).not.toHaveBeenCalled();
     });
   });
 

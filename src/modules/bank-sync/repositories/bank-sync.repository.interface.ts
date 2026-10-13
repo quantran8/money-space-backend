@@ -141,5 +141,12 @@ export interface BankSyncRepository {
   ): Promise<Array<{ id: string; householdId: string }>>;
   /** False when the hold was already released or the leg was paired. */
   claimHeldEvent(id: string): Promise<boolean>;
+  /** Events whose ingest died before routing settled them. */
+  findStaleReceived(
+    before: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; householdId: string }>>;
+  /** False when another sweep already took it. */
+  claimStaleReceived(id: string): Promise<boolean>;
   purgeExpiredRaw(now: Date, limit: number): Promise<number>;
 }

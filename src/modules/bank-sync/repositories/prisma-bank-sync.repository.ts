@@ -54,6 +54,9 @@ const NOT_HELD: Prisma.BankNotificationEventWhereInput = {
   ],
 };
 
+// A claimed event lands in the inbox if routing dies before it settles. See memory/bank-sync.md.
+const INTERRUPTED = { status: 'FAILED', statusReason: 'INTERRUPTED' } as const;
+
 /** Statuses an inbox still has to act on. */
 const OPEN_STATUSES: BankEventStatus[] = [
   'UNMAPPED',
@@ -601,7 +604,28 @@ export class PrismaBankSyncRepository
   async claimHeldEvent(id: string) {
     const { count } = await this.prisma.bankNotificationEvent.updateMany({
       where: { id, status: 'REVIEW', statusReason: TRANSFER_AWAITING_PEER },
-      data: { status: 'RECEIVED', statusReason: null },
+      data: INTERRUPTED,
+    });
+    return count === 1;
+  }
+
+  findStaleReceived(before: Date, limit: number) {
+    return this.prisma.bankNotificationEvent.findMany({
+      where: {
+        status: 'RECEIVED',
+        statusReason: null,
+        receivedAt: { lt: before },
+      },
+      orderBy: { receivedAt: 'asc' },
+      take: limit,
+      select: { id: true, householdId: true },
+    });
+  }
+
+  async claimStaleReceived(id: string) {
+    const { count } = await this.prisma.bankNotificationEvent.updateMany({
+      where: { id, status: 'RECEIVED' },
+      data: INTERRUPTED,
     });
     return count === 1;
   }

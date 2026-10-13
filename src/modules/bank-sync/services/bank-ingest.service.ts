@@ -208,6 +208,18 @@ export class BankIngestService {
     await this.route(event, { allowAuto: true, actorId: event.userId });
   }
 
+  /** Re-routes an event whose ingest died mid-way; lands in the inbox at most. */
+  async recoverStale(householdId: string, eventId: string): Promise<void> {
+    if (!(await this.repo.claimStaleReceived(eventId))) return;
+    const event = await this.repo.findEvent(householdId, eventId);
+    if (!event || event.moneyEventId) return;
+    if (event.parserVersion) {
+      await this.route(event, { allowAuto: false, actorId: event.userId });
+    } else if (event.rawPayloadCiphertext) {
+      await this.reparse(event, event.userId);
+    }
+  }
+
   private scheduleRelease(householdId: string, eventId: string): void {
     setTimeout(() => {
       this.releaseHeld(householdId, eventId).catch((error: unknown) =>

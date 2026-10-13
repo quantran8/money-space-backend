@@ -198,10 +198,23 @@ không có số TK bên nhận (đã kiểm 5/5 mẫu thật), nên lúc OUT đ�
 chuyển nội bộ hay chi tiêu. Ingest live: OUT chưa có peer, household còn source
 `ACTIVE` khác có link mở → REVIEW `TRANSFER_AWAITING_PEER`. Trong 10s, chân IN
 đến sẽ ghép và post transfer (đường thường, hoặc `closeTransferRace`). Hết 10s
-`releaseHeld` claim nguyên tử (`REVIEW/TRANSFER_AWAITING_PEER` → `RECEIVED`) rồi
-route lại không giữ → OUT thường (AUTO thì tự ghi expense). IN đến muộn hơn vẫn
+`releaseHeld` claim nguyên tử (`REVIEW/TRANSFER_AWAITING_PEER` → `FAILED/INTERRUPTED`)
+rồi route lại không giữ → OUT thường (AUTO thì tự ghi expense). IN đến muộn hơn vẫn
 ghép được: peer có expense → đổi thành transfer. Hẹn giờ là `setTimeout`
 trong process; `BankTransferHoldCron` (30s) quét event giữ quá 30s phòng restart.
+
+**Không event nào được kẹt vô hình** (2026-10-13). Trước đây claim chuyển về
+`RECEIVED`; route throw hoặc process chết giữa chừng thì event nằm ở `RECEIVED`
+mãi — cron không quét, inbox không hiện (`RECEIVED` không thuộc OPEN), Phím tắt
+gửi lại cũng chỉ nhận `replayed`. Nay:
+- Claim chuyển sang `FAILED/INTERRUPTED` — trạng thái inbox hiện và cho ghi tay.
+  Route chạy xong sẽ ghi đè bằng trạng thái thật.
+- Cùng cron quét `RECEIVED` (lý do NULL) quá **5 phút** (ingest chết giữa
+  `insertEvent` và lúc chốt): claim sang `FAILED/INTERRUPTED`, rồi đã parse thì
+  route với `allowAuto: false`, chưa parse mà còn raw thì `reparse`. Kết quả cao
+  nhất là REVIEW — không tự post thứ người dùng chưa thấy. Hết raw thì để
+  `INTERRUPTED` cho người dùng xử lý.
+- Hai lượt quét không lọc household, dùng index `(status, status_reason, received_at)`.
 Household chỉ một source thì không giữ. Event cũ chạy lại sau liên kết không giữ.
 Event đang giữ **không hiện** trong inbox (danh sách, bộ đếm) và không là ứng
 viên bằng chứng settle cashflow cho tới khi được thả.
