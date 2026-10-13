@@ -179,8 +179,9 @@ export function mapAsset(row: DbRow, position?: DbRow, term?: DbRow): Asset {
     note: row.note ?? '',
     // Defaults true, matching the column: an asset from before this existed
     // refreshes exactly as it always did.
-    autoPriceEnabled:
-      (row.autoPriceEnabled ?? row.auto_price_enabled ?? true) as boolean,
+    autoPriceEnabled: (row.autoPriceEnabled ??
+      row.auto_price_enabled ??
+      true) as boolean,
     status: row.status ?? 'active',
     // The REAL last-valued stamp. Previously every read path substituted the
     // seed constant `AS_OF`, which made every asset look equally fresh — and

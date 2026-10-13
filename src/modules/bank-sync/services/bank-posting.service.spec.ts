@@ -1,4 +1,5 @@
 import type { CacheInvalidator } from '../../../common/cache/cache-invalidator.service';
+import type { CashflowSettlementService } from '../../cashflow-events/services/cashflow-settlement.service';
 import type { MoneyEventsService } from '../../money-events/money-events.service';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import { BankPostingService, moneyEventNote } from './bank-posting.service';
@@ -32,7 +33,11 @@ function setup(event: Record<string, unknown> = EVENT) {
   };
   const moneyEvents = {
     systemCategoryId: jest.fn().mockResolvedValue('cat-income'),
-    createMoneyEvent: jest.fn().mockResolvedValue({}),
+    createMoneyEvent: jest.fn().mockResolvedValue({ id: 'me-1' }),
+  };
+  const settlement = {
+    settleExisting: jest.fn().mockResolvedValue({}),
+    replaceManualWithBank: jest.fn().mockResolvedValue({}),
   };
   const cache = {
     runInTransactionAndInvalidate: jest.fn(
@@ -43,9 +48,44 @@ function setup(event: Record<string, unknown> = EVENT) {
     repo as unknown as BankSyncRepository,
     moneyEvents as unknown as MoneyEventsService,
     cache as unknown as CacheInvalidator,
+    settlement as unknown as CashflowSettlementService,
   );
-  return { repo, moneyEvents, service };
+  return { repo, moneyEvents, settlement, service };
 }
+
+describe('BankPostingService.post with settlement', () => {
+  it('settles the chosen occurrence with the money event it just posted', async () => {
+    const { service, settlement } = setup();
+    await service.post('hh-1', 'evt-1', 'user-1', undefined, {
+      kind: 'link',
+      cashflowEventId: 'cf-1',
+      via: 'manual_link',
+    });
+    expect(settlement.settleExisting).toHaveBeenCalledWith(
+      'hh-1',
+      'cf-1',
+      'me-1',
+      'manual_link',
+      'user-1',
+      null,
+    );
+  });
+
+  it('replaces a manual completion instead of linking a second one', async () => {
+    const { service, settlement } = setup();
+    await service.post('hh-1', 'evt-1', 'user-1', undefined, {
+      kind: 'replace_manual',
+      cashflowEventId: 'cf-1',
+    });
+    expect(settlement.replaceManualWithBank).toHaveBeenCalledWith(
+      'hh-1',
+      'cf-1',
+      'me-1',
+      'user-1',
+    );
+    expect(settlement.settleExisting).not.toHaveBeenCalled();
+  });
+});
 
 describe('BankPostingService.post', () => {
   it('records income into the wallet on the Vietnam-time date', async () => {

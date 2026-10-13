@@ -8,10 +8,7 @@ export type { EntitlementSource, SubscriptionStatus, SubscriptionTier };
 
 /** Boolean capabilities. A guard can decide these on its own. */
 export type PremiumFeature =
-  | 'forecast_horizon_extended'
-  | 'history_full'
-  | 'export_data'
-  | 'bank_sync';
+  'forecast_horizon_extended' | 'history_full' | 'export_data' | 'bank_sync';
 
 /** Counted quotas. A guard cannot check these — the service must, see §B.5. */
 export type CountableQuota = 'goals' | 'whatIfPerMonth' | 'marketPricedAssets';

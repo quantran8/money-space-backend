@@ -36,7 +36,7 @@ describe('PayOS order code', () => {
     expect(codes.size).toBeGreaterThan(1);
   });
 
-  it('keeps the description within PayOS\'s 9-character cap', () => {
+  it("keeps the description within PayOS's 9-character cap", () => {
     // Longer than 9 is rejected for bank accounts not linked to PayOS.
     expect(PAYMENT_DESCRIPTION.length).toBeLessThanOrEqual(9);
   });

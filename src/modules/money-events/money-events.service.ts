@@ -18,6 +18,7 @@ import {
   deriveDirection,
   toMoneyEventCard,
 } from '../../common/utils/money-space.utils';
+import { CashflowSettlementService } from '../cashflow-events/services/cashflow-settlement.service';
 import type { CreateMoneyEventDto } from './dto/create-money-event.dto';
 import type { ListMoneyEventsQuery } from './dto/list-money-events.query';
 import type { UpdateMoneyEventDto } from './dto/update-money-event.dto';
@@ -40,6 +41,8 @@ export class MoneyEventsService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => AssetsService))
     private readonly assetsService: AssetsService,
+    @Inject(forwardRef(() => CashflowSettlementService))
+    private readonly settlement: CashflowSettlementService,
   ) {}
 
   async listMoneyEvents(householdId: string, query?: ListMoneyEventsQuery) {
@@ -646,6 +649,36 @@ export class MoneyEventsService {
     return toMoneyEventCard(next);
   }
 
+  /**
+   * Point an existing event at a cashflow event (and its debt) without moving
+   * any wallet. See memory/cashflow-settlement.md.
+   */
+  async relinkCashflow(
+    householdId: string,
+    eventId: string,
+    link: { cashflowEventId: string | null; debtId: string | null },
+  ): Promise<void> {
+    const event = await this.ensureMoneyEvent(householdId, eventId);
+    const next: MoneyEvent = {
+      ...event,
+      upcomingPaymentId: link.cashflowEventId ?? undefined,
+      debtId: link.debtId ?? undefined,
+    };
+    await this.prisma.runInTransaction(async () => {
+      if (event.debtId !== next.debtId) {
+        await this.applyDebtRepaymentEffects(householdId, event, 1);
+      }
+      await this.moneyEventsRepository.setCashflowLink(
+        eventId,
+        link.cashflowEventId,
+        link.debtId,
+      );
+      if (event.debtId !== next.debtId) {
+        await this.applyDebtRepaymentEffects(householdId, next, -1);
+      }
+    });
+  }
+
   async deleteMoneyEvent(householdId: string, eventId: string) {
     const event = await this.ensureMoneyEvent(householdId, eventId);
     // A repayment on a bank/institution debt is locked — it can't be deleted by
@@ -669,6 +702,8 @@ export class MoneyEventsService {
     );
     await this.prisma.runInTransaction(
       async () => {
+        // Reopens the occurrence this event settled. See memory/cashflow-settlement.md.
+        await this.settlement.onMoneyEventDeleting(householdId, eventId);
         await this.moneyEventsRepository.deleteMoneyEvent(eventId);
         await this.applyWalletEffects(event, 'reverse');
         await this.reverseSaleEffects(event);

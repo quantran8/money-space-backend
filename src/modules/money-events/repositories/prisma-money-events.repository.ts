@@ -267,6 +267,17 @@ export class PrismaMoneyEventsRepository
     });
   }
 
+  async setCashflowLink(
+    eventId: string,
+    cashflowEventId: string | null,
+    debtId: string | null,
+  ): Promise<void> {
+    await this.prisma.moneyEvent.update({
+      where: { id: eventId },
+      data: { cashflowEventId, debtId },
+    });
+  }
+
   async deleteMoneyEvent(eventId: string): Promise<void> {
     await this.prisma.moneyEvent.updateMany({
       where: { id: eventId },

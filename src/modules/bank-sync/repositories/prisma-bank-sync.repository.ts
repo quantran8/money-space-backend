@@ -7,6 +7,7 @@ import { PrismaRepository } from '../../../common/repositories/prisma.repository
 import { isUniqueViolation } from '../../../common/repositories/prisma-errors';
 import { uuidv7 } from '../../../common/utils/uuid';
 import { PrismaService } from '../../../database/prisma/prisma.service';
+import type { BalanceObservation } from '../domain/wallet-drift';
 import type {
   BankCredential,
   BankEventPatch,
@@ -283,6 +284,52 @@ export class PrismaBankSyncRepository
     return row ? mapEvent(row) : null;
   }
 
+  async findLatestBalanceObservations(
+    householdId: string,
+  ): Promise<BalanceObservation[]> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        asset_id: string;
+        asset_name: string;
+        current_value: Prisma.Decimal | null;
+        bank_event_id: string;
+        reported_balance_minor: bigint;
+        observed_at: Date;
+        time_source: string | null;
+        ledger_value: Prisma.Decimal | null;
+      }>
+    >`
+      SELECT DISTINCT ON (l.asset_id)
+        l.asset_id, a.name AS asset_name, a.current_value,
+        e.id AS bank_event_id, e.reported_balance_minor,
+        COALESCE(e.transaction_at, e.notification_at, e.received_at) AS observed_at,
+        e.time_source::text AS time_source,
+        v.value AS ledger_value
+      FROM bank_source_links l
+      JOIN assets a ON a.id = l.asset_id AND a.deleted_at IS NULL
+      JOIN bank_notification_events e
+        ON e.source_id = l.external_source_id
+       AND e.matched_asset_id = l.asset_id
+       AND e.status = 'PROCESSED'
+       AND e.reported_balance_minor IS NOT NULL
+      JOIN money_events m ON m.notification_event_id = e.id AND m.deleted_at IS NULL
+      LEFT JOIN asset_valuations v
+        ON v.money_event_id = m.id AND v.asset_id = l.asset_id AND v.deleted_at IS NULL
+      WHERE l.household_id = ${householdId}::uuid AND l.valid_to IS NULL
+      ORDER BY l.asset_id, observed_at DESC, e.received_at DESC
+    `;
+    return rows.map((row) => ({
+      assetId: row.asset_id,
+      assetName: row.asset_name,
+      bankEventId: row.bank_event_id,
+      reportedBalance: Number(row.reported_balance_minor),
+      observedAt: row.observed_at,
+      timeSource: row.time_source,
+      ledgerBalance: row.ledger_value === null ? null : Number(row.ledger_value),
+      currentValue: Number(row.current_value ?? 0),
+    }));
+  }
+
   async lockEvent(id: string): Promise<BankNotificationEvent | null> {
     await this.prisma
       .$queryRaw`SELECT id FROM bank_notification_events WHERE id = ${id}::uuid FOR UPDATE`;
@@ -464,6 +511,9 @@ function mapEvent(row: EventRow): BankNotificationEvent {
     receivedAt: row.receivedAt,
     processedAt: row.processedAt,
     processedById: row.processedById,
+    suggestedCashflowEventId: row.suggestedCashflowEventId,
+    matchStatus: row.matchStatus,
+    matchReason: row.matchReason,
     moneyEventId: row.moneyEvent?.id ?? null,
   };
 }

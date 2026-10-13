@@ -41,7 +41,12 @@ import { TokenVerifierService } from './token-verifier.service';
     { provide: APP_GUARD, useClass: HouseholdAccessGuard },
     { provide: APP_GUARD, useClass: EntitlementGuard },
   ],
-  exports: [AuthService, SupabaseAuthGuard, HouseholdAccessGuard, EntitlementGuard],
+  exports: [
+    AuthService,
+    SupabaseAuthGuard,
+    HouseholdAccessGuard,
+    EntitlementGuard,
+  ],
 })
 export class AuthModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

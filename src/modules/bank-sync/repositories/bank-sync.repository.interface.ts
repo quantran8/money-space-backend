@@ -10,6 +10,8 @@ import type {
   WalletRef,
 } from '../entities/bank-sync.entity';
 
+import type { BalanceObservation } from '../domain/wallet-drift';
+
 export const BANK_SYNC_REPOSITORY = Symbol('BANK_SYNC_REPOSITORY');
 
 export interface SourceWithLink extends BankExternalSource {
@@ -92,6 +94,10 @@ export interface BankSyncRepository {
     since: Date,
     excludeId: string,
   ): Promise<boolean>;
+  /** Newest processed balance report per open-linked wallet. */
+  findLatestBalanceObservations(
+    householdId: string,
+  ): Promise<BalanceObservation[]>;
   existsSimilar(params: {
     householdId: string;
     sourceId: string;

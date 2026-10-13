@@ -161,11 +161,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
     try {
       const results = await this.withTimeout(
-        this.client
-          .multi()
-          .incr(key)
-          .expire(key, ttlSeconds, 'NX')
-          .exec(),
+        this.client.multi().incr(key).expire(key, ttlSeconds, 'NX').exec(),
       );
 
       const value = results?.[0]?.[1];

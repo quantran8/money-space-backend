@@ -68,13 +68,14 @@ export function extendPeriod(input: ExtendInput): ExtendResult {
   // Rule 1.
   const stillRunning =
     currentPeriodEnd !== null && currentPeriodEnd.getTime() > now.getTime();
-  const base = stillRunning ? currentPeriodEnd! : now;
+  const base = stillRunning ? currentPeriodEnd : now;
 
   const ceiling = addDays(now, MAX_PERIOD_DAYS);
 
   if (grant.type === 'duration_days') {
     const uncapped = addDays(base, grant.days);
-    const periodEnd = uncapped.getTime() > ceiling.getTime() ? ceiling : uncapped;
+    const periodEnd =
+      uncapped.getTime() > ceiling.getTime() ? ceiling : uncapped;
 
     return {
       periodEnd,
@@ -87,7 +88,8 @@ export function extendPeriod(input: ExtendInput): ExtendResult {
   }
 
   // Rule 2: `until_date` sets a floor, never a cap.
-  const target = grant.until.getTime() > ceiling.getTime() ? ceiling : grant.until;
+  const target =
+    grant.until.getTime() > ceiling.getTime() ? ceiling : grant.until;
   if (target.getTime() <= base.getTime()) {
     return {
       periodEnd: currentPeriodEnd ?? base,

@@ -9,7 +9,11 @@ import { uuidv7 } from '../../common/utils/uuid';
 import { CacheInvalidator } from '../../common/cache/cache-invalidator.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { billingConfig } from '../../config/billing.config';
-import { PLAN_CATALOG, isPlanCode, type PlanCode } from './constants/plan-catalog';
+import {
+  PLAN_CATALOG,
+  isPlanCode,
+  type PlanCode,
+} from './constants/plan-catalog';
 import { buildPlanOffers } from './domain/plan-pricing';
 import { generateOrderCode, PAYMENT_DESCRIPTION } from './domain/order-code';
 import { verifySignature } from './domain/payos-signature';
@@ -111,7 +115,7 @@ export class PaymentsService {
         amountOriginal: offer.amountOriginal,
         discountAmount: offer.discountAmount,
         amount: offer.amount,
-        durationDays: PLAN_CATALOG[planCode as PlanCode].durationDays,
+        durationDays: PLAN_CATALOG[planCode].durationDays,
         expiresAt,
         // Frozen on the order because the webhook has no request context: by
         // the time PayOS calls back, the paywall that prompted this is gone.
@@ -198,7 +202,9 @@ export class PaymentsService {
         // An in-app purchase has no order code — it was never handed to PayOS.
         // The store's transaction id stands in, so every row in the history has
         // something a household can quote to support.
-        orderCode: order.orderCode ? String(order.orderCode) : (order.providerTxnId ?? order.id),
+        orderCode: order.orderCode
+          ? String(order.orderCode)
+          : (order.providerTxnId ?? order.id),
         status: order.status,
         planCode: order.planCode,
         amount: order.amount,
@@ -283,7 +289,8 @@ export class PaymentsService {
       return 'ignored';
     }
 
-    const order = await this.billingRepository.findPaymentOrderByCode(orderCode);
+    const order =
+      await this.billingRepository.findPaymentOrderByCode(orderCode);
     if (!order) {
       // A verified signature on an order we have never heard of. Logged rather
       // than retried — it will not become known.

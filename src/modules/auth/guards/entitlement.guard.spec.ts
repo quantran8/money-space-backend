@@ -36,9 +36,9 @@ describe('EntitlementGuard', () => {
   it('allows an undecorated route WITHOUT resolving an entitlement at all', async () => {
     const { guard, forHousehold } = makeGuard(undefined);
 
-    await expect(guard.canActivate(makeContext({ householdId: 'hh-1' }))).resolves.toBe(
-      true,
-    );
+    await expect(
+      guard.canActivate(makeContext({ householdId: 'hh-1' })),
+    ).resolves.toBe(true);
     // The whole reason this is safe to register globally: no cache read, no
     // database read, nothing but one Reflector lookup.
     expect(forHousehold).not.toHaveBeenCalled();

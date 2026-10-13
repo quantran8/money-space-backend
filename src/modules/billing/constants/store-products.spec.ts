@@ -13,13 +13,19 @@ describe('store products', () => {
   });
 
   it('resolves a product to its plan', () => {
-    expect(planCodeForProduct('oursight_premium_yearly')).toBe('premium_yearly');
-    expect(planCodeForProduct('oursight_premium_lifetime')).toBe('premium_lifetime');
+    expect(planCodeForProduct('oursight_premium_yearly')).toBe(
+      'premium_yearly',
+    );
+    expect(planCodeForProduct('oursight_premium_lifetime')).toBe(
+      'premium_lifetime',
+    );
   });
 
   /** Play appends the base plan id in some configurations. */
   it('ignores an Android base-plan suffix', () => {
-    expect(planCodeForProduct('oursight_premium_yearly:p1y')).toBe('premium_yearly');
+    expect(planCodeForProduct('oursight_premium_yearly:p1y')).toBe(
+      'premium_yearly',
+    );
   });
 
   /**

@@ -90,11 +90,13 @@ export class RedeemService {
       return fail('already_used');
     }
 
-    const subscription = await this.billingRepository.findSubscription(householdId);
+    const subscription =
+      await this.billingRepository.findSubscription(householdId);
     const result = extendPeriod({
       currentPeriodEnd: subscription?.currentPeriodEnd ?? null,
       isLifetime:
-        subscription?.tier === 'premium' && subscription.currentPeriodEnd === null,
+        subscription?.tier === 'premium' &&
+        subscription.currentPeriodEnd === null,
       now,
       grant: this.grantOf(row!),
     });
@@ -158,7 +160,9 @@ export class RedeemService {
       householdId,
       async () => {
         // Barrier 1: the code still has a slot.
-        const claimed = await this.billingRepository.claimRedeemCodeSlot(row!.id);
+        const claimed = await this.billingRepository.claimRedeemCodeSlot(
+          row!.id,
+        );
         if (!claimed) throw new ConflictException('exhausted');
 
         // Barrier 2: this household has not used this code. The unique index
@@ -195,11 +199,15 @@ export class RedeemService {
           throw new ConflictException('no_effect');
         }
 
-        await this.billingRepository.updateRedemptionOutcome(row!.id, householdId, {
-          grantedDays: result.addedDays,
-          periodEndBefore: result.periodEndBefore,
-          periodEndAfter: result.periodEnd,
-        });
+        await this.billingRepository.updateRedemptionOutcome(
+          row!.id,
+          householdId,
+          {
+            grantedDays: result.addedDays,
+            periodEndBefore: result.periodEndBefore,
+            periodEndAfter: result.periodEnd,
+          },
+        );
 
         await this.audit.record(householdId, {
           actorId: userId,
@@ -245,8 +253,12 @@ export class RedeemService {
   ): RedeemFailureReason | null {
     // A disabled code is indistinguishable from one that never existed.
     if (!row || row.status === 'disabled') return 'invalid';
-    if (row.expiresAt && row.expiresAt.getTime() <= now.getTime()) return 'expired';
-    if (row.status === 'exhausted' || row.redemptionCount >= row.maxRedemptions) {
+    if (row.expiresAt && row.expiresAt.getTime() <= now.getTime())
+      return 'expired';
+    if (
+      row.status === 'exhausted' ||
+      row.redemptionCount >= row.maxRedemptions
+    ) {
       return 'exhausted';
     }
     return null;
@@ -310,4 +322,3 @@ export class RedeemService {
     return `billing:redeem-fail:${scope}:${id}`;
   }
 }
-

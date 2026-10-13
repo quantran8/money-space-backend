@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { CommonModule } from '../../common/common.module';
 import { BillingModule } from '../billing/billing.module';
 import { MoneyEventsModule } from '../money-events/money-events.module';
+import { CashflowEventsModule } from '../cashflow-events/cashflow-events.module';
 import { BankIngestController } from './controllers/bank-ingest.controller';
 import { BankSyncController } from './controllers/bank-sync.controller';
 import { BankIngestTokenGuard } from './guards/bank-ingest-token.guard';
@@ -15,7 +16,12 @@ import { BankRawRetentionCron } from './services/bank-raw-retention.cron';
 import { BankSourcesService } from './services/bank-sources.service';
 
 @Module({
-  imports: [CommonModule, BillingModule, MoneyEventsModule],
+  imports: [
+    CommonModule,
+    BillingModule,
+    MoneyEventsModule,
+    CashflowEventsModule,
+  ],
   controllers: [BankIngestController, BankSyncController],
   providers: [
     BankCredentialsService,

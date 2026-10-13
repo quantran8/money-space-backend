@@ -11,7 +11,11 @@ import type { FinancialGoal } from './entities/financial-goal.entity';
 
 const M = 1_000_000;
 
-const WALLET = { id: 'asset-wallet', type: 'bank_account', currentValue: 100 * M };
+const WALLET = {
+  id: 'asset-wallet',
+  type: 'bank_account',
+  currentValue: 100 * M,
+};
 
 function goal(over: Partial<FinancialGoal> = {}): FinancialGoal {
   return {
@@ -51,7 +55,11 @@ function makeService(entitlement: Entitlement, goals: FinancialGoal[]) {
 
   const entitlements = new EntitlementService(
     { findSubscription: jest.fn(async () => null) } as never,
-    { get: jest.fn(async () => undefined), set: jest.fn(), del: jest.fn() } as never,
+    {
+      get: jest.fn(async () => undefined),
+      set: jest.fn(),
+      del: jest.fn(),
+    } as never,
     {} as never,
     noopAnalytics(),
   );
@@ -61,7 +69,9 @@ function makeService(entitlement: Entitlement, goals: FinancialGoal[]) {
 
   const service = new GoalsService(
     repository,
-    { runInTransaction: jest.fn(async (fn: () => Promise<unknown>) => fn()) } as never,
+    {
+      runInTransaction: jest.fn(async (fn: () => Promise<unknown>) => fn()),
+    } as never,
     { getActiveAssetRecords: jest.fn(async () => [WALLET]) } as never,
     { findGoalProgressPoints: jest.fn(async () => []) } as never,
     { findCashflowEventsByHousehold: jest.fn(async () => []) } as never,
@@ -75,7 +85,9 @@ const payload = {
   name: 'Quỹ dự phòng',
   targetAmount: 100 * M,
   priority: 'medium' as const,
-  allocations: [{ assetId: WALLET.id, kind: 'fixed' as const, allocatedAmount: 10 * M }],
+  allocations: [
+    { assetId: WALLET.id, kind: 'fixed' as const, allocatedAmount: 10 * M },
+  ],
 };
 
 describe('createFinancialGoal — the plan ceiling', () => {
@@ -94,9 +106,9 @@ describe('createFinancialGoal — the plan ceiling', () => {
       goal({ id: 'goal-2' }),
     ]);
 
-    await expect(service.createFinancialGoal('hh-1', payload)).rejects.toBeInstanceOf(
-      PremiumRequiredException,
-    );
+    await expect(
+      service.createFinancialGoal('hh-1', payload),
+    ).rejects.toBeInstanceOf(PremiumRequiredException);
     // Refused BEFORE the write, so a rejected create leaves nothing behind.
     expect(insertFinancialGoal).not.toHaveBeenCalled();
   });

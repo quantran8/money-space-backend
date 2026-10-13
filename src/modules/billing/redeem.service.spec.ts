@@ -145,8 +145,9 @@ describe('RedeemService rate limiting', () => {
 describe('RedeemService failure reasons', () => {
   it('reports a disabled code as simply invalid', async () => {
     const { service } = build({});
-    const repository = (service as unknown as { billingRepository: BillingRepository })
-      .billingRepository;
+    const repository = (
+      service as unknown as { billingRepository: BillingRepository }
+    ).billingRepository;
 
     (repository.findRedeemCode as jest.Mock).mockResolvedValueOnce({
       id: 'code-1',
@@ -170,8 +171,9 @@ describe('RedeemService failure reasons', () => {
 
   it('distinguishes an expired code, because the holder needs to know', async () => {
     const { service } = build({});
-    const repository = (service as unknown as { billingRepository: BillingRepository })
-      .billingRepository;
+    const repository = (
+      service as unknown as { billingRepository: BillingRepository }
+    ).billingRepository;
 
     (repository.findRedeemCode as jest.Mock).mockResolvedValueOnce({
       id: 'code-2',
@@ -193,8 +195,9 @@ describe('RedeemService failure reasons', () => {
 
   it('reports a code with no slots left as exhausted', async () => {
     const { service } = build({});
-    const repository = (service as unknown as { billingRepository: BillingRepository })
-      .billingRepository;
+    const repository = (
+      service as unknown as { billingRepository: BillingRepository }
+    ).billingRepository;
 
     (repository.findRedeemCode as jest.Mock).mockResolvedValueOnce({
       id: 'code-3',

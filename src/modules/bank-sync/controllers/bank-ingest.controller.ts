@@ -37,6 +37,10 @@ export class BankIngestController {
     // The guard always sets this; it narrows the type.
     const ctx = request.bankIngest!;
     const outcome = await this.ingest.ingest(ctx, dto);
+    if (outcome.status === 'NOT_TRANSACTION') {
+      response.status(200);
+      return { eventId: null, status: outcome.status };
+    }
     if (outcome.replayed) {
       response.status(200);
       return {

@@ -61,7 +61,9 @@ describe('PayOS signature', () => {
         .update(
           Object.keys(payload)
             .sort()
-            .map((key) => `${key}=${String(payload[key as keyof typeof payload])}`)
+            .map(
+              (key) => `${key}=${String(payload[key as keyof typeof payload])}`,
+            )
             .join('&'),
         )
         .digest('hex');
@@ -77,7 +79,7 @@ describe('PayOS signature', () => {
       const wholeBody = { code: '00', desc: 'success', data: payload };
 
       const overData = signPayload(payload, KEY);
-      const overBody = signPayload(wholeBody as Record<string, unknown>, KEY);
+      const overBody = signPayload(wholeBody, KEY);
 
       expect(overData).not.toBe(overBody);
       expect(verifySignature(payload, overBody, KEY)).toBe(false);

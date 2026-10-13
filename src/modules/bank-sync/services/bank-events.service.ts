@@ -12,7 +12,9 @@ import type {
 import { BANK_SYNC_REPOSITORY } from '../repositories/bank-sync.repository.interface';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import { BankIngestService } from './bank-ingest.service';
-import { BankPostingService } from './bank-posting.service';
+import { BankPostingService, type PostSettle } from './bank-posting.service';
+import { moneyEventNote } from '../domain/money-event-note';
+import { toWalletDrift, type WalletDrift } from '../domain/wallet-drift';
 
 const ALL_STATUSES: readonly BankEventStatus[] = [
   'RECEIVED',
@@ -39,6 +41,7 @@ const PAGE_MAX = 100;
 export interface ResolveEventDto {
   action?: unknown;
   assetId?: unknown;
+  cashflowEventId?: unknown;
 }
 
 @Injectable()
@@ -105,14 +108,43 @@ export class BankEventsService {
       });
       return this.get(householdId, id);
     }
-    if (dto.action === 'post') {
+    if (dto.action === 'post' || dto.action === 'replace_manual') {
       if (dto.assetId !== undefined && typeof dto.assetId !== 'string') {
         throw new BadRequestException('assetId must be a string.');
       }
-      await this.posting.post(householdId, id, userId, dto.assetId);
+      if (
+        dto.cashflowEventId !== undefined &&
+        typeof dto.cashflowEventId !== 'string'
+      ) {
+        throw new BadRequestException('cashflowEventId must be a string.');
+      }
+      if (dto.action === 'replace_manual' && !dto.cashflowEventId) {
+        throw new BadRequestException('cashflowEventId is required.');
+      }
+      const settle: PostSettle | undefined = !dto.cashflowEventId
+        ? undefined
+        : dto.action === 'replace_manual'
+          ? { kind: 'replace_manual', cashflowEventId: dto.cashflowEventId }
+          : {
+              kind: 'link',
+              cashflowEventId: dto.cashflowEventId,
+              via: 'manual_link',
+            };
+      await this.posting.post(householdId, id, userId, dto.assetId, settle);
       return this.get(householdId, id);
     }
-    throw new BadRequestException('action must be post or ignore.');
+    throw new BadRequestException(
+      'action must be post, replace_manual or ignore.',
+    );
+  }
+
+  /** Read-only: never applied automatically. See memory/cashflow-settlement.md. */
+  async walletDrift(householdId: string) {
+    const observations =
+      await this.repo.findLatestBalanceObservations(householdId);
+    return observations
+      .map(toWalletDrift)
+      .filter((drift): drift is WalletDrift => drift !== null);
   }
 
   async reparse(householdId: string, userId: string, id: string) {
@@ -169,6 +201,10 @@ function toView(e: BankNotificationEvent) {
     sourceId: e.sourceId,
     matchedAssetId: e.matchedAssetId,
     moneyEventId: e.moneyEventId,
+    note: moneyEventNote(e.providerCode, e.description),
+    suggestedCashflowEventId: e.suggestedCashflowEventId,
+    matchStatus: e.matchStatus,
+    matchReason: e.matchReason,
     canReparse: e.rawPayloadCiphertext !== null,
   };
 }

@@ -162,7 +162,8 @@ export class AuthService {
     });
 
     if (error || !data?.url) {
-      if (error) this.logger.warn(`google sign-in url failed: ${error.message}`);
+      if (error)
+        this.logger.warn(`google sign-in url failed: ${error.message}`);
       throw new InternalServerErrorException(
         'Could not create Google sign-in URL',
       );

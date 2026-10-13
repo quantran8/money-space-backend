@@ -40,6 +40,10 @@ backend DTO accepts both spellings and prefers `cashflowEventId`. It is
 deliberately **not copied when duplicating** an event — only one money event can
 settle a given cashflow event.
 
+Settlement evidence (`occurrence_date`, `settled_via/by/at`, `match_rule_id`)
+sits on the same row; deleting a money event that settles an occurrence reopens
+that occurrence (latest only, else 409). See [[cashflow-settlement]].
+
 **No `title` field.** The free-text `title` was dropped from money events — the
 **note** is now the descriptive label and `category` is the classification. The
 record form no longer has a "Nội dung" field; the note carries the description.

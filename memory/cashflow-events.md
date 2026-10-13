@@ -88,6 +88,10 @@ Two behaviours worth knowing:
 
 ## Completing an event (§18)
 
+Completion is one of three ways to settle an occurrence; the shared path, the
+`occurrence_date` evidence and bank linking live in [[cashflow-settlement]].
+The occurrence settled is always `expectedDate`, never the date the UI sends.
+
 `POST /cashflow-events/:id/complete`, one transaction:
 
 1. **Idempotency guard** — refuses if already completed, or if the series has

@@ -346,21 +346,30 @@ export class ForecastService {
     );
   }
 
-  async flexibleMoneyForRequest(householdId: string, rawHorizon?: string | number) {
+  async flexibleMoneyForRequest(
+    householdId: string,
+    rawHorizon?: string | number,
+  ) {
     return this.flexibleMoney(
       householdId,
       await this.resolveHorizon(householdId, rawHorizon),
     );
   }
 
-  async financialStateForRequest(householdId: string, rawHorizon?: string | number) {
+  async financialStateForRequest(
+    householdId: string,
+    rawHorizon?: string | number,
+  ) {
     return this.financialState(
       householdId,
       await this.resolveHorizon(householdId, rawHorizon),
     );
   }
 
-  async forecastBundleForRequest(householdId: string, rawHorizon?: string | number) {
+  async forecastBundleForRequest(
+    householdId: string,
+    rawHorizon?: string | number,
+  ) {
     return this.forecastBundle(
       householdId,
       await this.resolveHorizon(householdId, rawHorizon),

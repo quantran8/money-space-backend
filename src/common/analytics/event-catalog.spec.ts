@@ -142,9 +142,8 @@ describe('analytics event catalog', () => {
       const covered = BANNED_PROPERTY_FRAGMENTS.some((fragment) =>
         sensitive.includes(fragment),
       );
-      const isCredential = /token|password|secret|key|cookie|authorization/.test(
-        sensitive,
-      );
+      const isCredential =
+        /token|password|secret|key|cookie|authorization/.test(sensitive);
       expect(covered || isCredential).toBe(true);
     }
   });

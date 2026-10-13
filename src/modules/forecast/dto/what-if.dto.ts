@@ -73,11 +73,7 @@ export interface WhatIfRequestDto {
 
 /** Where what-if was opened from. Mirrors the client's `WhatIfSource`. */
 export type WhatIfSource =
-  | 'home'
-  | 'upcoming'
-  | 'goal'
-  | 'goal-detail'
-  | 'other';
+  'home' | 'upcoming' | 'goal' | 'goal-detail' | 'other';
 
 const WHAT_IF_SOURCES: readonly WhatIfSource[] = [
   'home',

@@ -24,8 +24,7 @@ export const PLAN_CODES = Object.keys(PLAN_CATALOG) as PlanCode[];
  * price so the two can never drift — typing 468.000đ by hand would quietly
  * become a lie the first time the monthly price moved.
  */
-export const YEARLY_REFERENCE_VND =
-  PLAN_CATALOG.premium_monthly.amountVnd * 12;
+export const YEARLY_REFERENCE_VND = PLAN_CATALOG.premium_monthly.amountVnd * 12;
 
 export function isPlanCode(value: unknown): value is PlanCode {
   return typeof value === 'string' && value in PLAN_CATALOG;

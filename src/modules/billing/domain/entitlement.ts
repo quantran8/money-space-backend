@@ -62,7 +62,8 @@ export function resolveEntitlement(
   // `currentPeriodEnd: null` on a premium row is a lifetime grant, so only a
   // row that HAS an end date can be past it.
   const lapsed =
-    row.currentPeriodEnd !== null && row.currentPeriodEnd.getTime() <= now.getTime();
+    row.currentPeriodEnd !== null &&
+    row.currentPeriodEnd.getTime() <= now.getTime();
 
   const isPremium =
     row.tier === 'premium' && row.status === 'active' && !lapsed;

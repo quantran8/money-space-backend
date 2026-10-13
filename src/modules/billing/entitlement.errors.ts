@@ -50,9 +50,7 @@ export class PremiumRequiredException extends HttpException {
 
 /** Why a trial could not be started. A code, never a sentence. */
 export type TrialRefusal =
-  | 'trial_already_used'
-  | 'already_premium'
-  | 'trial_disabled';
+  'trial_already_used' | 'already_premium' | 'trial_disabled';
 
 /**
  * 409, not 402 — the household is not being asked to pay, the trial is simply

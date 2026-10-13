@@ -101,6 +101,10 @@ export interface BankNotificationEvent {
   receivedAt: Date;
   processedAt: Date | null;
   processedById: string | null;
+  /** Note-rule suggestion. See memory/cashflow-settlement.md. */
+  suggestedCashflowEventId: string | null;
+  matchStatus: string | null;
+  matchReason: string | null;
   moneyEventId: string | null;
 }
 

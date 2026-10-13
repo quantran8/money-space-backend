@@ -37,7 +37,9 @@ function reviveRow(cached: CachedRow): SubscriptionRow | null {
 
   return {
     ...row,
-    currentPeriodEnd: row.currentPeriodEnd ? new Date(row.currentPeriodEnd) : null,
+    currentPeriodEnd: row.currentPeriodEnd
+      ? new Date(row.currentPeriodEnd)
+      : null,
     trialStartedAt: row.trialStartedAt ? new Date(row.trialStartedAt) : null,
     trialEndsAt: row.trialEndsAt ? new Date(row.trialEndsAt) : null,
   };
@@ -68,7 +70,10 @@ export class EntitlementService {
   >();
 
   /** Never throws: a household with no row is simply on the free plan. */
-  async forHousehold(householdId: string, now = new Date()): Promise<Entitlement> {
+  async forHousehold(
+    householdId: string,
+    now = new Date(),
+  ): Promise<Entitlement> {
     const row = await this.loadRow(householdId);
     return resolveEntitlement(householdId, row, now, billingConfig.trialDays);
   }

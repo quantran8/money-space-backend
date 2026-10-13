@@ -159,3 +159,30 @@ describe('providerForApp', () => {
     expect(providerForApp(app)).toBe(expected);
   });
 });
+
+describe('isBalanceMovement', () => {
+  const tcb = new TechcombankParser();
+  const vcb = new VcbParser();
+  const PROMO = {
+    title: 'Tài khoản thưởng đã được kích hoạt lại',
+    body: 'Tiếp tục khám phá các ưu đãi hấp dẫn Techcombank dành tặng bạn nhé',
+  };
+
+  it('accepts real balance movements', () => {
+    expect(tcb.isBalanceMovement(TCB_IN)).toBe(true);
+    expect(vcb.isBalanceMovement(VCB_IN)).toBe(true);
+  });
+
+  it('rejects promo and system messages', () => {
+    expect(tcb.isBalanceMovement(PROMO)).toBe(false);
+    expect(
+      vcb.isBalanceMovement({ title: 'VCB', body: 'Nhận ngay ưu đãi 50,000 VND khi mở thẻ' }),
+    ).toBe(false);
+  });
+
+  it('keeps a reformatted movement that still carries the balance line', () => {
+    expect(
+      tcb.isBalanceMovement({ title: 'Biến động số dư', body: TCB_IN.body }),
+    ).toBe(true);
+  });
+});
