@@ -141,15 +141,14 @@ notification đến cách nhau 5–10 giây (quyết định của chủ sản p
 cửa sổ hẹp để hai lần chuyển cùng số tiền liên tiếp không bị ghép chéo. Đánh
 đổi: bên đến sau quá 1 phút (máy tắt, Phím tắt chạy trễ, TCB không có giờ trong
 nội dung nên dùng giờ notification) sẽ không ghép được và cũng tự post transfer
-→ trước đây **ghi hai lần**, hoặc bên OUT kẹt REVIEW (`OUT_UNVERIFIED`) cạnh
-transfer đã post. Nay có lượt ghép muộn bên dưới.
+→ trước đây **ghi hai lần**, hoặc bên OUT kẹt REVIEW cạnh transfer đã post. Nay có lượt ghép muộn bên dưới.
 
 **Ghép muộn** (`findLateTransferPeer`, 2026-10-13): lượt 1 phút trượt thì thử lại
 với cửa sổ **24h**, nhưng chỉ nhận peer đã gắn chặt với ví của event (vẫn cần
 một bên chỉ đích danh bên kia):
 - peer `PROCESSED` có money event `transfer` (chưa settle cashflow) mà phía của
   event này (`to_asset_id` nếu IN, `from_asset_id` nếu OUT) đúng ví của event; hoặc
-- peer chưa post, REVIEW vì `OUT_UNVERIFIED`.
+- peer chưa post, REVIEW vì `TRANSFER_AWAITING_PEER` (chân OUT đang giữ).
 
 Ghép chéo hai lần chuyển cùng số tiền giữa cùng hai ví vẫn ra cùng kết quả, nên
 cửa sổ rộng không có hại ở đây. Inbox "Ghi nhận" (không kèm cashflow) cũng chạy
@@ -177,9 +176,8 @@ số dư khi đó được đồng bộ bù (mục Số dư).
   liên kết, vì không có tiền nào di chuyển.
 - Peer có income/expense cần đổi → cần `allowAuto` + link của event `AUTO`.
 - Tạo transfer mới → cần `allowAuto` + **cả hai** link `AUTO` (transfer chạm cả
-  hai ví), và nếu peer đang chờ thì chỉ khi lý do của nó là `OUT_UNVERIFIED`.
-- Có peer thì `OUT_UNVERIFIED` được bỏ qua: số tiền đã được ngân hàng kia xác
-  nhận. Chưa có peer thì vẫn giữ.
+  hai ví), và nếu peer đang chờ thì chỉ khi lý do của nó là
+  `TRANSFER_AWAITING_PEER`.
 - Không đủ điều kiện → giữ lý do REVIEW cũ; người dùng bấm Ghi nhận trong inbox
   sẽ ra transfer.
 
@@ -187,13 +185,26 @@ số dư khi đó được đồng bộ bù (mục Số dư).
 gần như cùng lúc (đo 2026-10-13, TCB → VCB: nhận cách nhau 4ms). Hai luồng route
 song song, mỗi bên tìm cặp lúc bên kia chưa ghi `matched_asset_id` /
 `counterpart_source_id` → VCB IN tự post transfer qua counterpart, TCB OUT (body
-không có số TK VCB) kẹt REVIEW `OUT_UNVERIFIED`. Sửa bằng `closeTransferRace`
+không có số TK VCB) đang giữ REVIEW `TRANSFER_AWAITING_PEER`. Sửa bằng `closeTransferRace`
 (chỉ ingest live): sau khi trạng thái đã chốt, đọc lại event và chạy
 `findLateTransferPeer` một lần nữa. Mỗi luồng *ghi xong rồi mới kiểm tra*, nên
 luồng kiểm tra sau cùng chắc chắn thấy trạng thái cuối của luồng kia. Ghép được
 thì post chân đang chờ → `TRANSFER_PAIRED`. Một chân đã post chỉ đóng chân đang
 REVIEW, không bao giờ ghép hai transfer đã post với nhau.
 Đồng bộ số dư: event `TRANSFER_PAIRED` dùng money event của peer làm mốc.
+
+**Giữ chân OUT 10 giây** (2026-10-13, quyết định của chủ sản phẩm). Body TCB OUT
+không có số TK bên nhận (đã kiểm 5/5 mẫu thật), nên lúc OUT đến không biết đó là
+chuyển nội bộ hay chi tiêu. Ingest live: OUT chưa có peer, household còn source
+`ACTIVE` khác có link mở → REVIEW `TRANSFER_AWAITING_PEER`. Trong 10s, chân IN
+đến sẽ ghép và post transfer (đường thường, hoặc `closeTransferRace`). Hết 10s
+`releaseHeld` claim nguyên tử (`REVIEW/TRANSFER_AWAITING_PEER` → `RECEIVED`) rồi
+route lại không giữ → OUT thường (AUTO thì tự ghi expense). IN đến muộn hơn vẫn
+ghép được: peer có expense → đổi thành transfer. Hẹn giờ là `setTimeout`
+trong process; `BankTransferHoldCron` (30s) quét event giữ quá 30s phòng restart.
+Household chỉ một source thì không giữ. Event cũ chạy lại sau liên kết không giữ.
+Event đang giữ **không hiện** trong inbox (danh sách, bộ đếm) và không là ứng
+viên bằng chứng settle cashflow cho tới khi được thả.
 
 ## Xử lý lại sau khi liên kết
 
@@ -208,8 +219,8 @@ là `AUTO`, vì người dùng chưa nhìn thấy chúng.
 - VCB: cụm `Số dư TK VCB <tk> ±x VND lúc dd-MM-yyyy HH:mm:ss` (giờ Việt Nam);
   số dư là cụm `Số dư x VND` **thứ hai**. `Ref` chưa được dùng làm reference.
 - Fail closed: thiếu cụm hoặc cụm khớp nhiều lần → không đoán.
-- Chiều **OUT chưa có mẫu thật** → parser hạ về `REVIEW` (`OUT_UNVERIFIED`)
-  cho tới khi có fixture đã redact. Gỡ cờ trong parser khi đã có.
+- OUT không còn bị ép REVIEW (`OUT_UNVERIFIED` đã gỡ 2026-10-13); OUT đi như IN,
+  chỉ bị giữ 10s chờ chân transfer (mục trên).
 
 ## Dữ liệu nhạy cảm (ADR)
 

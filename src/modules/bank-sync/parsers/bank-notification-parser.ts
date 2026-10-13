@@ -20,7 +20,7 @@ export interface ParsedBankEvent {
 }
 
 export type ParseResult =
-  | { ok: true; event: ParsedBankEvent; reviewReason?: string }
+  | { ok: true; event: ParsedBankEvent }
   | {
       ok: false;
       status: 'PARSE_FAILED' | 'REVIEW';
@@ -43,6 +43,3 @@ export function normalizeText(value: string): string {
     .replace(/[ \t\u00a0]+/g, ' ')
     .trim();
 }
-
-// Neither bank has a verified OUT sample yet. See memory/bank-sync.md.
-export const OUT_UNVERIFIED = 'OUT_UNVERIFIED';

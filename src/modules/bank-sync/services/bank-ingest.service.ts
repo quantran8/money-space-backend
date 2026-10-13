@@ -15,12 +15,14 @@ import type {
   BankPostingMode,
 } from '../entities/bank-sync.entity';
 import { identifierHmac, last4 } from '../domain/identifier-hmac';
-import { accountCandidates } from '../domain/transfer-counterpart';
+import {
+  TRANSFER_AWAITING_PEER,
+  accountCandidates,
+} from '../domain/transfer-counterpart';
 import { decryptPayload, encryptPayload } from '../domain/payload-cipher';
 import { isPostableWallet } from '../domain/wallet';
 import { vnIsoDate } from '../domain/vn-time';
 import type { IngestBankNotificationDto } from '../dto/ingest-bank-notification.dto';
-import { OUT_UNVERIFIED } from '../parsers/bank-notification-parser';
 import type {
   BankNotificationInput,
   ProviderCode,
@@ -42,6 +44,7 @@ const SAME_PAYLOAD_WINDOW = 24 * 60 * MINUTE;
 const LINK_CHANGE_WINDOW = 10 * MINUTE;
 const TRANSFER_PAIR_WINDOW = MINUTE;
 const LATE_TRANSFER_PAIR_WINDOW = 24 * 60 * MINUTE;
+export const TRANSFER_HOLD_MS = 10 * 1000;
 
 export interface IngestOutcome {
   /** Null when nothing was stored. */
@@ -64,7 +67,8 @@ interface RouteOptions {
   /** False for anything the user has not seen yet arriving through a back door. */
   allowAuto: boolean;
   actorId: string;
-  parserReview?: string;
+  /** Live ingest only: an OUT may wait for its transfer leg. */
+  holdOut?: boolean;
 }
 
 @Injectable()
@@ -187,12 +191,31 @@ export class BankIngestService {
     const status = await this.parseAndRoute(event, input, {
       allowAuto: true,
       actorId: ctx.userId,
+      holdOut: true,
     });
     return {
       eventId: event.id,
       status: await this.closeTransferRace(event, ctx.userId, status),
       replayed: false,
     };
+  }
+
+  /** Routes a held OUT as an ordinary event once no transfer leg claimed it. */
+  async releaseHeld(householdId: string, eventId: string): Promise<void> {
+    if (!(await this.repo.claimHeldEvent(eventId))) return;
+    const event = await this.repo.findEvent(householdId, eventId);
+    if (!event) return;
+    await this.route(event, { allowAuto: true, actorId: event.userId });
+  }
+
+  private scheduleRelease(householdId: string, eventId: string): void {
+    setTimeout(() => {
+      this.releaseHeld(householdId, eventId).catch((error: unknown) =>
+        this.logger.error(
+          `bank hold release failed id=${eventId}: ${(error as Error).message}`,
+        ),
+      );
+    }, TRANSFER_HOLD_MS).unref();
   }
 
   /** Two legs routed at once miss each other; re-check after the status is final. See memory/bank-sync.md (Race). */
@@ -213,7 +236,8 @@ export class BankIngestService {
       return status;
     }
     const waiting =
-      event.status === 'REVIEW' && event.statusReason === OUT_UNVERIFIED;
+      event.status === 'REVIEW' &&
+      event.statusReason === TRANSFER_AWAITING_PEER;
     const posted =
       event.status === 'PROCESSED' && event.moneyEventType === 'transfer';
     if (!waiting && !posted) return status;
@@ -338,13 +362,7 @@ export class BankIngestService {
         : null,
     };
     await this.repo.updateEvent(event.id, patch);
-    return this.route(
-      { ...event, ...patch },
-      {
-        ...opts,
-        parserReview: result.reviewReason,
-      },
-    );
+    return this.route({ ...event, ...patch }, opts);
   }
 
   /** Steps 5–8 of the ingest flow in memory/bank-sync.md. */
@@ -429,13 +447,16 @@ export class BankIngestService {
     if (transfer.peer?.moneyEventType === 'transfer') {
       return this.postLinked(event, linked, opts.actorId, null, settle);
     }
-    // The other bank confirmed the amount. See memory/bank-sync.md.
-    const parserReview =
-      transfer.peer && opts.parserReview === OUT_UNVERIFIED
-        ? undefined
-        : opts.parserReview;
-    if (parserReview) {
-      return settle('REVIEW', parserReview, linked);
+    // An OUT body never names the IN account; give the IN leg time to claim it. See memory/bank-sync.md.
+    if (
+      opts.holdOut &&
+      event.direction === 'OUT' &&
+      !transfer.peer &&
+      (await this.repo.hasOtherLinkedSource(event.householdId, source.id))
+    ) {
+      const held = await settle('REVIEW', TRANSFER_AWAITING_PEER, linked);
+      this.scheduleRelease(event.householdId, event.id);
+      return held;
     }
     if (!opts.allowAuto || link.postingMode !== 'AUTO') {
       return settle('REVIEW', 'MANUAL_MODE', linked);
@@ -553,7 +574,10 @@ export class BankIngestService {
   }: TransferContext): Promise<boolean> {
     if (!peer) return counterpart?.postingMode === 'AUTO';
     if (peer.moneyEventId) return true;
-    if (peer.status !== 'REVIEW' || peer.statusReason !== OUT_UNVERIFIED) {
+    if (
+      peer.status !== 'REVIEW' ||
+      peer.statusReason !== TRANSFER_AWAITING_PEER
+    ) {
       return false;
     }
     if (!peer.sourceId) return false;

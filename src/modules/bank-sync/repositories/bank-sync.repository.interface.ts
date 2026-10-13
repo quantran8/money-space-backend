@@ -132,5 +132,14 @@ export interface BankSyncRepository {
   }): Promise<BankNotificationEvent | null>;
   /** False when either event is already paired. */
   pairTransfer(aId: string, bId: string): Promise<boolean>;
+  /** Another ACTIVE source of the household with an open link. */
+  hasOtherLinkedSource(householdId: string, sourceId: string): Promise<boolean>;
+  /** Held OUT legs received before `before`. */
+  findHeldEvents(
+    before: Date,
+    limit: number,
+  ): Promise<Array<{ id: string; householdId: string }>>;
+  /** False when the hold was already released or the leg was paired. */
+  claimHeldEvent(id: string): Promise<boolean>;
   purgeExpiredRaw(now: Date, limit: number): Promise<number>;
 }
