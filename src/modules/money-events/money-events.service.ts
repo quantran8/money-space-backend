@@ -209,10 +209,10 @@ export class MoneyEventsService {
     // Reject an empty/whitespace category up front (400). Internal callers
     // (debts, saving interest, revaluations) always pass a code, so this only
     // guards the user-facing create path.
-    const categoryId = await this.resolveCategoryIdOrThrow(
-      householdId,
-      payload.categoryId,
-    );
+    const categoryId =
+      payload.type === 'transfer' && !payload.categoryId?.trim()
+        ? await this.systemCategoryId(householdId, 'transfer')
+        : await this.resolveCategoryIdOrThrow(householdId, payload.categoryId);
     // Income/expense/transfer only move cash — their linked assets must be
     // spendable wallets. Reject a non-wallet source/destination up front (400)
     // before opening the write transaction.
