@@ -66,6 +66,23 @@ which has already dropped to Free.
 
 `null` in `PLAN_LIMITS` means unlimited, **never zero**.
 
+## Giới hạn số không gian Free mỗi tài khoản
+
+Quyết định chủ sản phẩm 2026-10-13: một tài khoản tạo tối đa **2 không gian Free**
+(`FREE_OWNED_SPACE_LIMIT`). Đây là giới hạn duy nhất theo **tài khoản**, không
+theo household, nên nằm ngoài `PLAN_LIMITS`.
+
+- **Đếm**: household còn sống mà user là thành viên và `created_by = user`
+  (chuyển steward là chuyển luôn suất này), đang không Premium. Premium hết hạn
+  tính là Free. Household tham gia qua lời mời **không** tính — mời bạn đời
+  không bao giờ bị gate.
+- **Chặn** ở `HouseholdsService.createHousehold` → 402 `space_quota`, mang
+  entitlement của household Free cũ nhất do user tạo (402 cần một household).
+  Onboarding cũng đi qua đây, nhưng user ở onboarding không có household nào.
+- `GET /households` trả thêm `spaceQuota: { used, limit }` để client kiểm tra
+  trước. Không khoá: hai request tạo song song có thể cùng lọt — chấp nhận.
+- Mua Premium cho một household Free → nó thôi tính → tạo thêm được.
+
 ## Showing a quota before it is hit
 
 Two hooks, and the split matters:

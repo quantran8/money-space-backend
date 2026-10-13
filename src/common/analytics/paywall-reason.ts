@@ -20,6 +20,7 @@ export type PaywallReason =
   | 'history'
   | 'export'
   | 'bank_sync'
+  | 'space_quota'
   | 'expired'
   | 'general';
 
@@ -32,6 +33,7 @@ export const PAYWALL_REASONS: readonly PaywallReason[] = [
   'history',
   'export',
   'bank_sync',
+  'space_quota',
   'expired',
   'general',
 ] as const;
