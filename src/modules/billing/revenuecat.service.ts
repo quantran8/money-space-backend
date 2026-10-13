@@ -107,8 +107,13 @@ export class RevenuecatService {
     }
 
     // A sandbox receipt is free money. Allowed only where testing needs it.
-    if (event.environment === 'SANDBOX' && !billingConfig.revenuecatAllowSandbox) {
-      this.logger.warn('RevenueCat SANDBOX purchase ignored in this environment');
+    if (
+      event.environment === 'SANDBOX' &&
+      !billingConfig.revenuecatAllowSandbox
+    ) {
+      this.logger.warn(
+        'RevenueCat SANDBOX purchase ignored in this environment',
+      );
       return 'sandbox_ignored';
     }
 
@@ -116,7 +121,11 @@ export class RevenuecatService {
     const entitlementIds = event.entitlement_ids ?? [];
     // Guards against a product attached to the wrong entitlement in the
     // dashboard quietly handing out Premium.
-    if (expected && entitlementIds.length > 0 && !entitlementIds.includes(expected)) {
+    if (
+      expected &&
+      entitlementIds.length > 0 &&
+      !entitlementIds.includes(expected)
+    ) {
       this.logger.warn(
         `RevenueCat event for entitlements [${entitlementIds.join(', ')}], expected ${expected}`,
       );
@@ -190,7 +199,9 @@ export class RevenuecatService {
           createdById: null,
           planCode,
           // What the STORE charged, not our list price.
-          amount: Math.round(event.price_in_purchased_currency ?? event.price ?? 0),
+          amount: Math.round(
+            event.price_in_purchased_currency ?? event.price ?? 0,
+          ),
           durationDays,
           providerTxnId: transactionId,
           providerUserId: event.app_user_id ?? '',

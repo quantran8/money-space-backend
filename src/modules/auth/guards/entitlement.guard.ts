@@ -30,10 +30,9 @@ export class EntitlementGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const feature = this.reflector.getAllAndOverride<PremiumFeature | undefined>(
-      REQUIRE_PREMIUM_KEY,
-      [context.getHandler(), context.getClass()],
-    );
+    const feature = this.reflector.getAllAndOverride<
+      PremiumFeature | undefined
+    >(REQUIRE_PREMIUM_KEY, [context.getHandler(), context.getClass()]);
     // The hot path: nothing to enforce, so nothing is loaded.
     if (!feature) {
       return true;

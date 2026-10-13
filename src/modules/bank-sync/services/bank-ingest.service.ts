@@ -1,6 +1,7 @@
 import {
   Inject,
   Injectable,
+  HttpException,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -15,6 +16,7 @@ import type {
 import { identifierHmac, last4 } from '../domain/identifier-hmac';
 import { decryptPayload, encryptPayload } from '../domain/payload-cipher';
 import { isPostableWallet } from '../domain/wallet';
+import { vnIsoDate } from '../domain/vn-time';
 import type { IngestBankNotificationDto } from '../dto/ingest-bank-notification.dto';
 import type {
   BankNotificationInput,
@@ -28,6 +30,8 @@ import {
 import { BANK_SYNC_REPOSITORY } from '../repositories/bank-sync.repository.interface';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import { BankPostingService } from './bank-posting.service';
+import { CashflowMatcherService } from '../../cashflow-events/services/cashflow-matcher.service';
+import type { MatchResult } from '../../cashflow-events/domain/note-match';
 
 const MINUTE = 60 * 1000;
 const SAME_PAYLOAD_WINDOW = 24 * 60 * MINUTE;
@@ -35,10 +39,13 @@ const SIMILAR_WINDOW = 10 * MINUTE;
 const LINK_CHANGE_WINDOW = 10 * MINUTE;
 
 export interface IngestOutcome {
-  eventId: string;
-  status: BankEventStatus;
+  /** Null when nothing was stored. */
+  eventId: string | null;
+  status: BankEventStatus | 'NOT_TRANSACTION';
   replayed: boolean;
 }
+
+type StoredOutcome = IngestOutcome & { eventId: string; status: BankEventStatus };
 
 interface RouteOptions {
   /** False for anything the user has not seen yet arriving through a back door. */
@@ -55,6 +62,7 @@ export class BankIngestService {
     @Inject(BANK_SYNC_REPOSITORY)
     private readonly repo: BankSyncRepository,
     private readonly posting: BankPostingService,
+    private readonly matcher: CashflowMatcherService,
   ) {}
 
   async ingest(
@@ -76,6 +84,12 @@ export class BankIngestService {
         payloadFingerprint,
         dto.notificationAt,
       );
+
+    // Promo/system messages are dropped before any write. See memory/bank-sync.md.
+    if (provider && !parserFor(provider).isBalanceMovement(input)) {
+      this.logger.log(`bank notification skipped provider=${provider}`);
+      return { eventId: null, status: 'NOT_TRANSACTION', replayed: false };
+    }
 
     const event: BankNotificationEvent = {
       id: this.repo.createId(),
@@ -108,6 +122,9 @@ export class BankIngestService {
       externalReference: null,
       description: null,
       parserVersion: null,
+      suggestedCashflowEventId: null,
+      matchStatus: null,
+      matchReason: null,
       status: 'RECEIVED',
       statusReason: null,
       receivedAt: now,
@@ -293,7 +310,10 @@ export class BankIngestService {
       return settle('REVIEW', 'LINK_AMBIGUOUS', { sourceId: source.id });
     }
     const link = links[0];
-    const linked = { sourceId: source.id, matchedAssetId: link.assetId };
+    const linked: BankEventPatch = {
+      sourceId: source.id,
+      matchedAssetId: link.assetId,
+    };
 
     const changedNearby = await this.repo.hasLinkClosedBetween(
       source.id,
@@ -308,6 +328,13 @@ export class BankIngestService {
     if (!isPostableWallet(wallet)) {
       return settle('REVIEW', 'ASSET_UNAVAILABLE', linked);
     }
+
+    const match = await this.matchNote(event, link.assetId, at);
+    Object.assign(linked, {
+      suggestedCashflowEventId: match?.cashflowEventId ?? null,
+      matchStatus: match?.status ?? null,
+      matchReason: match?.reason ?? null,
+    });
 
     if (event.amountMinor !== null && event.direction) {
       const similar = await this.repo.existsSimilar({
@@ -330,10 +357,14 @@ export class BankIngestService {
     if (!opts.allowAuto || link.postingMode !== 'AUTO') {
       return settle('REVIEW', 'MANUAL_MODE', linked);
     }
+    // Posting now would double-count a manual completion. See memory/cashflow-settlement.md.
+    if (match?.status === 'replace_manual') {
+      return settle('REVIEW', 'MATCH_REPLACE_MANUAL', linked);
+    }
 
     await this.repo.updateEvent(event.id, linked);
     try {
-      await this.posting.post(event.householdId, event.id, opts.actorId);
+      await this.postAuto(event, opts.actorId, match);
       return 'PROCESSED';
     } catch (error) {
       this.logger.error(
@@ -343,10 +374,59 @@ export class BankIngestService {
     }
   }
 
+  private async matchNote(
+    event: BankNotificationEvent,
+    walletId: string,
+    at: Date,
+  ): Promise<MatchResult | null> {
+    if (event.amountMinor === null || !event.direction) return null;
+    try {
+      return await this.matcher.match(event.householdId, {
+        providerCode: event.providerCode,
+        description: event.description,
+        direction: event.direction,
+        walletId,
+        txDate: vnIsoDate(at),
+      });
+    } catch (error) {
+      this.logger.error(
+        `bank event match failed id=${event.id}: ${(error as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Post, settling the matched occurrence; a settle conflict still posts the money. */
+  private async postAuto(
+    event: BankNotificationEvent,
+    actorId: string,
+    match: MatchResult | null,
+  ) {
+    if (match?.status !== 'matched' || !match.cashflowEventId) {
+      await this.posting.post(event.householdId, event.id, actorId);
+      return;
+    }
+    try {
+      await this.posting.post(event.householdId, event.id, actorId, undefined, {
+        kind: 'link',
+        cashflowEventId: match.cashflowEventId,
+        via: 'auto_note',
+        matchRuleId: match.ruleId ?? null,
+      });
+    } catch (error) {
+      if (!(error instanceof HttpException)) throw error;
+      await this.repo.updateEvent(event.id, {
+        matchStatus: 'blocked',
+        matchReason: 'SETTLE_CONFLICT',
+      });
+      await this.posting.post(event.householdId, event.id, actorId);
+    }
+  }
+
   private async finish(
     event: BankNotificationEvent,
     patch: BankEventPatch & { status: BankEventStatus },
-  ): Promise<IngestOutcome> {
+  ): Promise<StoredOutcome> {
     await this.repo.updateEvent(event.id, patch);
     return { eventId: event.id, status: patch.status, replayed: false };
   }

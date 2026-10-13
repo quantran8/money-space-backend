@@ -4,6 +4,9 @@ import { MoneyEventsModule } from '../money-events/money-events.module';
 import { AssetsModule } from '../assets/assets.module';
 import { CashflowEventsController } from './cashflow-events.controller';
 import { CashflowEventsService } from './cashflow-events.service';
+import { CashflowSettlementService } from './services/cashflow-settlement.service';
+import { CashflowMatcherService } from './services/cashflow-matcher.service';
+import { PrismaSettlementRepository } from './repositories/prisma-settlement.repository';
 import { CASHFLOW_EVENTS_REPOSITORY } from './repositories/cashflow-events.repository.interface';
 import { PrismaCashflowEventsRepository } from './repositories/prisma-cashflow-events.repository';
 
@@ -25,11 +28,18 @@ import { PrismaCashflowEventsRepository } from './repositories/prisma-cashflow-e
   controllers: [CashflowEventsController],
   providers: [
     CashflowEventsService,
+    CashflowSettlementService,
+    CashflowMatcherService,
+    PrismaSettlementRepository,
     {
       provide: CASHFLOW_EVENTS_REPOSITORY,
       useClass: PrismaCashflowEventsRepository,
     },
   ],
-  exports: [CashflowEventsService],
+  exports: [
+    CashflowEventsService,
+    CashflowSettlementService,
+    CashflowMatcherService,
+  ],
 })
 export class CashflowEventsModule {}

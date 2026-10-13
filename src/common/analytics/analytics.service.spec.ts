@@ -62,7 +62,9 @@ describe('AnalyticsService', () => {
 
     // A promise here would let a caller block a request on analytics, and a
     // rejected one would reach main.ts's unhandledRejection guard.
-    expect(service.capture('hh-1', 'trial_started', { days: 14 })).toBeUndefined();
+    expect(
+      service.capture('hh-1', 'trial_started', { days: 14 }),
+    ).toBeUndefined();
   });
 
   it('swallows a throwing client and logs once', () => {
@@ -105,7 +107,9 @@ describe('AnalyticsService', () => {
   });
 
   it('shuts down cleanly when there is no client', async () => {
-    await expect(makeService().onApplicationShutdown()).resolves.toBeUndefined();
+    await expect(
+      makeService().onApplicationShutdown(),
+    ).resolves.toBeUndefined();
   });
 
   it('attributes a product-wide figure to the system, not to a household', () => {

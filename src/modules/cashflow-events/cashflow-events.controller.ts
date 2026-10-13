@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,10 +10,13 @@ import {
   Query,
 } from '@nestjs/common';
 import { CashflowEventsService } from './cashflow-events.service';
+import { CashflowSettlementService } from './services/cashflow-settlement.service';
+import { CashflowMatcherService } from './services/cashflow-matcher.service';
 import type { CreateCashflowEventDto } from './dto/create-cashflow-event.dto';
 import type { UpdateCashflowEventDto } from './dto/update-cashflow-event.dto';
 import type { CompleteCashflowEventDto } from './dto/complete-cashflow-event.dto';
 import type { ListCashflowEventsQuery } from './dto/list-cashflow-events.query';
+import { NoCacheInvalidation } from '../../common/cache/no-cache-invalidation.decorator';
 import { CurrentMembership } from '../auth/decorators/current-membership.decorator';
 import type { HouseholdMembership } from '../auth/guards/household-access.guard';
 
@@ -23,7 +27,25 @@ import type { HouseholdMembership } from '../auth/guards/household-access.guard'
  */
 @Controller('households/:householdId/cashflow-events')
 export class CashflowEventsController {
-  constructor(private readonly cashflowEvents: CashflowEventsService) {}
+  constructor(
+    private readonly cashflowEvents: CashflowEventsService,
+    private readonly settlement: CashflowSettlementService,
+    private readonly matcher: CashflowMatcherService,
+  ) {}
+
+  @Get('match-rules')
+  listHouseholdMatchRules(@Param('householdId') householdId: string) {
+    return this.matcher.listHouseholdRules(householdId);
+  }
+
+  @NoCacheInvalidation()
+  @Post('match-rules/preview')
+  previewMatchRule(
+    @Param('householdId') householdId: string,
+    @Body() body: { phrase?: string },
+  ) {
+    return this.matcher.previewRule(householdId, body?.phrase ?? '');
+  }
 
   @Get()
   listCashflowEvents(
@@ -77,12 +99,111 @@ export class CashflowEventsController {
     @Param('householdId') householdId: string,
     @Param('eventId') eventId: string,
     @Body() payload: CompleteCashflowEventDto,
+    @CurrentMembership() membership: HouseholdMembership,
   ) {
     return this.cashflowEvents.completeCashflowEvent(
       householdId,
       eventId,
       payload,
+      membership.userId,
     );
+  }
+
+  @Get(':eventId/link-candidates')
+  linkCandidates(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+    @Query('q') q?: string,
+  ) {
+    return this.settlement.linkCandidates(householdId, eventId, q);
+  }
+
+  @Get(':eventId/settlements')
+  listSettlements(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.settlement.listSettlements(householdId, eventId);
+  }
+
+  @Post(':eventId/link')
+  linkMoneyEvent(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+    @Body() body: { moneyEventId?: string },
+    @CurrentMembership() membership: HouseholdMembership,
+  ) {
+    if (!body?.moneyEventId) {
+      throw new BadRequestException('moneyEventId is required');
+    }
+    return this.settlement.settleExisting(
+      householdId,
+      eventId,
+      body.moneyEventId,
+      'manual_link',
+      membership.userId,
+    );
+  }
+
+  @Post(':eventId/replace-manual')
+  replaceManual(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+    @Body() body: { moneyEventId?: string },
+    @CurrentMembership() membership: HouseholdMembership,
+  ) {
+    if (!body?.moneyEventId) {
+      throw new BadRequestException('moneyEventId is required');
+    }
+    return this.settlement.replaceManualWithBank(
+      householdId,
+      eventId,
+      body.moneyEventId,
+      membership.userId,
+    );
+  }
+
+  @Post(':eventId/unlink')
+  unlinkMoneyEvent(
+    @Param('householdId') householdId: string,
+    @Body() body: { moneyEventId?: string },
+  ) {
+    if (!body?.moneyEventId) {
+      throw new BadRequestException('moneyEventId is required');
+    }
+    return this.settlement.unsettle(householdId, body.moneyEventId);
+  }
+
+  @Get(':eventId/match-rules')
+  listMatchRules(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.matcher.listRules(householdId, eventId);
+  }
+
+  @Post(':eventId/match-rules')
+  createMatchRule(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+    @Body() body: { phrase?: string },
+    @CurrentMembership() membership: HouseholdMembership,
+  ) {
+    return this.matcher.createRule(
+      householdId,
+      eventId,
+      body?.phrase ?? '',
+      membership.userId,
+    );
+  }
+
+  @Delete(':eventId/match-rules/:ruleId')
+  deleteMatchRule(
+    @Param('householdId') householdId: string,
+    @Param('eventId') eventId: string,
+    @Param('ruleId') ruleId: string,
+  ) {
+    return this.matcher.deleteRule(householdId, eventId, ruleId);
   }
 
   @Post(':eventId/postpone')

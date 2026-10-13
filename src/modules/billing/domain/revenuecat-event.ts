@@ -55,7 +55,9 @@ export const GRANTING_EVENTS = new Set([
 export const REVOCATION_EVENTS = new Set(['REFUND', 'REVOKE', 'CHARGEBACK']);
 
 /** Which store took the money, in our own enum's terms. */
-export function purchaseStoreOf(store: string | undefined): 'app_store' | 'play_store' | null {
+export function purchaseStoreOf(
+  store: string | undefined,
+): 'app_store' | 'play_store' | null {
   if (store === 'APP_STORE') return 'app_store';
   if (store === 'PLAY_STORE') return 'play_store';
   return null;

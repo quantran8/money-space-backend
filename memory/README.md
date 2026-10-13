@@ -51,6 +51,7 @@ Each file is a focused Markdown doc. Link related files with `[[name]]` (the fil
 - [debts.md](debts.md) — debts / liabilities & interest maths
 - [money-events.md](money-events.md) — money events (what already happened)
 - [cashflow-events.md](cashflow-events.md) — expected future money in/out; the forecast's input
+- [cashflow-settlement.md](cashflow-settlement.md) — settling an occurrence: manual complete, bank link, note auto-match, balance drift
 - [forecast-and-flexible-money.md](forecast-and-flexible-money.md) — running balance, lowest projected balance, flexible money, financial state, what-if
 - [goals.md](goals.md) — financial goals & progress
 - [attention-items.md](attention-items.md) — derived vs stored signals, dismissal tombstones

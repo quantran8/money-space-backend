@@ -1,10 +1,7 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
 import { PostHog } from 'posthog-node';
 import { analyticsConfig } from '../../config/analytics.config';
-import type {
-  AnalyticsEventMap,
-  AnalyticsEventName,
-} from './event-catalog';
+import type { AnalyticsEventMap, AnalyticsEventName } from './event-catalog';
 
 /**
  * Product analytics and 5xx tracking, in one place.

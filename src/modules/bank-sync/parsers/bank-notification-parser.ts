@@ -31,6 +31,8 @@ export type ParseResult =
 export interface BankNotificationParser {
   readonly providerCode: ProviderCode;
   readonly version: string;
+  /** Cheap signal check; false = promo/system message, never stored. */
+  isBalanceMovement(input: BankNotificationInput): boolean;
   parse(input: BankNotificationInput): ParseResult;
 }
 

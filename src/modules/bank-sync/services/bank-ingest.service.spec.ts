@@ -1,8 +1,10 @@
+import { ConflictException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import type { BankNotificationEvent } from '../entities/bank-sync.entity';
 import { BankIngestService, noteFromBody } from './bank-ingest.service';
 import type { BankPostingService } from './bank-posting.service';
+import type { CashflowMatcherService } from '../../cashflow-events/services/cashflow-matcher.service';
 
 const CTX = { credentialId: 'cred-1', userId: 'user-1', householdId: 'hh-1' };
 const VCB = (sign = '+', amount = '2,000') => ({
@@ -60,12 +62,16 @@ function setup() {
     findUnmappedByIdentifier: jest.fn().mockResolvedValue([]),
   };
   const posting = { post: jest.fn().mockResolvedValue('posted') };
+  const matcher = {
+    match: jest.fn().mockResolvedValue({ status: 'none', reason: 'NO_RULE' }),
+  };
   const service = new BankIngestService(
     repo as unknown as BankSyncRepository,
     posting as unknown as BankPostingService,
+    matcher as unknown as CashflowMatcherService,
   );
   const lastStatus = () => updates[updates.length - 1]?.patch;
-  return { repo, posting, service, updates, lastStatus };
+  return { repo, posting, matcher, service, updates, lastStatus };
 }
 
 beforeAll(() => {
@@ -216,6 +222,86 @@ describe('BankIngestService.ingest', () => {
     expect(lastStatus()).toMatchObject({ statusReason: 'LINK_CHANGED' });
   });
 
+  it('auto-settles the occurrence a unique note rule matched', async () => {
+    const { service, posting, matcher } = setup();
+    matcher.match.mockResolvedValue({
+      status: 'matched',
+      reason: 'NOTE_RULE',
+      cashflowEventId: 'cf-1',
+      ruleId: 'r-1',
+    });
+    expect((await service.ingest(CTX, VCB())).status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenCalledWith(
+      'hh-1',
+      'evt-1',
+      'user-1',
+      undefined,
+      {
+        kind: 'link',
+        cashflowEventId: 'cf-1',
+        via: 'auto_note',
+        matchRuleId: 'r-1',
+      },
+    );
+  });
+
+  it('still posts the money when settling conflicts', async () => {
+    const { service, posting, matcher, updates } = setup();
+    matcher.match.mockResolvedValue({
+      status: 'matched',
+      reason: 'NOTE_RULE',
+      cashflowEventId: 'cf-1',
+      ruleId: 'r-1',
+    });
+    posting.post
+      .mockRejectedValueOnce(new ConflictException('settled'))
+      .mockResolvedValueOnce('posted');
+    expect((await service.ingest(CTX, VCB())).status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenLastCalledWith('hh-1', 'evt-1', 'user-1');
+    expect(updates.some((u) => u.patch.matchReason === 'SETTLE_CONFLICT')).toBe(
+      true,
+    );
+  });
+
+  it('holds a bank event that would duplicate a manual completion', async () => {
+    const { service, posting, matcher, lastStatus } = setup();
+    matcher.match.mockResolvedValue({
+      status: 'replace_manual',
+      reason: 'MANUAL_ALREADY_COMPLETED',
+      cashflowEventId: 'cf-1',
+    });
+    expect((await service.ingest(CTX, VCB())).status).toBe('REVIEW');
+    expect(posting.post).not.toHaveBeenCalled();
+    expect(lastStatus()).toMatchObject({
+      statusReason: 'MATCH_REPLACE_MANUAL',
+      suggestedCashflowEventId: 'cf-1',
+      matchStatus: 'replace_manual',
+    });
+  });
+
+  it('posts without settling when the note is ambiguous', async () => {
+    const { service, posting, matcher } = setup();
+    matcher.match.mockResolvedValue({
+      status: 'ambiguous',
+      reason: 'MULTIPLE_EVENTS',
+    });
+    await service.ingest(CTX, VCB());
+    expect(posting.post).toHaveBeenCalledWith('hh-1', 'evt-1', 'user-1');
+  });
+
+  it('drops a promo notification without storing anything', async () => {
+    const { service, repo } = setup();
+    const out = await service.ingest(CTX, {
+      clientEventId: null,
+      app: 'Techcombank',
+      title: 'Tài khoản thưởng đã được kích hoạt lại',
+      body: 'Tiếp tục khám phá các ưu đãi hấp dẫn Techcombank dành tặng bạn nhé',
+      notificationAt: null,
+    });
+    expect(out).toEqual({ eventId: null, status: 'NOT_TRANSACTION', replayed: false });
+    expect(repo.insertEvent).not.toHaveBeenCalled();
+  });
+
   it('records FAILED when posting throws', async () => {
     const { service, posting, lastStatus } = setup();
     posting.post.mockRejectedValue(new Error('db down'));
@@ -263,5 +349,4 @@ describe('noteFromBody', () => {
   it('leaves the body untouched when no account was parsed', () => {
     expect(noteFromBody('  + VND 2,000  ', null)).toBe('+ VND 2,000');
   });
-
 });

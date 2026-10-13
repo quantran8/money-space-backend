@@ -20,7 +20,9 @@ function run(exception: unknown, env?: string) {
       getRequest: () => ({ url: '/api/v1/households/hh-1', method: 'GET' }),
     }),
   };
-  const analytics = { captureException: jest.fn() } as unknown as AnalyticsService;
+  const analytics = {
+    captureException: jest.fn(),
+  } as unknown as AnalyticsService;
 
   new HttpExceptionFilter(analytics).catch(exception, host as never);
 
@@ -40,10 +42,13 @@ describe('HttpExceptionFilter', () => {
       },
     );
 
-    it.each([['development'], ['test']])('shows it when NODE_ENV is %s', (env) => {
-      const body = run(new Error('connect ECONNREFUSED 10.0.0.1:5432'), env);
-      expect(body.message).toBe('connect ECONNREFUSED 10.0.0.1:5432');
-    });
+    it.each([['development'], ['test']])(
+      'shows it when NODE_ENV is %s',
+      (env) => {
+        const body = run(new Error('connect ECONNREFUSED 10.0.0.1:5432'), env);
+        expect(body.message).toBe('connect ECONNREFUSED 10.0.0.1:5432');
+      },
+    );
   });
 
   describe('structured fields', () => {
@@ -68,9 +73,9 @@ describe('HttpExceptionFilter', () => {
     });
 
     it('omits code entirely when the throw site names none', () => {
-      expect(run(new BadRequestException('plannedDate is required'))).not.toHaveProperty(
-        'code',
-      );
+      expect(
+        run(new BadRequestException('plannedDate is required')),
+      ).not.toHaveProperty('code');
     });
   });
 });

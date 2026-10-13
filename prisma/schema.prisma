@@ -461,6 +461,7 @@ model Profile {
   cashflowEventsCreated    CashflowEvent[]        @relation("CashflowEventCreatedBy")
   cashflowEventsUpdated    CashflowEvent[]        @relation("CashflowEventUpdatedBy")
   cashflowEventsCompleted  CashflowEvent[]        @relation("CashflowEventLastCompletedBy")
+  cashflowMatchRules       CashflowMatchRule[]    @relation("CashflowMatchRuleCreatedBy")
   debtsCreated             Debt[]                 @relation("DebtCreatedBy")
   debtsUpdated             Debt[]                 @relation("DebtUpdatedBy")
   financialGoalsCreated    FinancialGoal[]        @relation("FinancialGoalCreatedBy")
@@ -524,6 +525,7 @@ model Household {
   bankExternalSources     BankExternalSource[]
   bankSourceLinks         BankSourceLink[]
   bankNotificationEvents  BankNotificationEvent[]
+  cashflowMatchRules      CashflowMatchRule[]
 
   @@index([createdById])
   @@index([deletedAt])
@@ -1300,6 +1302,7 @@ model CashflowEvent {
   createdBy            Profile              @relation("CashflowEventCreatedBy", fields: [createdById], references: [id])
   updatedBy            Profile?             @relation("CashflowEventUpdatedBy", fields: [updatedById], references: [id])
   moneyEvents          MoneyEvent[]         @relation("MoneyEventCashflowEvent")
+  matchRules           CashflowMatchRule[]
   category             MoneyEventCategory   @relation("CashflowEventCategoryRef", fields: [categoryId], references: [id])
 
   @@index([householdId, expectedDate])
@@ -1314,6 +1317,28 @@ model CashflowEvent {
   /// declared here, which is what Prisma kept reporting as schema drift.
   @@index([householdId, categoryId])
   @@map("cashflow_events")
+}
+
+/// Bank-note phrase that identifies a cashflow event. See memory/cashflow-settlement.md.
+/// Partial index on active rules lives in SQL only.
+model CashflowMatchRule {
+  id               String        @id @default(uuid(7)) @db.Uuid
+  householdId      String        @map("household_id") @db.Uuid
+  cashflowEventId  String        @map("cashflow_event_id") @db.Uuid
+  phrase           String
+  phraseNormalized String        @map("phrase_normalized")
+  operator         String        @default("contains")
+  isEnabled        Boolean       @default(true) @map("is_enabled")
+  createdById      String        @map("created_by") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt        DateTime?     @map("deleted_at") @db.Timestamptz(6)
+  household        Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  cashflowEvent    CashflowEvent @relation(fields: [cashflowEventId], references: [id], onDelete: Cascade)
+  createdBy        Profile       @relation("CashflowMatchRuleCreatedBy", fields: [createdById], references: [id])
+
+  @@index([cashflowEventId], map: "cashflow_match_rules_event_idx")
+  @@map("cashflow_match_rules")
 }
 
 /// A shared savings goal — a set of SHARES of real assets, storing no figure of
@@ -1556,6 +1581,13 @@ model MoneyEvent {
   origin              MoneyEventOrigin       @default(manual)
   notificationEventId String?                @unique @map("notification_event_id") @db.Uuid
   notificationEvent   BankNotificationEvent? @relation(fields: [notificationEventId], references: [id], onDelete: SetNull)
+  // Settlement evidence for one cashflow occurrence. See memory/cashflow-settlement.md.
+  // Partial unique (cashflow_event_id, occurrence_date) lives in SQL only.
+  occurrenceDate  DateTime?          @map("occurrence_date") @db.Date
+  settledVia      String?            @map("settled_via")
+  settledById     String?            @map("settled_by") @db.Uuid
+  settledAt       DateTime?          @map("settled_at") @db.Timestamptz(6)
+  matchRuleId     String?            @map("match_rule_id") @db.Uuid
   createdById     String             @map("created_by") @db.Uuid
   createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedById     String?            @map("updated_by") @db.Uuid
@@ -1800,6 +1832,10 @@ model BankNotificationEvent {
   externalReference    String?              @map("external_reference")
   // Body with the account number masked; becomes the money event's note.
   description          String?
+  // Note-rule match outcome; a suggestion only. See memory/cashflow-settlement.md.
+  suggestedCashflowEventId String?          @map("suggested_cashflow_event_id") @db.Uuid
+  matchStatus          String?              @map("match_status")
+  matchReason          String?              @map("match_reason")
   parserVersion        String?              @map("parser_version")
   status               BankEventStatus      @default(RECEIVED)
   statusReason         String?              @map("status_reason")

@@ -47,6 +47,7 @@ export const ERROR_CODES: readonly ErrorCode[] = [
 
 export function isErrorCode(value: unknown): value is ErrorCode {
   return (
-    typeof value === 'string' && (ERROR_CODES as readonly string[]).includes(value)
+    typeof value === 'string' &&
+    (ERROR_CODES as readonly string[]).includes(value)
   );
 }

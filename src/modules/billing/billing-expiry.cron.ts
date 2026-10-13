@@ -95,10 +95,7 @@ export class BillingExpiryCron {
     return { subscriptions, orders };
   }
 
-  private async expireSubscriptions(
-    now: Date,
-    limit: number,
-  ): Promise<number> {
+  private async expireSubscriptions(now: Date, limit: number): Promise<number> {
     let householdIds: string[];
     try {
       householdIds = await this.billingRepository.expireLapsedSubscriptions(

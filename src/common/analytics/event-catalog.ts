@@ -95,34 +95,21 @@ export type WhatIfResultName = 'comfortable' | 'tight' | 'not_covered';
 
 /** Where the household opened what-if from. `other` is the honest fallback. */
 export type WhatIfSourceName =
-  | 'home'
-  | 'upcoming'
-  | 'goal'
-  | 'goal-detail'
-  | 'other';
+  'home' | 'upcoming' | 'goal' | 'goal-detail' | 'other';
 
 /** Mirrors `EntitlementSource` in the Prisma schema. */
 export type GrantSourceName =
-  | 'redeem_code'
-  | 'payment'
-  | 'manual_grant'
-  | 'trial';
+  'redeem_code' | 'payment' | 'manual_grant' | 'trial';
 
 export type PaymentProviderName = 'payos' | 'revenuecat';
 
 export type PlanCodeName =
-  | 'premium_monthly'
-  | 'premium_yearly'
-  | 'premium_lifetime';
+  'premium_monthly' | 'premium_yearly' | 'premium_lifetime';
 
 export type ExportFormatName = 'json' | 'csv';
 
 export type ExportDatasetName =
-  | 'assets'
-  | 'money-events'
-  | 'cashflow-events'
-  | 'goals'
-  | 'debts';
+  'assets' | 'money-events' | 'cashflow-events' | 'goals' | 'debts';
 
 /* ────────────────────────────── the events ─────────────────────────── */
 

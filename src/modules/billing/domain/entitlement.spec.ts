@@ -39,7 +39,9 @@ describe('resolveEntitlement', () => {
    * clock comparison cannot.
    */
   it('drops to free limits the moment the period has passed', () => {
-    const expired = row({ currentPeriodEnd: new Date('2026-09-07T09:59:59.000Z') });
+    const expired = row({
+      currentPeriodEnd: new Date('2026-09-07T09:59:59.000Z'),
+    });
 
     const result = resolveEntitlement(HOUSEHOLD, expired, NOW);
 
@@ -48,7 +50,9 @@ describe('resolveEntitlement', () => {
   });
 
   it('keeps reporting tier premium after lapsing, so the UI can say it expired', () => {
-    const expired = row({ currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z') });
+    const expired = row({
+      currentPeriodEnd: new Date('2026-08-01T00:00:00.000Z'),
+    });
 
     const result = resolveEntitlement(HOUSEHOLD, expired, NOW);
 
@@ -125,7 +129,11 @@ describe('resolveEntitlement', () => {
   });
 
   it('honours an explicitly expired status even inside the period', () => {
-    const result = resolveEntitlement(HOUSEHOLD, row({ status: 'expired' }), NOW);
+    const result = resolveEntitlement(
+      HOUSEHOLD,
+      row({ status: 'expired' }),
+      NOW,
+    );
 
     expect(result.limits).toEqual(PLAN_LIMITS.free);
   });

@@ -1,6 +1,9 @@
 import { WhatIfUsageService } from './whatif-usage.service';
 import { cacheKeys } from '../../common/cache/cache.keys';
-import { DEFAULT_HOUSEHOLD_TZ, todayInTimeZone } from '../../common/utils/clock';
+import {
+  DEFAULT_HOUSEHOLD_TZ,
+  todayInTimeZone,
+} from '../../common/utils/clock';
 
 /**
  * The what-if counter.

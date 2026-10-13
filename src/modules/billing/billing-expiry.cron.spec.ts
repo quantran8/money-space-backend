@@ -70,7 +70,9 @@ describe('BillingExpiryCron', () => {
     const result = await cron.run();
 
     expect(result).toEqual({ subscriptions: 2, orders: 3 });
-    expect(billingRepository.expireLapsedSubscriptions).toHaveBeenCalledTimes(1);
+    expect(billingRepository.expireLapsedSubscriptions).toHaveBeenCalledTimes(
+      1,
+    );
     expect(billingRepository.expireStalePaymentOrders).toHaveBeenCalledTimes(1);
   });
 
@@ -143,7 +145,9 @@ describe('BillingExpiryCron', () => {
 
     await cron.run();
 
-    expect(billingRepository.expireLapsedSubscriptions.mock.calls[0][1]).toBe(50);
+    expect(billingRepository.expireLapsedSubscriptions.mock.calls[0][1]).toBe(
+      50,
+    );
   });
 
   it('falls back to the default limit when the env var is nonsense', async () => {
@@ -163,9 +167,10 @@ describe('BillingExpiryCron', () => {
     const { cron, billingRepository } = setup();
     let release!: () => void;
     billingRepository.expireLapsedSubscriptions.mockImplementationOnce(
-      () => new Promise<string[]>((resolve) => {
-        release = () => resolve([]);
-      }),
+      () =>
+        new Promise<string[]>((resolve) => {
+          release = () => resolve([]);
+        }),
     );
 
     const first = cron.run();
@@ -174,6 +179,8 @@ describe('BillingExpiryCron', () => {
     await first;
 
     expect(second).toEqual({ subscriptions: 0, orders: 0 });
-    expect(billingRepository.expireLapsedSubscriptions).toHaveBeenCalledTimes(1);
+    expect(billingRepository.expireLapsedSubscriptions).toHaveBeenCalledTimes(
+      1,
+    );
   });
 });

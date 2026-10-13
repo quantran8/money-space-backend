@@ -10,11 +10,7 @@ export type ExportFormat = 'json' | 'csv';
 
 /** Which records a CSV file holds. JSON always carries all of them. */
 export type ExportDataset =
-  | 'assets'
-  | 'money-events'
-  | 'cashflow-events'
-  | 'goals'
-  | 'debts';
+  'assets' | 'money-events' | 'cashflow-events' | 'goals' | 'debts';
 
 export const EXPORT_DATASETS: ExportDataset[] = [
   'assets',

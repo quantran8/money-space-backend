@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { CashflowEventsService } from './cashflow-events.service';
+import { CashflowSettlementService } from './services/cashflow-settlement.service';
 import type { CashflowEvent } from './entities/cashflow-event.entity';
 
 /**
@@ -66,12 +67,24 @@ describe('CashflowEventsService — completion (§18)', () => {
       liquidity: 'usable_now',
     }));
     const assets = { getAssetDetail } as never;
+    const markSettled = jest.fn(async () => undefined);
+    const settlementRepo = {
+      lockCashflowEvent: jest.fn(async () => undefined),
+      markSettled,
+    } as never;
+    const settlement = new CashflowSettlementService(
+      repository,
+      settlementRepo,
+      moneyEvents,
+      {} as never,
+    );
 
     const service = new CashflowEventsService(
       repository,
       prisma,
       moneyEvents,
       assets,
+      settlement,
     );
     return {
       service,
@@ -79,6 +92,7 @@ describe('CashflowEventsService — completion (§18)', () => {
       updateCashflowEvent,
       createMoneyEvent,
       getAssetDetail,
+      markSettled,
     };
   }
 
@@ -137,6 +151,26 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(result.event.expectedDate).toBe('2026-08-15');
   });
 
+  it('settles expectedDate, not the clamped date the UI sends', async () => {
+    const { service, markSettled } = setup({ recurrence: 'monthly' });
+
+    await service.completeCashflowEvent(
+      'hh-1',
+      'cf-1',
+      { assetId: 'asset-vcb', occurrenceDate: '2026-08-20' },
+      'u-1',
+    );
+
+    expect(markSettled).toHaveBeenCalledWith(
+      'me-1',
+      expect.objectContaining({
+        occurrenceDate: '2026-08-15',
+        settledVia: 'manual_complete',
+        settledById: 'u-1',
+      }),
+    );
+  });
+
   it('records the completion details', async () => {
     const { service } = setup({ recurrence: 'once' });
 
@@ -165,6 +199,7 @@ describe('CashflowEventsService — completion (§18)', () => {
         toAssetId: undefined,
         cashflowEventId: 'cf-1',
       }),
+      expect.anything(),
     );
   });
 
@@ -185,6 +220,7 @@ describe('CashflowEventsService — completion (§18)', () => {
         toAssetId: 'asset-vcb',
         fromAssetId: undefined,
       }),
+      expect.anything(),
     );
   });
 
@@ -211,6 +247,7 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(createMoneyEvent).toHaveBeenCalledWith(
       'hh-1',
       expect.objectContaining({ fromAssetId: 'asset-stored' }),
+      expect.anything(),
     );
   });
 
@@ -227,6 +264,7 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(createMoneyEvent).toHaveBeenCalledWith(
       'hh-1',
       expect.objectContaining({ fromAssetId: 'asset-picked' }),
+      expect.anything(),
     );
   });
 
@@ -248,6 +286,7 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(createMoneyEvent).toHaveBeenCalledWith(
       'hh-1',
       expect.objectContaining({ isoDate: '2026-08-03' }),
+      expect.anything(),
     );
   });
 
@@ -265,6 +304,7 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(createMoneyEvent).toHaveBeenCalledWith(
       'hh-1',
       expect.objectContaining({ isoDate: '2026-08-03' }),
+      expect.anything(),
     );
   });
 
@@ -279,6 +319,7 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(createMoneyEvent).toHaveBeenCalledWith(
       'hh-1',
       expect.objectContaining({ note: 'Tien dien thang 9' }),
+      expect.anything(),
     );
   });
 
@@ -295,6 +336,7 @@ describe('CashflowEventsService — completion (§18)', () => {
     expect(createMoneyEvent).toHaveBeenCalledWith(
       'hh-1',
       expect.objectContaining({ note: 'Tra bu ky truoc' }),
+      expect.anything(),
     );
   });
 
@@ -428,6 +470,7 @@ describe('CashflowEventsService — validation (§18, §30)', () => {
       repository,
       {} as never,
       moneyEvents,
+      {} as never,
       {} as never,
     );
     return { service, inserted };

@@ -1,4 +1,11 @@
-import { Body, Controller, Headers, HttpCode, Logger, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Headers,
+  HttpCode,
+  Logger,
+  Post,
+} from '@nestjs/common';
 import { Public } from '../auth/decorators/public.decorator';
 import { NoCacheInvalidation } from '../../common/cache/no-cache-invalidation.decorator';
 import { RawResponse } from '../../common/interceptors/raw-response.decorator';
@@ -35,7 +42,9 @@ export class RevenuecatWebhookController {
       !verifyWebhookAuth(authorization, billingConfig.revenuecatWebhookSecret)
     ) {
       // 200, and nothing about WHY: free information for someone probing.
-      this.logger.warn('RevenueCat webhook rejected: authorization did not match');
+      this.logger.warn(
+        'RevenueCat webhook rejected: authorization did not match',
+      );
       return { received: true };
     }
 

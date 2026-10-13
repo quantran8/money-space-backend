@@ -45,7 +45,9 @@ describe('extendPeriod — duration_days', () => {
   it('caps at five years so a typo cannot grant a century', () => {
     const result = run({ type: 'duration_days', days: 100_000 });
 
-    expect(result.periodEnd).toEqual(new Date(NOW.getTime() + MAX_PERIOD_DAYS * DAY));
+    expect(result.periodEnd).toEqual(
+      new Date(NOW.getTime() + MAX_PERIOD_DAYS * DAY),
+    );
   });
 
   it('treats a zero-day grant as a no-op', () => {
@@ -97,7 +99,9 @@ describe('extendPeriod — until_date', () => {
       until: new Date('2099-01-01T00:00:00.000Z'),
     });
 
-    expect(result.periodEnd).toEqual(new Date(NOW.getTime() + MAX_PERIOD_DAYS * DAY));
+    expect(result.periodEnd).toEqual(
+      new Date(NOW.getTime() + MAX_PERIOD_DAYS * DAY),
+    );
   });
 });
 
@@ -110,7 +114,10 @@ describe('extendPeriod — lifetime', () => {
   });
 
   it('upgrades a running period rather than comparing dates', () => {
-    const result = run({ type: 'lifetime' }, new Date('2027-01-01T00:00:00.000Z'));
+    const result = run(
+      { type: 'lifetime' },
+      new Date('2027-01-01T00:00:00.000Z'),
+    );
 
     expect(result.periodEnd).toBeNull();
     expect(result.noop).toBe(false);

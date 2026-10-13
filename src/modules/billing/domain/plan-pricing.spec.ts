@@ -28,16 +28,27 @@ function withEnv(over: EnvOverrides, run: () => void) {
     'BILLING_DISCOUNT_ENDS_AT',
     'BILLING_LIFETIME_ENABLED',
   ];
-  const original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const original = Object.fromEntries(
+    keys.map((key) => [key, process.env[key]]),
+  );
 
   const assign = (key: string, value: string | undefined) => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   };
 
-  assign('BILLING_DISCOUNT_MONTHLY_PERCENT', over.monthlyPercent?.toString() ?? '0');
-  assign('BILLING_DISCOUNT_YEARLY_PERCENT', over.yearlyPercent?.toString() ?? '0');
-  assign('BILLING_DISCOUNT_LIFETIME_PERCENT', over.lifetimePercent?.toString() ?? '0');
+  assign(
+    'BILLING_DISCOUNT_MONTHLY_PERCENT',
+    over.monthlyPercent?.toString() ?? '0',
+  );
+  assign(
+    'BILLING_DISCOUNT_YEARLY_PERCENT',
+    over.yearlyPercent?.toString() ?? '0',
+  );
+  assign(
+    'BILLING_DISCOUNT_LIFETIME_PERCENT',
+    over.lifetimePercent?.toString() ?? '0',
+  );
   assign('BILLING_DISCOUNT_LABEL', over.label ?? '');
   assign('BILLING_DISCOUNT_STARTS_AT', over.startsAt ?? '');
   assign('BILLING_DISCOUNT_ENDS_AT', over.endsAt ?? '');
@@ -101,10 +112,16 @@ describe('buildPlanOffers', () => {
     withEnv(
       { yearlyPercent: 50, startsAt: '2026-10-01', endsAt: '2026-10-31' },
       () => {
-        expect(offer('premium_yearly', new Date('2026-09-07')).amount).toBe(299_000);
+        expect(offer('premium_yearly', new Date('2026-09-07')).amount).toBe(
+          299_000,
+        );
         // 50% of 299.000 is 149.500, rounded to 150.000 off.
-        expect(offer('premium_yearly', new Date('2026-10-15')).amount).toBe(149_000);
-        expect(offer('premium_yearly', new Date('2026-11-05')).amount).toBe(299_000);
+        expect(offer('premium_yearly', new Date('2026-10-15')).amount).toBe(
+          149_000,
+        );
+        expect(offer('premium_yearly', new Date('2026-11-05')).amount).toBe(
+          299_000,
+        );
       },
     );
   });

@@ -8,11 +8,15 @@ import {
 import { CacheInvalidator } from '../../../common/cache/cache-invalidator.service';
 import { isUniqueViolation } from '../../../common/repositories/prisma-errors';
 import { MoneyEventsService } from '../../money-events/money-events.service';
+import { CashflowSettlementService } from '../../cashflow-events/services/cashflow-settlement.service';
 import type { BankEventStatus } from '../entities/bank-sync.entity';
+import { moneyEventNote } from '../domain/money-event-note';
 import { vnIsoDate } from '../domain/vn-time';
 import { isPostableWallet } from '../domain/wallet';
 import { BANK_SYNC_REPOSITORY } from '../repositories/bank-sync.repository.interface';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
+
+export { moneyEventNote };
 
 const POSTABLE: ReadonlySet<BankEventStatus> = new Set([
   'RECEIVED',
@@ -24,6 +28,16 @@ const POSTABLE: ReadonlySet<BankEventStatus> = new Set([
 
 export type PostOutcome = 'posted' | 'already_posted';
 
+/** What to settle with the posted money event. See memory/cashflow-settlement.md. */
+export type PostSettle =
+  | {
+      kind: 'link';
+      cashflowEventId: string;
+      via: 'manual_link' | 'auto_note';
+      matchRuleId?: string | null;
+    }
+  | { kind: 'replace_manual'; cashflowEventId: string };
+
 @Injectable()
 export class BankPostingService {
   constructor(
@@ -31,6 +45,7 @@ export class BankPostingService {
     private readonly repo: BankSyncRepository,
     private readonly moneyEvents: MoneyEventsService,
     private readonly cache: CacheInvalidator,
+    private readonly settlement: CashflowSettlementService,
   ) {}
 
   /**
@@ -42,6 +57,7 @@ export class BankPostingService {
     eventId: string,
     actorId: string,
     assetId?: string,
+    settle?: PostSettle,
   ): Promise<PostOutcome> {
     try {
       return await this.cache.runInTransactionAndInvalidate(
@@ -77,7 +93,7 @@ export class BankPostingService {
           );
           const at =
             event.transactionAt ?? event.notificationAt ?? event.receivedAt;
-          await this.moneyEvents.createMoneyEvent(
+          const created = await this.moneyEvents.createMoneyEvent(
             householdId,
             {
               amount: event.amountMinor,
@@ -102,6 +118,23 @@ export class BankPostingService {
             processedAt: new Date(),
             processedById: actorId,
           });
+          if (settle?.kind === 'link') {
+            await this.settlement.settleExisting(
+              householdId,
+              settle.cashflowEventId,
+              created.id,
+              settle.via,
+              actorId,
+              settle.matchRuleId ?? null,
+            );
+          } else if (settle?.kind === 'replace_manual') {
+            await this.settlement.replaceManualWithBank(
+              householdId,
+              settle.cashflowEventId,
+              created.id,
+              actorId,
+            );
+          }
           return 'posted' as const;
         },
         { timeout: 30000, maxWait: 10000 },
@@ -111,25 +144,4 @@ export class BankPostingService {
       throw error;
     }
   }
-}
-
-/** Money-event note from the stored bank-event description. See memory/bank-sync.md. */
-export function moneyEventNote(
-  providerCode: string | null,
-  description: string | null,
-): string {
-  const text = (description ?? '').trim();
-  if (providerCode === 'TECHCOMBANK') {
-    const lines = text.split(/\r?\n/).filter((line) => line.trim());
-    return (lines.at(-1) ?? '')
-      .replace(/[.\s]*M[aã]\s+tham\s+chi[eế]u\b.*$/iu, '')
-      .trim();
-  }
-  if (providerCode === 'VCB') {
-    // Content sits between `Ref <code>.` and the `FT…` trace string.
-    const content = /\bRef\s+[^\s.]+\.?\s*([\s\S]*)$/u.exec(text)?.[1];
-    if (content === undefined) return text;
-    return content.replace(/\s*\bFT\d{6,}[\s\S]*$/u, '').trim();
-  }
-  return text;
 }

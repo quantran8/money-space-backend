@@ -12,7 +12,11 @@ import type { RevenuecatWebhookBody } from './domain/revenuecat-event';
  */
 function makeService(
   options: {
-    subscriber?: { providerUserId: string; profileId: string | null; householdId: string } | null;
+    subscriber?: {
+      providerUserId: string;
+      profileId: string | null;
+      householdId: string;
+    } | null;
     /** Throw a unique violation from the insert, as a replay would. */
     duplicate?: boolean;
   } = {},
@@ -53,7 +57,13 @@ function makeService(
     noopAnalytics(),
   );
 
-  return { service, insertStorePurchase, linkRevenuecatSubscriber, grantOrExtend, record };
+  return {
+    service,
+    insertStorePurchase,
+    linkRevenuecatSubscriber,
+    grantOrExtend,
+    record,
+  };
 }
 
 function webhook(over: Record<string, unknown> = {}): RevenuecatWebhookBody {
@@ -98,7 +108,10 @@ describe('RevenueCat webhook', () => {
       const { service, grantOrExtend } = makeService();
 
       await service.handleWebhook(
-        webhook({ product_id: 'oursight_premium_lifetime', expiration_at_ms: null }),
+        webhook({
+          product_id: 'oursight_premium_lifetime',
+          expiration_at_ms: null,
+        }),
       );
 
       expect(grantOrExtend).toHaveBeenCalledWith(
@@ -113,7 +126,9 @@ describe('RevenueCat webhook', () => {
       const { service, grantOrExtend } = makeService();
 
       await expect(
-        service.handleWebhook(webhook({ type: 'RENEWAL', transaction_id: 'txn-2' })),
+        service.handleWebhook(
+          webhook({ type: 'RENEWAL', transaction_id: 'txn-2' }),
+        ),
       ).resolves.toBe('granted');
       expect(grantOrExtend).toHaveBeenCalled();
     });
@@ -122,10 +137,15 @@ describe('RevenueCat webhook', () => {
     it('records what the store actually charged', async () => {
       const { service, insertStorePurchase } = makeService();
 
-      await service.handleWebhook(webhook({ price_in_purchased_currency: 279_000 }));
+      await service.handleWebhook(
+        webhook({ price_in_purchased_currency: 279_000 }),
+      );
 
       expect(insertStorePurchase).toHaveBeenCalledWith(
-        expect.objectContaining({ amount: 279_000, productId: 'oursight_premium_yearly' }),
+        expect.objectContaining({
+          amount: 279_000,
+          productId: 'oursight_premium_yearly',
+        }),
       );
     });
 
@@ -146,17 +166,22 @@ describe('RevenueCat webhook', () => {
     it('treats a replayed delivery as already handled', async () => {
       const { service, grantOrExtend } = makeService({ duplicate: true });
 
-      await expect(service.handleWebhook(webhook())).resolves.toBe('already_handled');
+      await expect(service.handleWebhook(webhook())).resolves.toBe(
+        'already_handled',
+      );
       expect(grantOrExtend).not.toHaveBeenCalled();
     });
 
     /** A database outage IS worth retrying, so it must not be swallowed. */
     it('rethrows a transient failure so RevenueCat retries', async () => {
       const { service } = makeService();
-      (service as never as { billingRepository: { insertStorePurchase: jest.Mock } })
-        .billingRepository.insertStorePurchase.mockRejectedValueOnce(
-          new Error('connection terminated'),
-        );
+      (
+        service as never as {
+          billingRepository: { insertStorePurchase: jest.Mock };
+        }
+      ).billingRepository.insertStorePurchase.mockRejectedValueOnce(
+        new Error('connection terminated'),
+      );
 
       await expect(service.handleWebhook(webhook())).rejects.toThrow(
         'connection terminated',

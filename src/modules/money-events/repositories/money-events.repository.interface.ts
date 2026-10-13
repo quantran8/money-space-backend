@@ -72,6 +72,12 @@ export interface MoneyEventsRepository {
   insertMoneyEvent(event: MoneyEvent): Promise<void>;
   updateMoneyEvent(eventId: string, event: MoneyEvent): Promise<void>;
   deleteMoneyEvent(eventId: string): Promise<void>;
+  /** Writes both links explicitly, null included. */
+  setCashflowLink(
+    eventId: string,
+    cashflowEventId: string | null,
+    debtId: string | null,
+  ): Promise<void>;
   /**
    * Bulk soft-delete every non-deleted money event linked to a debt in one
    * statement. The caller still reverses each event's wallet effects separately.

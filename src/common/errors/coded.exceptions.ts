@@ -28,7 +28,10 @@ export class CodedException extends HttpException {
 }
 
 export class UnauthenticatedException extends UnauthorizedException {
-  constructor(message = 'Not authenticated', code: ErrorCode = 'unauthenticated') {
+  constructor(
+    message = 'Not authenticated',
+    code: ErrorCode = 'unauthenticated',
+  ) {
     super(body(code, message));
   }
 }

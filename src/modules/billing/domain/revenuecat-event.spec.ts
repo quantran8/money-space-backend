@@ -46,7 +46,9 @@ describe('RevenueCat events', () => {
     });
 
     it('falls back to the original id when there is no per-charge one', () => {
-      expect(transactionKeyOf({ original_transaction_id: 'txn_1' })).toBe('txn_1');
+      expect(transactionKeyOf({ original_transaction_id: 'txn_1' })).toBe(
+        'txn_1',
+      );
     });
 
     it('is null when the event carries neither', () => {

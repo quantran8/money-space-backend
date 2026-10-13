@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { CacheService } from '../../common/cache/cache.service';
 import { cacheKeys, cacheTtl } from '../../common/cache/cache.keys';
-import { DEFAULT_HOUSEHOLD_TZ, todayInTimeZone } from '../../common/utils/clock';
+import {
+  DEFAULT_HOUSEHOLD_TZ,
+  todayInTimeZone,
+} from '../../common/utils/clock';
 
 /**
  * How many what-ifs a household has run this month.

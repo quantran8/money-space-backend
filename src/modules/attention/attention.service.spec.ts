@@ -69,9 +69,7 @@ function setup(
 
   // Feeds `plan_expiring_soon`. Free by default, which raises nothing.
   const entitlements = {
-    forHousehold: jest.fn(async () =>
-      freeEntitlement(options.entitlement),
-    ),
+    forHousehold: jest.fn(async () => freeEntitlement(options.entitlement)),
   } as never;
 
   return {
@@ -214,7 +212,9 @@ describe('AttentionService.listAttentionItems', () => {
   });
 
   describe('plan_expiring_soon', () => {
-    const expiring = (over: Partial<Entitlement> = {}): Partial<Entitlement> => ({
+    const expiring = (
+      over: Partial<Entitlement> = {},
+    ): Partial<Entitlement> => ({
       tier: 'premium',
       status: 'active',
       expiresAt: '2026-08-20T00:00:00.000Z',
@@ -249,7 +249,9 @@ describe('AttentionService.listAttentionItems', () => {
     });
 
     it('stays quiet outside the window', async () => {
-      const { service } = setup({ entitlement: expiring({ daysRemaining: 40 }) });
+      const { service } = setup({
+        entitlement: expiring({ daysRemaining: 40 }),
+      });
 
       const result = await service.listAttentionItems('hh-1');
       expect(result.items.map((i) => i.ruleCode)).not.toContain(

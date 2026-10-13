@@ -21,7 +21,6 @@ function premiumEntitlements() {
   } as never;
 }
 
-
 /**
  * Deleting an asset that other records point at.
  *

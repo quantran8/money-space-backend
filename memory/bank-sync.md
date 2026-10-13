@@ -43,6 +43,15 @@ Tính năng Premium (`bank_sync`). Related: [[money-events]], [[assets]],
    giới hạn 4 KiB (Caddy chặn trước, guard chặn lại), 30 req/phút/token. Bộ đếm
    nằm trong RAM của process: đúng khi chỉ có một instance. Không có giới hạn
    theo IP — Caddy bản chuẩn không có.
+2b. **Thông báo không phải biến động số dư thì bỏ, không lưu gì** (không event,
+   không raw, không inbox) → trả `200 NOT_TRANSACTION`. Mỗi parser có
+   `isBalanceMovement` — chỉ kiểm tra dấu hiệu, không parse: Techcombank cần
+   title `± VND <số>` hoặc dòng `Số dư: VND`; VCB cần `Số dư TK VCB` hoặc
+   `Số dư <số> VND`. Quảng cáo/ưu đãi/kích hoạt tài khoản rơi ở đây. Ngưỡng cố
+   ý lỏng: một biến động đổi format mà còn dòng số dư vẫn đi tiếp và thành
+   `PARSE_FAILED` để người dùng thấy, thay vì bị bỏ âm thầm. Nếu một biến động
+   thật vẫn lọt bước này, cảnh báo lệch số dư ([[cashflow-settlement]]) sẽ lộ ra.
+   App ngoài allowlist vẫn đi tiếp như cũ (`APP_NOT_SUPPORTED`).
 3. Insert event `RECEIVED` (raw mã hoá). Trùng `(credential, clientEventId)` →
    trả event cũ, `200 DUPLICATE`. `clientEventId` không bắt buộc: Phím tắt có
    thể không có thao tác tạo UUID, nên khi thiếu, server tự suy ra một UUID cố
@@ -53,7 +62,10 @@ Tính năng Premium (`bank_sync`). Related: [[money-events]], [[assets]],
 6. Link mở tại thời điểm giao dịch; nếu link vừa đổi trong ±10 phút → `REVIEW`.
 7. Nghi trùng (cùng source, chiều, số tiền trong 10 phút) → `REVIEW`
    (`POSSIBLE_DUPLICATE`); không tự gộp vì hai giao dịch thật có thể cùng số tiền.
-8. Ví không còn hợp lệ → `REVIEW`. Link `AUTO` → post; ngược lại `REVIEW`.
+8. Ví không còn hợp lệ → `REVIEW`. Chạy matcher theo nội dung CK, lưu gợi ý
+   (`suggested_cashflow_event_id`, `match_status`) lên event. Link `AUTO` → post
+   (và settle nếu khớp duy nhất; `replace_manual` thì giữ `REVIEW`); ngược lại
+   `REVIEW`. Chi tiết: [[cashflow-settlement]].
 
 `202` chỉ nghĩa là đã nhận. UI luôn đọc status thật từ DB.
 
@@ -67,6 +79,8 @@ Trạng thái mở: `UNMAPPED`, `REVIEW`, `PARSE_FAILED`, `FAILED`. Người dù
 - **Ghi nhận** (`post`): chọn ví (mặc định ví của link). Được phép cả với
   `UNMAPPED` và `DUPLICATE` — người dùng đã nhìn thấy và tự quyết.
   `PARSE_FAILED` không có số tiền nên không post được; người dùng ghi tay.
+- **Ghi nhận & gắn** (`post` + `cashflowEventId`), **Thay khoản đã ghi tay**
+  (`replace_manual` + `cashflowEventId`) — xem [[cashflow-settlement]].
 - **Bỏ qua** → `IGNORED`.
 - **Đọc lại** (reparse) khi raw còn hạn; kết quả tối đa là `REVIEW`.
 
@@ -128,6 +142,12 @@ là `AUTO`, vì người dùng chưa nhìn thấy chúng.
 - Thiếu `BANK_SYNC_HMAC_KEY` → ingest trả 503. Thiếu `BANK_SYNC_PAYLOAD_KEY` chỉ
   503 khi đang bật lưu bản gốc.
 
+## Lệch số dư
+
+`reported_balance_minor` được so với số dư ledger ngay sau ME của chính event
+đó (`GET …/bank-sync/wallet-drift`). Chỉ hiển thị, không tự sửa — xem
+[[cashflow-settlement]].
+
 ## Trust model
 
 Token chứng minh **ai gửi request**, không chứng minh giao dịch có thật ở ngân
@@ -140,7 +160,8 @@ household. Mỗi người tối đa 10 token đang hoạt động.
 
 ## Where it lives in code
 
-- backend: `src/modules/bank-sync/` (guard, parsers, services, cron),
+- backend: `src/modules/bank-sync/` (guard, parsers, services, cron;
+  `domain/money-event-note.ts` dùng chung với matcher),
   `money-events` nhận thêm `opts.actorId/origin/notificationEventId`.
 - frontend-web: `packages/core/src/features/bank-sync/`,
   `web/src/features/bank-sync/`.

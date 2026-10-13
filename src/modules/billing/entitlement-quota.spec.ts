@@ -1,7 +1,10 @@
 import { EntitlementService } from './entitlement.service';
 import { noopAnalytics } from '../../common/analytics/test-support/analytics.fixture';
 import { PremiumRequiredException } from './entitlement.errors';
-import { freeEntitlement, premiumEntitlement } from './test-support/entitlement.fixture';
+import {
+  freeEntitlement,
+  premiumEntitlement,
+} from './test-support/entitlement.fixture';
 import { PLAN_LIMITS } from './constants/plan-limits';
 
 /**

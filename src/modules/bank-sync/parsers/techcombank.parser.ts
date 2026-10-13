@@ -14,6 +14,13 @@ export class TechcombankParser implements BankNotificationParser {
   readonly providerCode = 'TECHCOMBANK' as const;
   readonly version = VERSION;
 
+  isBalanceMovement(input: BankNotificationInput): boolean {
+    return (
+      /[+-]\s*VND\s*\d/u.test(normalizeText(input.title)) ||
+      /Số dư:\s*VND/u.test(input.body.normalize('NFC'))
+    );
+  }
+
   parse(input: BankNotificationInput): ParseResult {
     const title = normalizeText(input.title);
     const body = input.body.normalize('NFC');

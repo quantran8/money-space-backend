@@ -8,9 +8,9 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../database/prisma/prisma.service';
 import { todayInTimeZone } from '../../common/utils/clock';
-import { nextOccurrenceAfter } from '../../common/utils/recurrence';
 import { MoneyEventsService } from '../money-events/money-events.service';
 import { AssetsService } from '../assets/assets.service';
+import { CashflowSettlementService } from './services/cashflow-settlement.service';
 import {
   CashflowEvent,
   CashflowRequirement,
@@ -32,6 +32,7 @@ export class CashflowEventsService {
     private readonly moneyEvents: MoneyEventsService,
     @Inject(forwardRef(() => AssetsService))
     private readonly assets: AssetsService,
+    private readonly settlement: CashflowSettlementService,
   ) {}
 
   async listCashflowEvents(
@@ -218,6 +219,7 @@ export class CashflowEventsService {
     householdId: string,
     eventId: string,
     payload: CompleteCashflowEventDto = {},
+    actorId: string | null = null,
   ) {
     const event = await this.ensureCashflowEvent(householdId, eventId);
 
@@ -264,64 +266,51 @@ export class CashflowEventsService {
     }
     await this.assertSettlementAsset(householdId, settlementAssetId);
 
-    const advancedTo =
-      event.recurrence === 'once'
-        ? null
-        : nextOccurrenceAfter(event.expectedDate, event.recurrence);
-
-    // Past the end of the series → the series is over, not still running.
-    const seriesFinished =
-      advancedTo !== null &&
-      event.recurrenceEndDate != null &&
-      advancedTo > event.recurrenceEndDate;
-
-    const next: CashflowEvent = {
-      ...event,
-      status: advancedTo === null || seriesFinished ? 'completed' : 'expected',
-      expectedDate:
-        advancedTo !== null && !seriesFinished
-          ? advancedTo
-          : event.expectedDate,
-      lastCompletedAt: new Date().toISOString(),
-      lastCompletedAmount: amount,
-      lastCompletedAssetId: settlementAssetId,
-    };
-
-    const moneyEvent = await this.prisma.runInTransaction(
+    const result = await this.prisma.runInTransaction(
       async () => {
         // Go through MoneyEventsService rather than a raw insert so the wallet
         // debit/credit, valuation points and the goal mirror all fire.
-        const created = await this.moneyEvents.createMoneyEvent(householdId, {
-          type: event.direction === 'outgoing' ? 'payment_paid' : 'income',
-          // The event's OWN category. Outgoing used to be hardcoded `other`,
-          // which put every completed upcoming item in one bucket.
-          categoryId: event.categoryId,
-          amount,
-          isoDate: paidDate,
-          fromAssetId:
-            event.direction === 'outgoing' ? settlementAssetId : undefined,
-          toAssetId:
-            event.direction === 'incoming' ? settlementAssetId : undefined,
-          cashflowEventId: event.id,
-          debtId: event.debtId ?? undefined,
-          // `note` IS the `description` column, and the history row uses it as
-          // its title. Falling back to the event's name keeps the label the
-          // household chose ("Tiền điện tháng 9") instead of collapsing the row
-          // to its bare category.
-          note: payload.note?.trim() || event.name,
-        });
+        const created = await this.moneyEvents.createMoneyEvent(
+          householdId,
+          {
+            type: event.direction === 'outgoing' ? 'payment_paid' : 'income',
+            // The event's OWN category. Outgoing used to be hardcoded `other`,
+            // which put every completed upcoming item in one bucket.
+            categoryId: event.categoryId,
+            amount,
+            isoDate: paidDate,
+            fromAssetId:
+              event.direction === 'outgoing' ? settlementAssetId : undefined,
+            toAssetId:
+              event.direction === 'incoming' ? settlementAssetId : undefined,
+            cashflowEventId: event.id,
+            debtId: event.debtId ?? undefined,
+            // `note` IS the `description` column, and the history row uses it
+            // as its title; fall back to the event's own name.
+            note: payload.note?.trim() || event.name,
+          },
+          { actorId: actorId ?? undefined },
+        );
 
-        await this.cashflowEventsRepository.updateCashflowEvent(eventId, next);
-        return created;
+        // Settles `expectedDate`, never the clamped date the UI sends.
+        const next = await this.settlement.recordCompletion(
+          event,
+          created.id,
+          { amount, assetId: settlementAssetId },
+          actorId,
+        );
+        return { created, next };
       },
       { timeout: 30000, maxWait: 10000 },
     );
 
     return {
-      event: next,
-      moneyEvent,
+      event: result.next,
+      moneyEvent: result.created,
       advancedTo:
-        next.expectedDate === event.expectedDate ? null : next.expectedDate,
+        result.next.expectedDate === event.expectedDate
+          ? null
+          : result.next.expectedDate,
     };
   }
 

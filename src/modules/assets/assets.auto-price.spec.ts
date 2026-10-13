@@ -24,7 +24,10 @@ function makeService(
   options: { autoPricedIds?: string[] } = {},
 ) {
   const autoPricedIds = options.autoPricedIds ?? [];
-  const insertAsset = jest.fn(async (_asset: { autoPriceEnabled?: boolean; valuationMode?: string }) => undefined);
+  const insertAsset = jest.fn(
+    async (_asset: { autoPriceEnabled?: boolean; valuationMode?: string }) =>
+      undefined,
+  );
 
   const repository = {
     assertHousehold: jest.fn(async () => ({}) as never),
@@ -56,7 +59,9 @@ function makeService(
 
   const service = new AssetsService(
     repository,
-    { runInTransaction: jest.fn(async (fn: () => Promise<unknown>) => fn()) } as never,
+    {
+      runInTransaction: jest.fn(async (fn: () => Promise<unknown>) => fn()),
+    } as never,
     { getMarketPrices: jest.fn(async () => []) } as never,
     { record: jest.fn() } as never,
     {} as never,
@@ -93,7 +98,7 @@ describe('auto-price quota', () => {
 
     // The asset exists — that is the point. It simply is not automatic.
     expect(insertAsset).toHaveBeenCalled();
-    expect(insertAsset.mock.calls[0]![0]).toMatchObject({
+    expect(insertAsset.mock.calls[0][0]).toMatchObject({
       autoPriceEnabled: false,
       valuationMode: 'market_priced',
     });
@@ -107,7 +112,9 @@ describe('auto-price quota', () => {
     });
 
     await service.createAsset('hh-1', goldPayload);
-    expect(insertAsset.mock.calls[0]![0]).toMatchObject({ autoPriceEnabled: true });
+    expect(insertAsset.mock.calls[0][0]).toMatchObject({
+      autoPriceEnabled: true,
+    });
   });
 
   it('leaves a premium household unlimited', async () => {
@@ -116,6 +123,8 @@ describe('auto-price quota', () => {
     });
 
     await service.createAsset('hh-1', goldPayload);
-    expect(insertAsset.mock.calls[0]![0]).toMatchObject({ autoPriceEnabled: true });
+    expect(insertAsset.mock.calls[0][0]).toMatchObject({
+      autoPriceEnabled: true,
+    });
   });
 });

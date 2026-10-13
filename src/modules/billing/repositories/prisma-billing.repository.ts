@@ -24,7 +24,6 @@ const SUBSCRIPTION_FIELDS = {
   trialEndsAt: true,
 } as const;
 
-
 const PAYMENT_ORDER_FIELDS = {
   id: true,
   householdId: true,
@@ -111,7 +110,9 @@ export class PrismaBillingRepository
         status: write.status,
         currentPeriodEnd: write.currentPeriodEnd,
         source: write.source,
-        ...(write.trialStartedAt ? { trialStartedAt: write.trialStartedAt } : {}),
+        ...(write.trialStartedAt
+          ? { trialStartedAt: write.trialStartedAt }
+          : {}),
         ...(write.trialEndsAt ? { trialEndsAt: write.trialEndsAt } : {}),
       },
     });
@@ -174,7 +175,10 @@ export class PrismaBillingRepository
     return rest;
   }
 
-  async hasRedeemed(redeemCodeId: string, householdId: string): Promise<boolean> {
+  async hasRedeemed(
+    redeemCodeId: string,
+    householdId: string,
+  ): Promise<boolean> {
     const existing = await this.prisma.redeemCodeRedemption.findUnique({
       where: {
         redeemCodeId_householdId: { redeemCodeId, householdId },

@@ -20,6 +20,12 @@ export class VcbParser implements BankNotificationParser {
   readonly providerCode = 'VCB' as const;
   readonly version = VERSION;
 
+  isBalanceMovement(input: BankNotificationInput): boolean {
+    return /Số dư TK VCB|Số dư [\d.,]+ VND/u.test(
+      normalizeText(input.body.replace(/\s+/g, ' ')),
+    );
+  }
+
   parse(input: BankNotificationInput): ParseResult {
     const body = normalizeText(input.body.replace(/\s+/g, ' '));
 

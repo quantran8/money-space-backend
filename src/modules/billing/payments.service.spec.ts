@@ -81,7 +81,12 @@ function webhook(over: Record<string, unknown> = {}) {
     desc: 'success',
     ...over,
   };
-  return { code: '00', desc: 'success', data, signature: signPayload(data, CHECKSUM_KEY) };
+  return {
+    code: '00',
+    desc: 'success',
+    data,
+    signature: signPayload(data, CHECKSUM_KEY),
+  };
 }
 
 describe('PayOS webhook', () => {
@@ -265,7 +270,7 @@ describe('PayOS webhook', () => {
       expect(recordPaymentPayload).toHaveBeenCalled();
     });
 
-    it('accepts PayOS\'s registration ping without treating it as a failure', async () => {
+    it("accepts PayOS's registration ping without treating it as a failure", async () => {
       // PayOS calls the endpoint once to verify the URL. Answering it with an
       // error would fail the registration.
       const { service, grantOrExtend } = makeService();
