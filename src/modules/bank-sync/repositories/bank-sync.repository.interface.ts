@@ -102,15 +102,6 @@ export interface BankSyncRepository {
   findLatestBalanceObservations(
     householdId: string,
   ): Promise<BalanceObservation[]>;
-  existsSimilar(params: {
-    householdId: string;
-    sourceId: string;
-    direction: string;
-    amountMinor: number;
-    from: Date;
-    to: Date;
-    excludeId: string;
-  }): Promise<boolean>;
   findUnmappedByIdentifier(
     householdId: string,
     providerCode: string,
