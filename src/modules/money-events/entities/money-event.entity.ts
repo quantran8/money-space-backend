@@ -57,6 +57,8 @@ export interface MoneyEvent {
   quantityAfter?: number;
   note: string;
   isoDate: string;
+  /** Orders events that share an `isoDate`. */
+  createdAt?: string;
   type: MoneyEventType;
   /** FK to `money_event_categories.id` (was a free code string). */
   categoryId: string;

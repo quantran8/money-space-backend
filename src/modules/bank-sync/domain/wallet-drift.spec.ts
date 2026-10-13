@@ -9,6 +9,7 @@ const obs = (over: Partial<BalanceObservation> = {}): BalanceObservation => ({
   timeSource: 'CONTENT',
   ledgerBalance: 100_000_000,
   currentValue: 99_945_000,
+  adjustedSince: 0,
   ...over,
 });
 
@@ -27,6 +28,18 @@ describe('toWalletDrift', () => {
     expect(toWalletDrift(obs({ ledgerBalance: 130_000_000 }))?.drift).toBe(
       -30_000_000,
     );
+  });
+
+  it('clears once the suggested adjustment has been recorded', () => {
+    const before = toWalletDrift(obs({ ledgerBalance: 100_055_000 }))!;
+    const after = toWalletDrift(
+      obs({
+        ledgerBalance: 100_055_000,
+        currentValue: before.suggestedValue,
+        adjustedSince: before.drift,
+      }),
+    );
+    expect(after?.drift).toBe(0);
   });
 
   it('skips an observation with no ledger point', () => {

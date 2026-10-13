@@ -297,6 +297,7 @@ export class PrismaBankSyncRepository
         observed_at: Date;
         time_source: string | null;
         ledger_value: Prisma.Decimal | null;
+        adjusted_since: Prisma.Decimal | null;
       }>
     >`
       SELECT DISTINCT ON (l.asset_id)
@@ -304,7 +305,11 @@ export class PrismaBankSyncRepository
         e.id AS bank_event_id, e.reported_balance_minor,
         COALESCE(e.transaction_at, e.notification_at, e.received_at) AS observed_at,
         e.time_source::text AS time_source,
-        v.value AS ledger_value
+        v.value AS ledger_value,
+        (SELECT SUM(r.amount) FROM money_events r
+          WHERE r.to_asset_id = l.asset_id AND r.event_type = 'asset_update'
+            AND r.deleted_at IS NULL AND r.created_at > m.created_at
+        ) AS adjusted_since
       FROM bank_source_links l
       JOIN assets a ON a.id = l.asset_id AND a.deleted_at IS NULL
       JOIN bank_notification_events e
@@ -327,6 +332,7 @@ export class PrismaBankSyncRepository
       timeSource: row.time_source,
       ledgerBalance: row.ledger_value === null ? null : Number(row.ledger_value),
       currentValue: Number(row.current_value ?? 0),
+      adjustedSince: Number(row.adjusted_since ?? 0),
     }));
   }
 

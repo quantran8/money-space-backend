@@ -42,7 +42,7 @@ export class PrismaMoneyEventsRepository
   async findMoneyEventsByHousehold(householdId: string): Promise<MoneyEvent[]> {
     const events = await this.prisma.moneyEvent.findMany({
       where: { householdId, deletedAt: null },
-      orderBy: { eventDate: 'desc' },
+      orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
     });
 
     return events.map((event) => mapMoneyEvent(event));
@@ -95,7 +95,7 @@ export class PrismaMoneyEventsRepository
     const [rows, total] = await Promise.all([
       this.prisma.moneyEvent.findMany({
         where,
-        orderBy: { eventDate: 'desc' },
+        orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
         ...(take ? { take } : {}),
       }),
       this.prisma.moneyEvent.count({ where }),
@@ -147,7 +147,7 @@ export class PrismaMoneyEventsRepository
   ): Promise<MoneyEvent[]> {
     const events = await this.prisma.moneyEvent.findMany({
       where: { householdId, debtId, deletedAt: null },
-      orderBy: { eventDate: 'desc' },
+      orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
     });
 
     return events.map((event) => mapMoneyEvent(event));
@@ -310,7 +310,7 @@ export class PrismaMoneyEventsRepository
         deletedAt: null,
         OR: [{ fromAssetId: assetId }, { toAssetId: assetId }],
       },
-      orderBy: { eventDate: 'asc' },
+      orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }],
     });
     return rows.map((row) => mapMoneyEvent(row));
   }
