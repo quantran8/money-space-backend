@@ -105,7 +105,11 @@ export interface BankNotificationEvent {
   suggestedCashflowEventId: string | null;
   matchStatus: string | null;
   matchReason: string | null;
+  /** Own-account transfer legs. See memory/bank-sync.md. */
+  counterpartSourceId: string | null;
+  transferPeerEventId: string | null;
   moneyEventId: string | null;
+  moneyEventType: string | null;
 }
 
 export type BankEventPatch = Partial<
@@ -117,5 +121,6 @@ export type BankEventPatch = Partial<
     | 'ingestCredentialId'
     | 'clientEventId'
     | 'moneyEventId'
+    | 'moneyEventType'
   >
 >;

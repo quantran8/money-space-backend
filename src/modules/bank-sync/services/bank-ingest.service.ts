@@ -12,17 +12,21 @@ import type {
   BankEventStatus,
   BankIngestContext,
   BankNotificationEvent,
+  BankPostingMode,
 } from '../entities/bank-sync.entity';
 import { identifierHmac, last4 } from '../domain/identifier-hmac';
+import { accountCandidates } from '../domain/transfer-counterpart';
 import { decryptPayload, encryptPayload } from '../domain/payload-cipher';
 import { isPostableWallet } from '../domain/wallet';
 import { vnIsoDate } from '../domain/vn-time';
 import type { IngestBankNotificationDto } from '../dto/ingest-bank-notification.dto';
+import { OUT_UNVERIFIED } from '../parsers/bank-notification-parser';
 import type {
   BankNotificationInput,
   ProviderCode,
 } from '../parsers/bank-notification-parser';
 import {
+  SUPPORTED_PROVIDERS,
   isProviderCode,
   parserFor,
   providerForApp,
@@ -37,6 +41,7 @@ const MINUTE = 60 * 1000;
 const SAME_PAYLOAD_WINDOW = 24 * 60 * MINUTE;
 const SIMILAR_WINDOW = 10 * MINUTE;
 const LINK_CHANGE_WINDOW = 10 * MINUTE;
+const TRANSFER_PAIR_WINDOW = MINUTE;
 
 export interface IngestOutcome {
   /** Null when nothing was stored. */
@@ -45,7 +50,15 @@ export interface IngestOutcome {
   replayed: boolean;
 }
 
-type StoredOutcome = IngestOutcome & { eventId: string; status: BankEventStatus };
+type StoredOutcome = IngestOutcome & {
+  eventId: string;
+  status: BankEventStatus;
+};
+
+interface TransferContext {
+  counterpart: { sourceId: string; postingMode: BankPostingMode } | null;
+  peer: BankNotificationEvent | null;
+}
 
 interface RouteOptions {
   /** False for anything the user has not seen yet arriving through a back door. */
@@ -125,12 +138,15 @@ export class BankIngestService {
       suggestedCashflowEventId: null,
       matchStatus: null,
       matchReason: null,
+      counterpartSourceId: null,
+      transferPeerEventId: null,
       status: 'RECEIVED',
       statusReason: null,
       receivedAt: now,
       processedAt: null,
       processedById: null,
       moneyEventId: null,
+      moneyEventType: null,
     };
 
     if (!(await this.repo.insertEvent(event))) {
@@ -329,13 +345,23 @@ export class BankIngestService {
       return settle('REVIEW', 'ASSET_UNAVAILABLE', linked);
     }
 
-    const match = await this.matchNote(event, link.assetId, at);
+    const transfer = await this.resolveTransfer(
+      event,
+      source.id,
+      link.assetId,
+      at,
+    );
+    linked.counterpartSourceId = transfer.counterpart?.sourceId ?? null;
+    const isTransfer = transfer.counterpart !== null || transfer.peer !== null;
+    // A transfer settles no cashflow event.
+    const match = isTransfer
+      ? null
+      : await this.matchNote(event, link.assetId, at);
     Object.assign(linked, {
       suggestedCashflowEventId: match?.cashflowEventId ?? null,
       matchStatus: match?.status ?? null,
       matchReason: match?.reason ?? null,
     });
-
     if (event.amountMinor !== null && event.direction) {
       const similar = await this.repo.existsSimilar({
         householdId: event.householdId,
@@ -350,21 +376,45 @@ export class BankIngestService {
         return settle('REVIEW', 'POSSIBLE_DUPLICATE', linked);
       }
     }
-
-    if (opts.parserReview) {
-      return settle('REVIEW', opts.parserReview, linked);
+    // The other leg already moved the money; this one only closes the pair.
+    if (transfer.peer?.moneyEventType === 'transfer') {
+      return this.postLinked(event, linked, opts.actorId, null, settle);
+    }
+    // The other bank confirmed the amount. See memory/bank-sync.md.
+    const parserReview =
+      transfer.peer && opts.parserReview === OUT_UNVERIFIED
+        ? undefined
+        : opts.parserReview;
+    if (parserReview) {
+      return settle('REVIEW', parserReview, linked);
     }
     if (!opts.allowAuto || link.postingMode !== 'AUTO') {
       return settle('REVIEW', 'MANUAL_MODE', linked);
+    }
+    if (isTransfer && !(await this.transferMayAutoPost(transfer))) {
+      return settle('REVIEW', 'TRANSFER_REVIEW', linked);
     }
     // Posting now would double-count a manual completion. See memory/cashflow-settlement.md.
     if (match?.status === 'replace_manual') {
       return settle('REVIEW', 'MATCH_REPLACE_MANUAL', linked);
     }
+    return this.postLinked(event, linked, opts.actorId, match, settle);
+  }
 
+  private async postLinked(
+    event: BankNotificationEvent,
+    linked: BankEventPatch,
+    actorId: string,
+    match: MatchResult | null,
+    settle: (
+      s: BankEventStatus,
+      r: string,
+      x?: BankEventPatch,
+    ) => Promise<BankEventStatus>,
+  ): Promise<BankEventStatus> {
     await this.repo.updateEvent(event.id, linked);
     try {
-      await this.postAuto(event, opts.actorId, match);
+      await this.postAuto(event, actorId, match);
       return 'PROCESSED';
     } catch (error) {
       this.logger.error(
@@ -372,6 +422,85 @@ export class BankIngestService {
       );
       return settle('FAILED', 'POST_FAILED', linked);
     }
+  }
+
+  /** Counterpart source named in the body, and the other leg if it has arrived. */
+  private async resolveTransfer(
+    event: BankNotificationEvent,
+    sourceId: string,
+    walletId: string,
+    at: Date,
+  ): Promise<TransferContext> {
+    if (event.amountMinor === null || !event.direction) {
+      return { counterpart: null, peer: null };
+    }
+    const counterpart = await this.findCounterpart(
+      event,
+      sourceId,
+      walletId,
+      at,
+    );
+    if (event.transferPeerEventId) {
+      const peer = await this.repo.findEvent(
+        event.householdId,
+        event.transferPeerEventId,
+      );
+      return { counterpart, peer };
+    }
+    const peer = await this.repo.findTransferPeer({
+      householdId: event.householdId,
+      eventId: event.id,
+      direction: event.direction,
+      amountMinor: event.amountMinor,
+      sourceId,
+      counterpartSourceId: counterpart?.sourceId ?? null,
+      from: new Date(at.getTime() - TRANSFER_PAIR_WINDOW),
+      to: new Date(at.getTime() + TRANSFER_PAIR_WINDOW),
+    });
+    if (!peer || !(await this.repo.pairTransfer(event.id, peer.id))) {
+      return { counterpart, peer: null };
+    }
+    return { counterpart, peer: { ...peer, transferPeerEventId: event.id } };
+  }
+
+  private async findCounterpart(
+    event: BankNotificationEvent,
+    sourceId: string,
+    walletId: string,
+    at: Date,
+  ): Promise<TransferContext['counterpart']> {
+    const { hmacKey } = keys();
+    const hmacs = accountCandidates(event.description ?? '').flatMap((n) =>
+      SUPPORTED_PROVIDERS.map((p) => identifierHmac(hmacKey, p, n)),
+    );
+    const sources = (
+      await this.repo.findSourcesByHmacs(event.householdId, hmacs)
+    ).filter((s) => s.id !== sourceId);
+    if (sources.length !== 1 || sources[0].status !== 'ACTIVE') return null;
+    const links = await this.repo.findLinksAt(sources[0].id, at);
+    if (links.length !== 1 || links[0].assetId === walletId) return null;
+    const wallet = await this.repo.findWallet(
+      event.householdId,
+      links[0].assetId,
+    );
+    if (!isPostableWallet(wallet)) return null;
+    return { sourceId: sources[0].id, postingMode: links[0].postingMode };
+  }
+
+  /** A new transfer touches both wallets, so both links must be AUTO. */
+  private async transferMayAutoPost({
+    counterpart,
+    peer,
+  }: TransferContext): Promise<boolean> {
+    if (!peer) return counterpart?.postingMode === 'AUTO';
+    if (peer.moneyEventId) return true;
+    if (peer.status !== 'REVIEW' || peer.statusReason !== OUT_UNVERIFIED) {
+      return false;
+    }
+    if (!peer.sourceId) return false;
+    const peerAt = peer.transactionAt ?? peer.notificationAt ?? peer.receivedAt;
+    const links = await this.repo.findLinksAt(peer.sourceId, peerAt);
+    return links.length === 1 && links[0].postingMode === 'AUTO';
   }
 
   private async matchNote(

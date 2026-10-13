@@ -7,6 +7,7 @@ import {
   isIngestTokenShape,
 } from './ingest-token';
 import { decryptPayload, encryptPayload } from './payload-cipher';
+import { accountCandidates } from './transfer-counterpart';
 import { parseVndAmount } from './vnd-amount';
 
 describe('parseVndAmount', () => {
@@ -61,5 +62,26 @@ describe('payload cipher', () => {
     const blob = encryptPayload(key, 'Số dư TK VCB');
     expect(decryptPayload(key, blob)).toBe('Số dư TK VCB');
     expect(() => decryptPayload(randomBytes(32), blob)).toThrow();
+  });
+});
+
+describe('accountCandidates', () => {
+  it('finds the sender account inside a VCB trace string', () => {
+    expect(
+      accountCandidates(
+        'Ref X.A chuyen FT26286132204071.20261013.114711.19031234567801.VND-TGTT-A.970407',
+      ),
+    ).toContain('19031234567801');
+  });
+
+  it('joins an account the bank split with a space', () => {
+    const found = accountCandidates(
+      'CT tu 10 12345678 NGUYEN VAN A toi ••1016',
+    );
+    expect(found).toEqual(expect.arrayContaining(['12345678', '1012345678']));
+  });
+
+  it('never joins numbers across punctuation', () => {
+    expect(accountCandidates('Số dư: VND 2,143,538')).toEqual([]);
   });
 });

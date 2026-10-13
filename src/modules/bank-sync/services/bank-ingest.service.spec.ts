@@ -2,6 +2,8 @@ import { ConflictException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
 import type { BankNotificationEvent } from '../entities/bank-sync.entity';
+import { bankSyncConfig } from '../../../config/bank-sync.config';
+import { identifierHmac } from '../domain/identifier-hmac';
 import { BankIngestService, noteFromBody } from './bank-ingest.service';
 import type { BankPostingService } from './bank-posting.service';
 import type { CashflowMatcherService } from '../../cashflow-events/services/cashflow-matcher.service';
@@ -60,6 +62,10 @@ function setup() {
     findWallet: jest.fn().mockResolvedValue(WALLET),
     existsSimilar: jest.fn().mockResolvedValue(false),
     findUnmappedByIdentifier: jest.fn().mockResolvedValue([]),
+    findEvent: jest.fn().mockResolvedValue(null),
+    findSourcesByHmacs: jest.fn().mockResolvedValue([]),
+    findTransferPeer: jest.fn().mockResolvedValue(null),
+    pairTransfer: jest.fn().mockResolvedValue(true),
   };
   const posting = { post: jest.fn().mockResolvedValue('posted') };
   const matcher = {
@@ -298,7 +304,11 @@ describe('BankIngestService.ingest', () => {
       body: 'Tiếp tục khám phá các ưu đãi hấp dẫn Techcombank dành tặng bạn nhé',
       notificationAt: null,
     });
-    expect(out).toEqual({ eventId: null, status: 'NOT_TRANSACTION', replayed: false });
+    expect(out).toEqual({
+      eventId: null,
+      status: 'NOT_TRANSACTION',
+      replayed: false,
+    });
     expect(repo.insertEvent).not.toHaveBeenCalled();
   });
 
@@ -307,6 +317,113 @@ describe('BankIngestService.ingest', () => {
     posting.post.mockRejectedValue(new Error('db down'));
     expect((await service.ingest(CTX, VCB())).status).toBe('FAILED');
     expect(lastStatus()).toMatchObject({ statusReason: 'POST_FAILED' });
+  });
+});
+
+describe('BankIngestService own-account transfer', () => {
+  const TCB_ACCOUNT = '19031234567801';
+  const VCB_FROM_TCB = {
+    ...VCB(),
+    body: `${VCB().body} Ref 6286IBT1k252X54K.NGUYEN VAN A chuyen FT26286132204071.20261012.144434.${TCB_ACCOUNT}.VND-TGTT-NGUYEN VAN A.970407`,
+  };
+  const TCB_OUT = {
+    clientEventId: '550e8400-e29b-41d4-a716-446655440001',
+    app: 'Techcombank',
+    title: '- VND 2,000',
+    body: 'Tài khoản: 1903 9999 0000 01\nSố dư: VND 1,000\nNGUYEN VAN A chuyen tien',
+    notificationAt: new Date('2026-10-12T07:45:00Z'),
+  };
+  const TCB_SOURCE = { ...SOURCE, id: 'src-tcb', providerCode: 'TECHCOMBANK' };
+  const PEER = {
+    id: 'evt-peer',
+    status: 'PROCESSED',
+    statusReason: null,
+    sourceId: 'src-tcb',
+    transactionAt: null,
+    notificationAt: new Date('2026-10-12T07:45:00Z'),
+    receivedAt: new Date(),
+  };
+
+  function withTcb(
+    tcbMode: 'AUTO' | 'REVIEW',
+    vcbMode: 'AUTO' | 'REVIEW' = 'AUTO',
+  ) {
+    const t = setup();
+    const tcbHmac = identifierHmac(
+      bankSyncConfig.hmacKey as Buffer,
+      'TECHCOMBANK',
+      TCB_ACCOUNT,
+    );
+    t.repo.findSourcesByHmacs.mockImplementation(
+      (_hh: string, hmacs: string[]) =>
+        Promise.resolve(hmacs.includes(tcbHmac) ? [TCB_SOURCE] : []),
+    );
+    t.repo.findLinksAt.mockImplementation((sourceId: string) =>
+      Promise.resolve([
+        sourceId === 'src-tcb'
+          ? {
+              ...LINK(tcbMode),
+              externalSourceId: 'src-tcb',
+              assetId: 'wallet-tcb',
+            }
+          : LINK(vcbMode),
+      ]),
+    );
+    return t;
+  }
+
+  it('posts an IN that names another household account as a transfer leg', async () => {
+    const { service, posting, matcher, updates } = withTcb('AUTO');
+    const out = await service.ingest(CTX, VCB_FROM_TCB);
+    expect(out.status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenCalledWith('hh-1', 'evt-1', 'user-1');
+    expect(matcher.match).not.toHaveBeenCalled();
+    expect(updates.at(-1)?.patch.counterpartSourceId).toBe('src-tcb');
+  });
+
+  it('keeps a transfer in review while the other account is on REVIEW', async () => {
+    const { service, posting, lastStatus } = withTcb('REVIEW');
+    await service.ingest(CTX, VCB_FROM_TCB);
+    expect(lastStatus()).toMatchObject({
+      status: 'REVIEW',
+      statusReason: 'TRANSFER_REVIEW',
+      counterpartSourceId: 'src-tcb',
+    });
+    expect(posting.post).not.toHaveBeenCalled();
+  });
+
+  it('pairs an OUT with the income its IN leg already posted, waiving OUT_UNVERIFIED', async () => {
+    const { service, repo, posting } = setup();
+    repo.findTransferPeer.mockResolvedValue({
+      ...PEER,
+      sourceId: 'src-vcb',
+      moneyEventId: 'me-1',
+      moneyEventType: 'income',
+    });
+    const out = await service.ingest(CTX, TCB_OUT);
+    expect(repo.pairTransfer).toHaveBeenCalledWith('evt-1', 'evt-peer');
+    expect(out.status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenCalled();
+  });
+
+  it('closes the pair on a REVIEW link when the other leg already moved the money', async () => {
+    const { service, repo, posting } = withTcb('AUTO', 'REVIEW');
+    repo.findTransferPeer.mockResolvedValue({
+      ...PEER,
+      moneyEventId: 'me-0',
+      moneyEventType: 'transfer',
+    });
+    const out = await service.ingest(CTX, VCB_FROM_TCB);
+    expect(out.status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenCalled();
+  });
+
+  it('treats a lost pairing race as no peer', async () => {
+    const { service, repo, lastStatus } = setup();
+    repo.findTransferPeer.mockResolvedValue({ ...PEER, moneyEventId: null });
+    repo.pairTransfer.mockResolvedValue(false);
+    await service.ingest(CTX, TCB_OUT);
+    expect(lastStatus()).toMatchObject({ statusReason: 'OUT_UNVERIFIED' });
   });
 });
 

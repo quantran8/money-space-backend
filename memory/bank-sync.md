@@ -112,6 +112,65 @@ gốc mã hoá có thể đã tắt hoặc hết hạn khi người dùng xác n
 post hai lần khi hai luồng chạy song song. `created_by` = user của credential
 (hoặc người bấm xác nhận trong inbox), không phải người tạo household.
 
+## Chuyển tiền giữa hai tài khoản của chính household
+
+Chuyển TCB → VCB sinh hai notification (TCB `-x`, VCB `+x`) đến lệch nhau,
+thứ tự bất kỳ. Ghi thành **một** money event `transfer` (category hệ thống
+`other`, neutral — không tính thu/chi), không phải expense + income.
+
+**Nhận ra đối ứng.** Body của cả hai chiều chứa số TK bên kia ở dạng đầy đủ:
+VCB nhận có `…FT….20261013.114711.19035020891016.VND…` (số TCB gửi); TCB nhận
+có `CT tu 10 17013153 …` (số VCB, có khi bị chèn khoảng trắng). Lúc route, lấy
+mọi cụm số 6–19 chữ số trong `description` (số TK của chính event đã bị che nên
+không lọt vào) **cộng** các cặp cụm số cạnh nhau ghép lại (`10 17013153` →
+`1017013153`), HMAC với từng provider, tìm source trong household. Đúng một
+source khác source của event, ACTIVE, có đúng một link tại thời điểm giao dịch
+tới ví hợp lệ khác ví mình → lưu `counterpart_source_id`. Nhiều source khớp →
+coi như không có. Số rác (mã ref, ngày giờ) chỉ ra HMAC không khớp gì.
+
+**Ghép cặp.** Event `E` (đã có source + ví) tìm `P`: chiều ngược lại, cùng số
+tiền, chưa ghép, khác source, không `DUPLICATE/IGNORED/PARSE_FAILED`, đã có
+`matched_asset_id`, thời điểm hiệu lực (`transaction_at` → `notification_at` →
+`received_at`) cách nhau ≤ **1 phút**, và **ít nhất một bên** chỉ đích danh bên kia
+(`E.counterpart = P.source` hoặc `P.counterpart = E.source`). Hai dòng trỏ nhau
+qua `transfer_peer_event_id` (UNIQUE), ghép bằng `updateMany … WHERE peer IS
+NULL` trong một transaction — không ghép ba bên. 1 phút vì thực tế hai
+notification đến cách nhau 5–10 giây (quyết định của chủ sản phẩm, 2026-10-13);
+cửa sổ hẹp để hai lần chuyển cùng số tiền liên tiếp không bị ghép chéo. Đánh
+đổi: bên đến sau quá 1 phút (máy tắt, Phím tắt chạy trễ, TCB không có giờ trong
+nội dung nên dùng giờ notification) sẽ không ghép được và cũng tự post transfer
+→ **ghi hai lần**; lệch số dư sẽ lộ ra.
+
+**Post** (`BankPostingService.post`, khoá cả hai dòng theo thứ tự id):
+- Peer đã có money event `transfer` → event này chỉ thành `PROCESSED`
+  (`TRANSFER_PAIRED`), không tạo tiền. Ví đích của transfer phải đúng ví của
+  event, không thì 409.
+- Peer đã có income/expense (vd VCB tự post trước khi TCB được liên kết) → sửa
+  money event đó thành `transfer` qua `updateMoneyEvent` (replay ví như edit).
+  Money event đã settle cashflow thì không bị chọn làm peer.
+- Chưa bên nào post → tạo transfer (từ ví bên OUT sang ví bên IN), gắn vào event
+  đang post; peer thành `PROCESSED` (`TRANSFER_PAIRED`).
+- Chưa có peer nhưng có `counterpart_source_id` → vẫn post transfer, bên thiếu
+  lấy ví của link counterpart. Event kia đến sau sẽ ghép vào. Link counterpart
+  đã mất → rơi về income/expense như cũ.
+- Transfer không settle cashflow: route bỏ matcher, inbox `post` kèm
+  `cashflowEventId` trên event transfer → 400.
+
+**Tự động hay vào inbox.**
+- Peer đã có transfer → luôn đánh dấu `TRANSFER_PAIRED`, kể cả xử lý lại sau
+  liên kết, vì không có tiền nào di chuyển.
+- Peer có income/expense cần đổi → cần `allowAuto` + link của event `AUTO`.
+- Tạo transfer mới → cần `allowAuto` + **cả hai** link `AUTO` (transfer chạm cả
+  hai ví), và nếu peer đang chờ thì chỉ khi lý do của nó là `OUT_UNVERIFIED`.
+- Có peer thì `OUT_UNVERIFIED` được bỏ qua: số tiền đã được ngân hàng kia xác
+  nhận. Chưa có peer thì vẫn giữ.
+- Không đủ điều kiện → giữ lý do REVIEW cũ; người dùng bấm Ghi nhận trong inbox
+  sẽ ra transfer.
+
+Race: hai bên đến gần như cùng lúc có thể không thấy nhau (sourceId của bên kia
+chưa ghi) — chấp nhận như kiểm tra cùng payload; inbox/lệch số dư sẽ lộ ra.
+Lệch số dư: event `TRANSFER_PAIRED` dùng money event của peer làm mốc.
+
 ## Xử lý lại sau khi liên kết
 
 Tạo source/link xong, các event `UNMAPPED` cùng HMAC được chạy lại bước 5–8,

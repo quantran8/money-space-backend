@@ -41,7 +41,9 @@ const CREDENTIAL_SELECT = {
   revokedAt: true,
 } as const;
 
-const EVENT_INCLUDE = { moneyEvent: { select: { id: true } } } as const;
+const EVENT_INCLUDE = {
+  moneyEvent: { select: { id: true, eventType: true } },
+} as const;
 
 /** Statuses an inbox still has to act on. */
 const OPEN_STATUSES: BankEventStatus[] = [
@@ -248,11 +250,23 @@ export class PrismaBankSyncRepository
     });
   }
 
+  findSourcesByHmacs(
+    householdId: string,
+    hmacs: string[],
+  ): Promise<BankExternalSource[]> {
+    if (hmacs.length === 0) return Promise.resolve([]);
+    return this.prisma.bankExternalSource.findMany({
+      where: { householdId, identifierHmac: { in: hmacs } },
+    });
+  }
+
   async insertEvent(row: BankNotificationEvent): Promise<boolean> {
     const data: Prisma.BankNotificationEventUncheckedCreateInput & {
       moneyEventId?: string | null;
+      moneyEventType?: string | null;
     } = { ...row, rawPayloadCiphertext: toBytes(row.rawPayloadCiphertext) };
     delete data.moneyEventId;
+    delete data.moneyEventType;
     try {
       await this.prisma.bankNotificationEvent.create({ data });
       return true;
@@ -317,7 +331,9 @@ export class PrismaBankSyncRepository
        AND e.matched_asset_id = l.asset_id
        AND e.status = 'PROCESSED'
        AND e.reported_balance_minor IS NOT NULL
-      JOIN money_events m ON m.notification_event_id = e.id AND m.deleted_at IS NULL
+      JOIN money_events m
+        ON m.notification_event_id IN (e.id, e.transfer_peer_event_id)
+       AND m.deleted_at IS NULL
       LEFT JOIN asset_valuations v
         ON v.money_event_id = m.id AND v.asset_id = l.asset_id AND v.deleted_at IS NULL
       WHERE l.household_id = ${householdId}::uuid AND l.valid_to IS NULL
@@ -330,7 +346,8 @@ export class PrismaBankSyncRepository
       reportedBalance: Number(row.reported_balance_minor),
       observedAt: row.observed_at,
       timeSource: row.time_source,
-      ledgerBalance: row.ledger_value === null ? null : Number(row.ledger_value),
+      ledgerBalance:
+        row.ledger_value === null ? null : Number(row.ledger_value),
       currentValue: Number(row.current_value ?? 0),
       adjustedSince: Number(row.adjusted_since ?? 0),
     }));
@@ -444,6 +461,81 @@ export class PrismaBankSyncRepository
     return rows.map(mapEvent);
   }
 
+  async findTransferPeer(params: {
+    householdId: string;
+    eventId: string;
+    direction: string;
+    amountMinor: number;
+    sourceId: string;
+    counterpartSourceId: string | null;
+    from: Date;
+    to: Date;
+  }) {
+    const window = { gte: params.from, lte: params.to };
+    const pointsAtUs: Prisma.BankNotificationEventWhereInput[] = [
+      { counterpartSourceId: params.sourceId },
+    ];
+    if (params.counterpartSourceId) {
+      pointsAtUs.push({ sourceId: params.counterpartSourceId });
+    }
+    const row = await this.prisma.bankNotificationEvent.findFirst({
+      where: {
+        householdId: params.householdId,
+        id: { not: params.eventId },
+        direction: params.direction === 'IN' ? 'OUT' : 'IN',
+        amountMinor: BigInt(params.amountMinor),
+        transferPeerEventId: null,
+        sourceId: { not: params.sourceId },
+        matchedAssetId: { not: null },
+        status: { notIn: ['DUPLICATE', 'IGNORED', 'PARSE_FAILED'] },
+        AND: [
+          { OR: pointsAtUs },
+          {
+            OR: [
+              { transactionAt: window },
+              { transactionAt: null, notificationAt: window },
+              { transactionAt: null, notificationAt: null, receivedAt: window },
+            ],
+          },
+          // A settled money event belongs to its cashflow, not to a transfer.
+          {
+            OR: [
+              { moneyEvent: { is: null } },
+              {
+                moneyEvent: { is: { cashflowEventId: null, deletedAt: null } },
+              },
+            ],
+          },
+        ],
+      },
+      orderBy: { receivedAt: 'asc' },
+      include: EVENT_INCLUDE,
+    });
+    return row ? mapEvent(row) : null;
+  }
+
+  pairTransfer(aId: string, bId: string): Promise<boolean> {
+    return this.runInTransaction(async (tx) => {
+      for (const [id, peer] of [
+        [aId, bId],
+        [bId, aId],
+      ]) {
+        const { count } = await tx.bankNotificationEvent.updateMany({
+          where: { id, transferPeerEventId: null },
+          data: { transferPeerEventId: peer },
+        });
+        // Throwing rolls back the first leg.
+        if (count === 0) throw new TransferAlreadyPaired();
+      }
+      return true;
+    }).catch((error: unknown) => {
+      if (error instanceof TransferAlreadyPaired || isUniqueViolation(error)) {
+        return false;
+      }
+      throw error;
+    });
+  }
+
   async purgeExpiredRaw(now: Date, limit: number): Promise<number> {
     return this.prisma.$executeRaw`
       UPDATE bank_notification_events
@@ -455,6 +547,8 @@ export class PrismaBankSyncRepository
        )`;
   }
 }
+
+class TransferAlreadyPaired extends Error {}
 
 function toBytes(
   value: Buffer | null | undefined,
@@ -520,6 +614,9 @@ function mapEvent(row: EventRow): BankNotificationEvent {
     suggestedCashflowEventId: row.suggestedCashflowEventId,
     matchStatus: row.matchStatus,
     matchReason: row.matchReason,
+    counterpartSourceId: row.counterpartSourceId,
+    transferPeerEventId: row.transferPeerEventId,
     moneyEventId: row.moneyEvent?.id ?? null,
+    moneyEventType: row.moneyEvent?.eventType ?? null,
   };
 }
