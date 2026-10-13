@@ -86,7 +86,13 @@ event (`FOR UPDATE`), gọi `MoneyEventsService.createMoneyEvent` (income vào v
 với IN, expense từ ví với OUT; category hệ thống `income` / `other`), đánh dấu
 `PROCESSED`. Event date = ngày giao dịch theo giờ Việt Nam. Note = nội dung
 thông báo (body) với số tài khoản đầy đủ thay bằng `••` + 4 số cuối — đây là
-chữ thật từ ngân hàng, không phải chữ hệ thống tự bịa ([[money-events]]). Body
+chữ thật từ ngân hàng, không phải chữ hệ thống tự bịa ([[money-events]]).
+Riêng Techcombank: body là các dòng `Tài khoản` / `Số dư` / nội dung, nên lúc
+post (`moneyEventNote`) note của money event chỉ lấy dòng cuối và cắt bỏ từ
+`Ma tham chieu …` trở đi (vd `An sang. Ma tham chieu 053248` → `An sang`);
+VCB: note là đoạn sau `Ref <mã>.` và trước chuỗi trace `FT…` (vd `Ref
+6286IBT….TRAN DINH QUAN chuyen FT2628….…` → `TRAN DINH QUAN chuyen`); không có
+`Ref` thì giữ nguyên. `description` của bank event vẫn giữ nguyên body đã che. Body
 được che và lưu vào `bank_notification_events.description` lúc parse, vì bản
 gốc mã hoá có thể đã tắt hoặc hết hạn khi người dùng xác nhận từ hộp thư. `money_events.notification_event_id UNIQUE` là chốt cuối chống
 post hai lần khi hai luồng chạy song song. `created_by` = user của credential

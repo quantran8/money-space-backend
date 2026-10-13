@@ -1,7 +1,7 @@
 import type { CacheInvalidator } from '../../../common/cache/cache-invalidator.service';
 import type { MoneyEventsService } from '../../money-events/money-events.service';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
-import { BankPostingService } from './bank-posting.service';
+import { BankPostingService, moneyEventNote } from './bank-posting.service';
 
 const EVENT = {
   id: 'evt-1',
@@ -131,6 +131,40 @@ describe('BankPostingService.post', () => {
     const { service } = setup({ ...EVENT, status: 'IGNORED' });
     await expect(service.post('hh-1', 'evt-1', 'user-1')).rejects.toThrow(
       'IGNORED',
+    );
+  });
+});
+
+describe('moneyEventNote', () => {
+  it('keeps only the TCB description line, without the reference', () => {
+    const description =
+      'Tài khoản: ••1016\nSố dư: VND 2,177,538\nAn sang. Ma tham chieu 053248';
+    expect(moneyEventNote('TECHCOMBANK', description)).toBe('An sang');
+  });
+
+  it('keeps the whole TCB last line when it has no reference', () => {
+    const description =
+      'Tài khoản: ••1016\nSố dư: VND 2,190,538\nNGUYEN VAN A chuyen tien';
+    expect(moneyEventNote('TECHCOMBANK', description)).toBe(
+      'NGUYEN VAN A chuyen tien',
+    );
+  });
+
+  it('keeps the VCB content between Ref and the FT trace', () => {
+    const description =
+      'Số dư TK VCB ••3153 +2,000 VND lúc 13-10-2026 08:32:04. Số dư 24,036,118 VND. Ref 6286IBT1k251RYXP.NGUYEN VAN A chuyen FT26286873025088.20261013.083204.19031234567801.VND-TGTT-NGUYEN VAN A.970407';
+    expect(moneyEventNote('VCB', description)).toBe('NGUYEN VAN A chuyen');
+  });
+
+  it('keeps the VCB content when there is no FT trace', () => {
+    const description =
+      'Số dư TK VCB ••6789 +2,000 VND lúc 12-10-2026 14:44:34. Số dư 24,056,118 VND. Ref EXAMPLE123 chuyen tien 500,000';
+    expect(moneyEventNote('VCB', description)).toBe('chuyen tien 500,000');
+  });
+
+  it('keeps the full VCB description when it has no Ref', () => {
+    expect(moneyEventNote('VCB', 'Số dư TK VCB ••6789 +2,000 VND')).toBe(
+      'Số dư TK VCB ••6789 +2,000 VND',
     );
   });
 });
