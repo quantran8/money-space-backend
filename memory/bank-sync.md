@@ -62,8 +62,8 @@ Tính năng Premium (`bank_sync`). Related: [[money-events]], [[assets]],
 4. Parse theo `app` allowlist → `PARSE_FAILED` / `REVIEW` khi không chắc.
 5. HMAC số TK → source. Không có → `UNMAPPED`. Source DISABLED → `REVIEW`.
 6. Link mở tại thời điểm giao dịch; nếu link vừa đổi trong ±10 phút → `REVIEW`.
-7. Nghi trùng (cùng source, chiều, số tiền trong 10 phút) → `REVIEW`
-   (`POSSIBLE_DUPLICATE`); không tự gộp vì hai giao dịch thật có thể cùng số tiền.
+7. (Đã bỏ) Nghi trùng theo source + chiều + số tiền trong 10 phút. Xem mục
+   Chống trùng.
 8. Ví không còn hợp lệ → `REVIEW`. Chạy matcher theo nội dung CK, lưu gợi ý
    (`suggested_cashflow_event_id`, `match_status`) lên event. Link `AUTO` → post
    (và settle nếu khớp duy nhất; `replace_manual` thì giữ `REVIEW`); ngược lại
@@ -234,20 +234,40 @@ báo.
 
 Mỗi lần post (auto hoặc từ inbox), trong cùng transaction,
 `BankPostingService.syncReportedBalances` lấy observation mới nhất của các ví
-vừa chạm (ví đích, và ví bên kia nếu là transfer), tính drift như cũ
-(`reported − ledger sau ME − Σ asset_update sau ME`, `domain/wallet-drift.ts`)
-và nếu ≠ 0 thì `AssetsService.syncWalletBalance` ghi một `asset_update` (note
-"Đồng bộ số dư ngân hàng") đưa ví về đúng số ngân hàng.
+vừa chạm (ví đích, và ví bên kia nếu là transfer). Nếu `current_value` khác số
+ngân hàng thì `AssetsService.syncWalletBalance` ghi một `asset_update` (note
+"Đồng bộ số dư ngân hàng") đặt ví **đúng bằng** số dư báo về
+(`domain/wallet-drift.ts → balanceSyncTarget`).
 
+- **Đặt tuyệt đối, không tính drift qua điểm valuation.** Bản đầu tính
+  `reported − ledger sau ME − Σ asset_update` với "ledger sau ME" lấy từ
+  `asset_valuations` gắn ME. Sai: `replayWalletBalance` đóng dấu lại điểm của
+  *mọi* ME theo `event_date`, mà các ME cùng ngày không có thứ tự ổn định → điểm
+  "sau ME" là số của ME khác, ra các điều chỉnh rác (đo 2026-10-13: VCB −986k rồi
+  −982k). `current_value` thì đúng vì tổng không phụ thuộc thứ tự. Đặt tuyệt đối
+  còn tự chữa mọi điều chỉnh sai trước đó ở lần đồng bộ kế tiếp.
+- **Chỉ khi chưa bị thay thế** (`superseded`): bỏ qua nếu sau ME của observation
+  (so `(created_at, id)`, id là uuid v7) ví đã có một money event dòng tiền khác
+  (`asset_update`/`asset_quantity_adjustment` không tính). Khi đó số dư báo về đã
+  cũ; thông báo kế tiếp sẽ đồng bộ. Ví dụ: VCB post transfer chạm cả ví TCB, mà
+  observation mới nhất của TCB là của transfer trước → không kéo TCB lùi.
 - Chỉ đồng bộ khi **post**, không đồng bộ khi event vào REVIEW/UNMAPPED: đồng bộ
   trước rồi post sau sẽ cộng khoản đó hai lần cho tới thông báo kế tiếp.
-- Luôn dùng observation **mới nhất** của ví, không phải của event vừa post, nên
-  post muộn một event cũ trong inbox không kéo số dư lùi về quá khứ.
-- `insertRevaluationEvent` ghi `created_at = clock_timestamp()`: ME và
-  `asset_update` cùng transaction đều có `now()` bằng nhau, khi đó `Σ asset_update
-  sau ME` bỏ sót lần đồng bộ và lần sau sẽ trừ lệch thêm một lần.
 - Techcombank không có giờ giao dịch: thứ tự trong ngày có thể sai, chấp nhận —
   thông báo kế tiếp sẽ sửa lại.
+
+## Chống trùng
+
+Chỉ hai lớp: `(credential, clientEventId)` và `SAME_PAYLOAD` (HMAC của `app +
+title + body` đã chuẩn hoá, trong 24h, cả household). Đủ vì body của mọi ngân
+hàng đang hỗ trợ đều chứa mã tham chiếu duy nhất (TCB `Ma tham chieu …`, VCB
+`Ref … FT…`) — hai giao dịch thật không bao giờ cùng body.
+
+Lớp `POSSIBLE_DUPLICATE` (cùng source + chiều + số tiền trong 10 phút → REVIEW)
+đã bỏ 2026-10-13 theo quyết định của chủ sản phẩm: nó chặn nhầm giao dịch thật
+cùng số tiền liên tiếp (chuyển thử 2.000đ hai lần) mà không bắt được gì hai lớp
+trên bỏ sót. Event cũ trong DB vẫn có thể mang lý do này nên client giữ chuỗi
+dịch. Thêm ngân hàng mới mà body không có mã tham chiếu thì phải xem lại.
 
 ## Trust model
 

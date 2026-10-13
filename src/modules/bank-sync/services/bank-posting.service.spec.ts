@@ -342,16 +342,17 @@ describe('BankPostingService.post own-account transfer', () => {
 });
 
 describe('BankPostingService.post balance sync', () => {
-  const observation = (assetId: string, reported: number, ledger: number) => ({
+  const observation = (
+    assetId: string,
+    reported: number,
+    current: number,
+    superseded = false,
+  ) => ({
     assetId,
-    assetName: 'VCB',
     bankEventId: 'evt-1',
     reportedBalance: reported,
-    observedAt: new Date(),
-    timeSource: null,
-    ledgerBalance: ledger,
-    currentValue: ledger,
-    adjustedSince: 0,
+    currentValue: current,
+    superseded,
   });
 
   it('sets the wallet to the bank-reported balance after posting', async () => {
@@ -367,6 +368,15 @@ describe('BankPostingService.post balance sync', () => {
       'wallet-1',
       5000,
     );
+  });
+
+  it('skips a balance a later movement on the wallet replaced', async () => {
+    const { service, repo, assets } = setup();
+    repo.findLatestBalanceObservations.mockResolvedValue([
+      observation('wallet-1', 5000, 4200, true),
+    ]);
+    await service.post('hh-1', 'evt-1', 'user-1');
+    expect(assets.syncWalletBalance).not.toHaveBeenCalled();
   });
 
   it('leaves an agreeing wallet alone', async () => {

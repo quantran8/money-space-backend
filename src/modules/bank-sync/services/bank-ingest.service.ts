@@ -39,7 +39,6 @@ import type { MatchResult } from '../../cashflow-events/domain/note-match';
 
 const MINUTE = 60 * 1000;
 const SAME_PAYLOAD_WINDOW = 24 * 60 * MINUTE;
-const SIMILAR_WINDOW = 10 * MINUTE;
 const LINK_CHANGE_WINDOW = 10 * MINUTE;
 const TRANSFER_PAIR_WINDOW = MINUTE;
 const LATE_TRANSFER_PAIR_WINDOW = 24 * 60 * MINUTE;
@@ -426,20 +425,6 @@ export class BankIngestService {
       matchStatus: match?.status ?? null,
       matchReason: match?.reason ?? null,
     });
-    if (event.amountMinor !== null && event.direction) {
-      const similar = await this.repo.existsSimilar({
-        householdId: event.householdId,
-        sourceId: source.id,
-        direction: event.direction,
-        amountMinor: event.amountMinor,
-        from: new Date(at.getTime() - SIMILAR_WINDOW),
-        to: new Date(at.getTime() + SIMILAR_WINDOW),
-        excludeId: event.id,
-      });
-      if (similar) {
-        return settle('REVIEW', 'POSSIBLE_DUPLICATE', linked);
-      }
-    }
     // The other leg already moved the money; this one only closes the pair.
     if (transfer.peer?.moneyEventType === 'transfer') {
       return this.postLinked(event, linked, opts.actorId, null, settle);

@@ -60,7 +60,6 @@ function setup() {
     findLinksAt: jest.fn().mockResolvedValue([LINK('AUTO')]),
     hasLinkClosedBetween: jest.fn().mockResolvedValue(false),
     findWallet: jest.fn().mockResolvedValue(WALLET),
-    existsSimilar: jest.fn().mockResolvedValue(false),
     findUnmappedByIdentifier: jest.fn().mockResolvedValue([]),
     findEvent: jest.fn().mockResolvedValue(null),
     findSourcesByHmacs: jest.fn().mockResolvedValue([]),
@@ -201,16 +200,6 @@ describe('BankIngestService.ingest', () => {
     expect((await service.ingest(CTX, VCB())).status).toBe('REVIEW');
     expect(lastStatus()).toMatchObject({ statusReason: 'ASSET_UNAVAILABLE' });
     expect(posting.post).not.toHaveBeenCalled();
-  });
-
-  it('holds a same-amount event on the same source for review', async () => {
-    const { service, repo, lastStatus } = setup();
-    repo.existsSimilar.mockResolvedValue(true);
-    expect((await service.ingest(CTX, VCB())).status).toBe('REVIEW');
-    expect(lastStatus()).toMatchObject({ statusReason: 'POSSIBLE_DUPLICATE' });
-    expect(repo.existsSimilar).toHaveBeenCalledWith(
-      expect.objectContaining({ sourceId: 'src-1', amountMinor: 2000 }),
-    );
   });
 
   it('holds OUT for review while no real sample is verified', async () => {

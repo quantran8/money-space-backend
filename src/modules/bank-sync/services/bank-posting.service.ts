@@ -16,7 +16,7 @@ import type {
 } from '../entities/bank-sync.entity';
 import { moneyEventNote } from '../domain/money-event-note';
 import { vnIsoDate } from '../domain/vn-time';
-import { toWalletDrift } from '../domain/wallet-drift';
+import { balanceSyncTarget } from '../domain/wallet-drift';
 import { isPostableWallet } from '../domain/wallet';
 import { BANK_SYNC_REPOSITORY } from '../repositories/bank-sync.repository.interface';
 import type { BankSyncRepository } from '../repositories/bank-sync.repository.interface';
@@ -163,13 +163,9 @@ export class BankPostingService {
       await this.repo.findLatestBalanceObservations(householdId);
     for (const obs of observations) {
       if (!assetIds.includes(obs.assetId)) continue;
-      const drift = toWalletDrift(obs);
-      if (!drift || drift.drift === 0) continue;
-      await this.assets.syncWalletBalance(
-        householdId,
-        obs.assetId,
-        drift.suggestedValue,
-      );
+      const target = balanceSyncTarget(obs);
+      if (target === null) continue;
+      await this.assets.syncWalletBalance(householdId, obs.assetId, target);
     }
   }
 

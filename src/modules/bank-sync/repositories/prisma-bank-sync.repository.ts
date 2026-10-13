@@ -305,26 +305,22 @@ export class PrismaBankSyncRepository
     const rows = await this.prisma.$queryRaw<
       Array<{
         asset_id: string;
-        asset_name: string;
         current_value: Prisma.Decimal | null;
         bank_event_id: string;
         reported_balance_minor: bigint;
-        observed_at: Date;
-        time_source: string | null;
-        ledger_value: Prisma.Decimal | null;
-        adjusted_since: Prisma.Decimal | null;
+        superseded: boolean;
       }>
     >`
       SELECT DISTINCT ON (l.asset_id)
-        l.asset_id, a.name AS asset_name, a.current_value,
+        l.asset_id, a.current_value,
         e.id AS bank_event_id, e.reported_balance_minor,
-        COALESCE(e.transaction_at, e.notification_at, e.received_at) AS observed_at,
-        e.time_source::text AS time_source,
-        v.value AS ledger_value,
-        (SELECT SUM(r.amount) FROM money_events r
-          WHERE r.to_asset_id = l.asset_id AND r.event_type = 'asset_update'
-            AND r.deleted_at IS NULL AND r.created_at > m.created_at
-        ) AS adjusted_since
+        EXISTS (
+          SELECT 1 FROM money_events r
+           WHERE l.asset_id IN (r.to_asset_id, r.from_asset_id)
+             AND r.event_type NOT IN ('asset_update', 'asset_quantity_adjustment')
+             AND r.deleted_at IS NULL
+             AND (r.created_at, r.id) > (m.created_at, m.id)
+        ) AS superseded
       FROM bank_source_links l
       JOIN assets a ON a.id = l.asset_id AND a.deleted_at IS NULL
       JOIN bank_notification_events e
@@ -335,22 +331,15 @@ export class PrismaBankSyncRepository
       JOIN money_events m
         ON m.notification_event_id IN (e.id, e.transfer_peer_event_id)
        AND m.deleted_at IS NULL
-      LEFT JOIN asset_valuations v
-        ON v.money_event_id = m.id AND v.asset_id = l.asset_id AND v.deleted_at IS NULL
       WHERE l.household_id = ${householdId}::uuid AND l.valid_to IS NULL
-      ORDER BY l.asset_id, observed_at DESC, e.received_at DESC
+      ORDER BY l.asset_id, COALESCE(e.transaction_at, e.notification_at, e.received_at) DESC, e.received_at DESC
     `;
     return rows.map((row) => ({
       assetId: row.asset_id,
-      assetName: row.asset_name,
       bankEventId: row.bank_event_id,
       reportedBalance: Number(row.reported_balance_minor),
-      observedAt: row.observed_at,
-      timeSource: row.time_source,
-      ledgerBalance:
-        row.ledger_value === null ? null : Number(row.ledger_value),
       currentValue: Number(row.current_value ?? 0),
-      adjustedSince: Number(row.adjusted_since ?? 0),
+      superseded: row.superseded,
     }));
   }
 
@@ -413,36 +402,6 @@ export class PrismaBankSyncRepository
         payloadFingerprint: fingerprint,
         receivedAt: { gte: since },
         id: { not: excludeId },
-      },
-      select: { id: true },
-    });
-    return row !== null;
-  }
-
-  async existsSimilar(params: {
-    householdId: string;
-    sourceId: string;
-    direction: string;
-    amountMinor: number;
-    from: Date;
-    to: Date;
-    excludeId: string;
-  }) {
-    const row = await this.prisma.bankNotificationEvent.findFirst({
-      where: {
-        householdId: params.householdId,
-        sourceId: params.sourceId,
-        direction: params.direction,
-        amountMinor: BigInt(params.amountMinor),
-        id: { not: params.excludeId },
-        status: { notIn: ['DUPLICATE', 'IGNORED', 'PARSE_FAILED'] },
-        OR: [
-          { transactionAt: { gte: params.from, lte: params.to } },
-          {
-            transactionAt: null,
-            receivedAt: { gte: params.from, lte: params.to },
-          },
-        ],
       },
       select: { id: true },
     });
