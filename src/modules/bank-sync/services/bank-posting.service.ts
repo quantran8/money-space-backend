@@ -9,7 +9,10 @@ import { CacheInvalidator } from '../../../common/cache/cache-invalidator.servic
 import { isUniqueViolation } from '../../../common/repositories/prisma-errors';
 import { MoneyEventsService } from '../../money-events/money-events.service';
 import { CashflowSettlementService } from '../../cashflow-events/services/cashflow-settlement.service';
-import type { BankEventStatus } from '../entities/bank-sync.entity';
+import type {
+  BankEventStatus,
+  BankNotificationEvent,
+} from '../entities/bank-sync.entity';
 import { moneyEventNote } from '../domain/money-event-note';
 import { vnIsoDate } from '../domain/vn-time';
 import { isPostableWallet } from '../domain/wallet';
@@ -63,10 +66,7 @@ export class BankPostingService {
       return await this.cache.runInTransactionAndInvalidate(
         householdId,
         async () => {
-          const event = await this.repo.lockEvent(eventId);
-          if (!event || event.householdId !== householdId) {
-            throw new NotFoundException('Bank event not found.');
-          }
+          const { event, peer } = await this.lockWithPeer(householdId, eventId);
           if (event.moneyEventId || event.status === 'PROCESSED') {
             return 'already_posted' as const;
           }
@@ -85,7 +85,18 @@ export class BankPostingService {
               'Target asset is not an active wallet.',
             );
           }
-
+          if (
+            await this.postTransfer(
+              householdId,
+              event,
+              peer,
+              targetId,
+              actorId,
+              settle,
+            )
+          ) {
+            return 'posted' as const;
+          }
           const inflow = event.direction === 'IN';
           const categoryId = await this.moneyEvents.systemCategoryId(
             householdId,
@@ -111,13 +122,7 @@ export class BankPostingService {
               notificationEventId: event.id,
             },
           );
-          await this.repo.updateEvent(event.id, {
-            status: 'PROCESSED',
-            statusReason: null,
-            matchedAssetId: targetId,
-            processedAt: new Date(),
-            processedById: actorId,
-          });
+          await this.markProcessed(event.id, targetId, actorId);
           if (settle?.kind === 'link') {
             await this.settlement.settleExisting(
               householdId,
@@ -144,4 +149,166 @@ export class BankPostingService {
       throw error;
     }
   }
+
+  /** Locks the event and its transfer leg in id order. */
+  private async lockWithPeer(householdId: string, eventId: string) {
+    const head = await this.repo.findEvent(householdId, eventId);
+    if (!head) throw new NotFoundException('Bank event not found.');
+    const peerId = head.transferPeerEventId;
+    const locked = new Map<string, BankNotificationEvent | null>();
+    for (const id of [eventId, peerId].filter(isString).sort()) {
+      locked.set(id, await this.repo.lockEvent(id));
+    }
+    const event = locked.get(eventId);
+    if (!event || event.householdId !== householdId) {
+      throw new NotFoundException('Bank event not found.');
+    }
+    if (event.transferPeerEventId !== peerId) {
+      throw new ConflictException('Bank event was paired meanwhile; retry.');
+    }
+    return { event, peer: peerId ? (locked.get(peerId) ?? null) : null };
+  }
+
+  /** Own-account transfer, when the event is one leg. See memory/bank-sync.md. */
+  private async postTransfer(
+    householdId: string,
+    event: BankNotificationEvent,
+    leg: BankNotificationEvent | null,
+    targetId: string,
+    actorId: string,
+    settle: PostSettle | undefined,
+  ): Promise<boolean> {
+    const inflow = event.direction === 'IN';
+    // An ignored leg no longer vouches for the wallet on its side.
+    const peer = leg?.status === 'IGNORED' ? null : leg;
+    if (peer?.moneyEventId) {
+      if (settle) throw new BadRequestException(TRANSFER_NO_SETTLE);
+      await this.joinPostedLeg(
+        householdId,
+        peer.moneyEventId,
+        inflow,
+        targetId,
+      );
+      await this.markProcessed(event.id, targetId, actorId, TRANSFER_PAIRED);
+      return true;
+    }
+    const otherId = peer
+      ? peer.matchedAssetId
+      : await this.counterpartWallet(householdId, event);
+    if (!otherId || otherId === targetId) return false;
+    if (!isPostableWallet(await this.repo.findWallet(householdId, otherId))) {
+      if (peer)
+        throw new BadRequestException('Transfer leg wallet is not active.');
+      return false;
+    }
+    if (settle) throw new BadRequestException(TRANSFER_NO_SETTLE);
+    const out = inflow ? peer : event;
+    const note =
+      (out && moneyEventNote(out.providerCode, out.description)) ||
+      moneyEventNote(event.providerCode, event.description);
+    await this.moneyEvents.createMoneyEvent(
+      householdId,
+      {
+        amount: event.amountMinor as number,
+        isoDate: vnIsoDate(transferAt(event, peer)),
+        type: 'transfer',
+        direction: 'neutral',
+        categoryId: await this.moneyEvents.systemCategoryId(
+          householdId,
+          'other',
+        ),
+        fromAssetId: inflow ? otherId : targetId,
+        toAssetId: inflow ? targetId : otherId,
+        note,
+      },
+      { actorId, origin: 'bank_notification', notificationEventId: event.id },
+    );
+    await this.markProcessed(event.id, targetId, actorId);
+    if (peer) {
+      await this.markProcessed(peer.id, otherId, actorId, TRANSFER_PAIRED);
+    }
+    return true;
+  }
+
+  /** The other leg already posted: reuse its money event, turning it into a transfer if needed. */
+  private async joinPostedLeg(
+    householdId: string,
+    moneyEventId: string,
+    inflow: boolean,
+    targetId: string,
+  ) {
+    const posted = await this.moneyEvents.getMoneyEvent(
+      householdId,
+      moneyEventId,
+    );
+    if (posted.type === 'transfer') {
+      const ownSide = inflow ? posted.toAssetId : posted.fromAssetId;
+      if (ownSide !== targetId) {
+        throw new ConflictException('Transfer leg points at another wallet.');
+      }
+      return;
+    }
+    const otherSide = inflow ? posted.fromAssetId : posted.toAssetId;
+    if (!otherSide || otherSide === targetId) {
+      throw new ConflictException('Posted leg cannot become a transfer.');
+    }
+    await this.moneyEvents.updateMoneyEvent(householdId, moneyEventId, {
+      type: 'transfer',
+      direction: 'neutral',
+      categoryId: await this.moneyEvents.systemCategoryId(householdId, 'other'),
+      fromAssetId: inflow ? otherSide : targetId,
+      toAssetId: inflow ? targetId : otherSide,
+    });
+  }
+
+  private async counterpartWallet(
+    householdId: string,
+    event: BankNotificationEvent,
+  ): Promise<string | null> {
+    if (!event.counterpartSourceId) return null;
+    const source = await this.repo.findSource(
+      householdId,
+      event.counterpartSourceId,
+    );
+    if (source?.status !== 'ACTIVE') return null;
+    const links = await this.repo.findLinksAt(source.id, eventAt(event));
+    return links.length === 1 ? links[0].assetId : null;
+  }
+
+  private async markProcessed(
+    eventId: string,
+    assetId: string,
+    actorId: string,
+    statusReason: string | null = null,
+  ) {
+    await this.repo.updateEvent(eventId, {
+      status: 'PROCESSED',
+      statusReason,
+      matchedAssetId: assetId,
+      processedAt: new Date(),
+      processedById: actorId,
+    });
+  }
+}
+
+const TRANSFER_PAIRED = 'TRANSFER_PAIRED';
+const TRANSFER_NO_SETTLE = 'A transfer cannot settle a cashflow event.';
+
+function eventAt(event: BankNotificationEvent): Date {
+  return event.transactionAt ?? event.notificationAt ?? event.receivedAt;
+}
+
+// Earliest leg; a content timestamp beats a delivery time.
+function transferAt(
+  event: BankNotificationEvent,
+  peer: BankNotificationEvent | null,
+): Date {
+  const legs = peer ? [event, peer] : [event];
+  const exact = legs.map((l) => l.transactionAt).filter((d): d is Date => !!d);
+  const times = exact.length ? exact : legs.map(eventAt);
+  return new Date(Math.min(...times.map((d) => d.getTime())));
+}
+
+function isString(value: string | null): value is string {
+  return value !== null;
 }

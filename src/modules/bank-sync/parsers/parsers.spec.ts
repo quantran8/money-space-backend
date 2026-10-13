@@ -176,7 +176,10 @@ describe('isBalanceMovement', () => {
   it('rejects promo and system messages', () => {
     expect(tcb.isBalanceMovement(PROMO)).toBe(false);
     expect(
-      vcb.isBalanceMovement({ title: 'VCB', body: 'Nhận ngay ưu đãi 50,000 VND khi mở thẻ' }),
+      vcb.isBalanceMovement({
+        title: 'VCB',
+        body: 'Nhận ngay ưu đãi 50,000 VND khi mở thẻ',
+      }),
     ).toBe(false);
   });
 

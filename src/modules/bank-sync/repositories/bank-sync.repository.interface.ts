@@ -65,6 +65,10 @@ export interface BankSyncRepository {
   insertLink(row: BankSourceLink & { createdById: string }): Promise<void>;
   updateLinkMode(linkId: string, mode: BankPostingMode): Promise<void>;
   findWallet(householdId: string, assetId: string): Promise<WalletRef | null>;
+  findSourcesByHmacs(
+    householdId: string,
+    hmacs: string[],
+  ): Promise<BankExternalSource[]>;
 
   // Events
   insertEvent(row: BankNotificationEvent): Promise<boolean>;
@@ -112,5 +116,18 @@ export interface BankSyncRepository {
     providerCode: string,
     identifierHmac: string,
   ): Promise<BankNotificationEvent[]>;
+  /** The other leg of an own-account transfer. See memory/bank-sync.md. */
+  findTransferPeer(params: {
+    householdId: string;
+    eventId: string;
+    direction: string;
+    amountMinor: number;
+    sourceId: string;
+    counterpartSourceId: string | null;
+    from: Date;
+    to: Date;
+  }): Promise<BankNotificationEvent | null>;
+  /** False when either event is already paired. */
+  pairTransfer(aId: string, bId: string): Promise<boolean>;
   purgeExpiredRaw(now: Date, limit: number): Promise<number>;
 }

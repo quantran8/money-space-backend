@@ -25,15 +25,35 @@ const WALLET = {
   deletedAt: null,
 };
 
-function setup(event: Record<string, unknown> = EVENT) {
+function setup(
+  event: Record<string, unknown> = EVENT,
+  others: Array<Record<string, unknown>> = [],
+) {
+  const rows = new Map(
+    [{ transferPeerEventId: null, ...event }, ...others].map((r) => [
+      r.id as string,
+      r,
+    ]),
+  );
   const repo = {
-    lockEvent: jest.fn().mockResolvedValue(event),
-    findWallet: jest.fn().mockResolvedValue(WALLET),
+    findEvent: jest.fn((_hh: string, id: string) =>
+      Promise.resolve(rows.get(id) ?? null),
+    ),
+    lockEvent: jest.fn((id: string) => Promise.resolve(rows.get(id) ?? null)),
+    findWallet: jest.fn((_hh: string, id: string) =>
+      Promise.resolve({ ...WALLET, id }),
+    ),
+    findSource: jest
+      .fn()
+      .mockResolvedValue({ id: 'src-tcb', status: 'ACTIVE' }),
+    findLinksAt: jest.fn().mockResolvedValue([{ assetId: 'wallet-tcb' }]),
     updateEvent: jest.fn().mockResolvedValue(undefined),
   };
   const moneyEvents = {
     systemCategoryId: jest.fn().mockResolvedValue('cat-income'),
     createMoneyEvent: jest.fn().mockResolvedValue({ id: 'me-1' }),
+    getMoneyEvent: jest.fn(),
+    updateMoneyEvent: jest.fn().mockResolvedValue({}),
   };
   const settlement = {
     settleExisting: jest.fn().mockResolvedValue({}),
@@ -206,5 +226,113 @@ describe('moneyEventNote', () => {
     expect(moneyEventNote('VCB', 'Số dư TK VCB ••6789 +2,000 VND')).toBe(
       'Số dư TK VCB ••6789 +2,000 VND',
     );
+  });
+});
+
+describe('BankPostingService.post own-account transfer', () => {
+  const OUT_LEG = {
+    ...EVENT,
+    id: 'evt-0',
+    direction: 'OUT',
+    matchedAssetId: 'wallet-tcb',
+    providerCode: 'TECHCOMBANK',
+    description: 'Tài khoản: ••1016\nSố dư: VND 1\nChuyen tien sang VCB',
+    transactionAt: null,
+    notificationAt: new Date('2026-10-12T17:31:00Z'),
+  };
+
+  it('posts a counterpart-named IN as a transfer before the OUT arrives', async () => {
+    const { service, moneyEvents } = setup({
+      ...EVENT,
+      counterpartSourceId: 'src-tcb',
+    });
+    await service.post('hh-1', 'evt-1', 'user-1');
+    expect(moneyEvents.createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({
+        type: 'transfer',
+        direction: 'neutral',
+        fromAssetId: 'wallet-tcb',
+        toAssetId: 'wallet-1',
+      }),
+      expect.objectContaining({ notificationEventId: 'evt-1' }),
+    );
+  });
+
+  it('creates one transfer for both legs and closes the waiting one', async () => {
+    const { service, moneyEvents, repo } = setup(
+      { ...OUT_LEG, transferPeerEventId: 'evt-1' },
+      [{ ...EVENT, transferPeerEventId: 'evt-0' }],
+    );
+    await service.post('hh-1', 'evt-0', 'user-1');
+    expect(moneyEvents.createMoneyEvent).toHaveBeenCalledTimes(1);
+    expect(moneyEvents.createMoneyEvent).toHaveBeenCalledWith(
+      'hh-1',
+      expect.objectContaining({
+        fromAssetId: 'wallet-tcb',
+        toAssetId: 'wallet-1',
+        note: 'Chuyen tien sang VCB',
+        isoDate: '2026-10-13',
+      }),
+      expect.anything(),
+    );
+    expect(repo.updateEvent).toHaveBeenCalledWith(
+      'evt-1',
+      expect.objectContaining({
+        status: 'PROCESSED',
+        statusReason: 'TRANSFER_PAIRED',
+      }),
+    );
+  });
+
+  it('only closes the pair when the other leg already posted the transfer', async () => {
+    const { service, moneyEvents, repo } = setup(
+      { ...EVENT, transferPeerEventId: 'evt-0' },
+      [{ ...OUT_LEG, transferPeerEventId: 'evt-1', moneyEventId: 'me-0' }],
+    );
+    moneyEvents.getMoneyEvent.mockResolvedValue({
+      type: 'transfer',
+      fromAssetId: 'wallet-tcb',
+      toAssetId: 'wallet-1',
+    });
+    await service.post('hh-1', 'evt-1', 'user-1');
+    expect(moneyEvents.createMoneyEvent).not.toHaveBeenCalled();
+    expect(moneyEvents.updateMoneyEvent).not.toHaveBeenCalled();
+    expect(repo.updateEvent).toHaveBeenCalledWith(
+      'evt-1',
+      expect.objectContaining({ statusReason: 'TRANSFER_PAIRED' }),
+    );
+  });
+
+  it('turns an income the IN leg already posted into the transfer', async () => {
+    const { service, moneyEvents } = setup(
+      { ...OUT_LEG, transferPeerEventId: 'evt-1' },
+      [{ ...EVENT, transferPeerEventId: 'evt-0', moneyEventId: 'me-1' }],
+    );
+    moneyEvents.getMoneyEvent.mockResolvedValue({
+      type: 'income',
+      fromAssetId: undefined,
+      toAssetId: 'wallet-1',
+    });
+    await service.post('hh-1', 'evt-0', 'user-1');
+    expect(moneyEvents.createMoneyEvent).not.toHaveBeenCalled();
+    expect(moneyEvents.updateMoneyEvent).toHaveBeenCalledWith('hh-1', 'me-1', {
+      type: 'transfer',
+      direction: 'neutral',
+      categoryId: 'cat-income',
+      fromAssetId: 'wallet-tcb',
+      toAssetId: 'wallet-1',
+    });
+  });
+
+  it('refuses to settle a cashflow event with a transfer', async () => {
+    const { service } = setup({ ...EVENT, counterpartSourceId: 'src-tcb' });
+    await expect(
+      service.post('hh-1', 'evt-1', 'user-1', undefined, {
+        kind: 'link',
+        cashflowEventId: 'cf-1',
+        via: 'manual_link',
+      }),
+    ).rejects.toThrow('transfer');
   });
 });
