@@ -1,4 +1,8 @@
-import type { Household, UpdateFrequency } from '../entities/household.entity';
+import type {
+  DashboardLayoutItem,
+  Household,
+  UpdateFrequency,
+} from '../entities/household.entity';
 
 export const HOUSEHOLDS_REPOSITORY = Symbol('HOUSEHOLDS_REPOSITORY');
 
@@ -32,6 +36,11 @@ export interface HouseholdsRepository {
   getHouseholdsForUser(userId: string): Promise<Household[]>;
   createHousehold(input: CreateHouseholdInput): Promise<Household>;
   setDisplayCurrency(householdId: string, currency: string): Promise<void>;
+  /** Store the Home layout in the config bag; `null` removes it (default). */
+  setDashboardLayout(
+    householdId: string,
+    layout: DashboardLayoutItem[] | null,
+  ): Promise<void>;
   /** Rename the shared space. `name` is a column, unlike the config bag. */
   setName(householdId: string, name: string): Promise<void>;
   countMembers(householdId?: string): Promise<number>;

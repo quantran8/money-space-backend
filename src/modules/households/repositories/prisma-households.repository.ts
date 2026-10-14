@@ -4,7 +4,7 @@ import { uuidv7 } from '../../../common/utils/uuid';
 import { mapHousehold } from '../../../common/repositories/money-space.mapper';
 import { PrismaRepository } from '../../../common/repositories/prisma.repository';
 import { PrismaService } from '../../../database/prisma/prisma.service';
-import { Household } from '../entities/household.entity';
+import { DashboardLayoutItem, Household } from '../entities/household.entity';
 import {
   CreateHouseholdInput,
   HouseholdsRepository,
@@ -240,6 +240,28 @@ export class PrismaHouseholdsRepository
       UPDATE households
       SET config = COALESCE(config, '{}'::jsonb)
         || jsonb_build_object('displayCurrency', ${currency}::text)
+      WHERE id = ${householdId}::uuid
+        AND deleted_at IS NULL
+    `;
+  }
+
+  async setDashboardLayout(
+    householdId: string,
+    layout: DashboardLayoutItem[] | null,
+  ): Promise<void> {
+    if (layout === null) {
+      await this.prisma.$executeRaw`
+        UPDATE households
+        SET config = COALESCE(config, '{}'::jsonb) - 'dashboardLayout'
+        WHERE id = ${householdId}::uuid
+          AND deleted_at IS NULL
+      `;
+      return;
+    }
+    await this.prisma.$executeRaw`
+      UPDATE households
+      SET config = COALESCE(config, '{}'::jsonb)
+        || jsonb_build_object('dashboardLayout', ${JSON.stringify(layout)}::jsonb)
       WHERE id = ${householdId}::uuid
         AND deleted_at IS NULL
     `;

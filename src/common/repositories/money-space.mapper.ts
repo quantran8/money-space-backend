@@ -20,6 +20,7 @@ import type { HouseholdMember } from '../../modules/members/entities/member.enti
 import type { MoneyEventCategory } from '../../modules/money-event-categories/entities/money-event-category.entity';
 import type { MoneyEvent } from '../../modules/money-events/entities/money-event.entity';
 import type { CashflowEvent } from '../../modules/cashflow-events/entities/cashflow-event.entity';
+import { normalizeDashboardLayout } from '../../modules/households/entities/household.entity';
 import { DbRow } from './prisma.repository';
 
 /**
@@ -101,6 +102,10 @@ function mapHouseholdConfig(value: unknown): HouseholdConfig {
     displayCurrency === 'EUR'
   ) {
     config.displayCurrency = displayCurrency;
+  }
+  const dashboardLayout = normalizeDashboardLayout(source.dashboardLayout);
+  if (dashboardLayout) {
+    config.dashboardLayout = dashboardLayout;
   }
   return config;
 }
