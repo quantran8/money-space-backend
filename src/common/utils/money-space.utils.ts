@@ -709,6 +709,8 @@ export function toMoneyEventCard(event: MoneyEvent) {
     note: event.note,
     date: formatDateLabel(event.isoDate),
     isoDate: event.isoDate,
+    // Full ISO timestamp: `isoDate` is day-only, so this orders same-day events.
+    createdAt: event.createdAt,
     type: event.type,
     // The id only. The client already holds the full category list (system +
     // this household's own) and resolves the code, label, glyph and colour off

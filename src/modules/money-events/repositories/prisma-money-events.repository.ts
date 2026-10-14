@@ -95,7 +95,7 @@ export class PrismaMoneyEventsRepository
     const [rows, total] = await Promise.all([
       this.prisma.moneyEvent.findMany({
         where,
-        orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
+        orderBy: [{ createdAt: 'desc' }, { eventDate: 'desc' }],
         ...(take ? { take } : {}),
       }),
       this.prisma.moneyEvent.count({ where }),

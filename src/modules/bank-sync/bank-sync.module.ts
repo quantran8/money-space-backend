@@ -4,6 +4,8 @@ import { BillingModule } from '../billing/billing.module';
 import { AssetsModule } from '../assets/assets.module';
 import { MoneyEventsModule } from '../money-events/money-events.module';
 import { CashflowEventsModule } from '../cashflow-events/cashflow-events.module';
+import { CATEGORY_CLASSIFIER } from './classification/category-classifier';
+import { KeywordCategoryClassifier } from './classification/keyword-category.classifier';
 import { BankIngestController } from './controllers/bank-ingest.controller';
 import { BankSyncController } from './controllers/bank-sync.controller';
 import { BankIngestTokenGuard } from './guards/bank-ingest-token.guard';
@@ -35,6 +37,8 @@ import { BankTransferHoldCron } from './services/bank-transfer-hold.cron';
     BankRawRetentionCron,
     BankTransferHoldCron,
     BankIngestTokenGuard,
+    // Swap this binding for an AI-backed classifier later.
+    { provide: CATEGORY_CLASSIFIER, useClass: KeywordCategoryClassifier },
     { provide: BANK_SYNC_REPOSITORY, useClass: PrismaBankSyncRepository },
   ],
 })
