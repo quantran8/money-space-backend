@@ -8,7 +8,10 @@ import { EntitlementService } from '../billing/entitlement.service';
 import { PremiumRequiredException } from '../billing/entitlement.errors';
 import { FREE_OWNED_SPACE_LIMIT } from '../billing/constants/plan-limits';
 import type { Entitlement } from '../billing/entities/entitlement.entity';
-import type { Household } from './entities/household.entity';
+import {
+  normalizeDashboardLayout,
+  type Household,
+} from './entities/household.entity';
 import { freeOwnedSpaces, type SpaceQuota } from './domain/space-quota';
 
 const ALLOWED_FREQUENCIES = ['weekly', 'monthly', 'manual'] as const;
@@ -183,9 +186,25 @@ export class HouseholdsService {
    */
   async updateConfig(
     householdId: string,
-    payload: { currency?: string; name?: string },
+    payload: {
+      currency?: string;
+      name?: string;
+      /** Array to store, `null` to go back to the default. */
+      dashboardLayout?: unknown[] | null;
+    },
   ) {
     await this.householdsRepository.assertHousehold(householdId);
+
+    if (payload.dashboardLayout !== undefined) {
+      const layout =
+        payload.dashboardLayout === null
+          ? null
+          : normalizeDashboardLayout(payload.dashboardLayout);
+      if (layout === undefined) {
+        throw new BadRequestException('dashboardLayout must be a list or null');
+      }
+      await this.householdsRepository.setDashboardLayout(householdId, layout);
+    }
 
     if (payload.currency !== undefined) {
       if (

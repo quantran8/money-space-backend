@@ -11,6 +11,39 @@ export interface HouseholdConfig {
   defaultEventCategoryId?: string;
   /** Currency used to format household money throughout the client. */
   displayCurrency?: 'VND' | 'USD' | 'EUR';
+  /** Home sections in display order. Undefined = the client default. */
+  dashboardLayout?: DashboardLayoutItem[];
+}
+
+export const DASHBOARD_WIDGET_IDS = [
+  'picture',
+  'overdue',
+  'bankReview',
+  'upcoming',
+  'spending',
+  'goals',
+  'moneySources',
+] as const;
+
+export interface DashboardLayoutItem {
+  id: (typeof DASHBOARD_WIDGET_IDS)[number];
+  size: 'half' | 'full';
+}
+
+/** Keeps known ids once each; returns undefined when the input is not a list. */
+export function normalizeDashboardLayout(
+  value: unknown,
+): DashboardLayoutItem[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const seen = new Set<string>();
+  const out: DashboardLayoutItem[] = [];
+  for (const item of value as Partial<DashboardLayoutItem>[]) {
+    const id = item?.id;
+    if (!id || !DASHBOARD_WIDGET_IDS.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, size: item.size === 'half' ? 'half' : 'full' });
+  }
+  return out;
 }
 
 export interface Household {
