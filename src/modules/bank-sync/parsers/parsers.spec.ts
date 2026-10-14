@@ -26,7 +26,6 @@ describe('TechcombankParser', () => {
     const result = parser.parse(TCB_IN);
     expect(result).toEqual({
       ok: true,
-      reviewReason: undefined,
       event: objectContaining({
         providerCode: 'TECHCOMBANK',
         accountNumber: '19031234567801',
@@ -44,10 +43,12 @@ describe('TechcombankParser', () => {
     expect(result.ok && result.event.accountNumber).toBe('19031234567801');
   });
 
-  it('flags OUT for review until a real sample is verified', () => {
+  it('reads OUT from a minus title', () => {
     const result = parser.parse({ ...TCB_IN, title: '- VND 500,000' });
-    expect(result.ok && result.event.direction).toBe('OUT');
-    expect(result.ok && result.reviewReason).toBe('OUT_UNVERIFIED');
+    expect(result.ok && result.event).toMatchObject({
+      direction: 'OUT',
+      amountMinor: 500000,
+    });
   });
 
   it('fails closed when the title carries no amount', () => {
@@ -92,7 +93,6 @@ describe('VcbParser', () => {
     const result = parser.parse(VCB_IN);
     expect(result).toEqual({
       ok: true,
-      reviewReason: undefined,
       event: objectContaining({
         providerCode: 'VCB',
         accountNumber: '0123456789',
@@ -112,7 +112,7 @@ describe('VcbParser', () => {
     expect(result.ok && result.event.amountMinor).not.toBe(24056118);
   });
 
-  it('flags OUT for review', () => {
+  it('reads OUT from a minus movement', () => {
     const result = parser.parse({
       ...VCB_IN,
       body: VCB_IN.body.replace('+2,000', '-150,000'),
@@ -121,7 +121,6 @@ describe('VcbParser', () => {
       direction: 'OUT',
       amountMinor: 150000,
     });
-    expect(result.ok && result.reviewReason).toBe('OUT_UNVERIFIED');
   });
 
   it('fails closed on a truncated message', () => {

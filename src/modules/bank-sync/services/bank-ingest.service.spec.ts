@@ -66,6 +66,9 @@ function setup() {
     findTransferPeer: jest.fn().mockResolvedValue(null),
     findLateTransferPeer: jest.fn().mockResolvedValue(null),
     pairTransfer: jest.fn().mockResolvedValue(true),
+    hasOtherLinkedSource: jest.fn().mockResolvedValue(false),
+    claimHeldEvent: jest.fn().mockResolvedValue(true),
+    claimStaleReceived: jest.fn().mockResolvedValue(true),
   };
   const posting = { post: jest.fn().mockResolvedValue('posted') };
   const matcher = {
@@ -202,13 +205,105 @@ describe('BankIngestService.ingest', () => {
     expect(posting.post).not.toHaveBeenCalled();
   });
 
-  it('holds OUT for review while no real sample is verified', async () => {
-    const { service, posting, lastStatus } = setup();
-    expect((await service.ingest(CTX, VCB('-', '150,000'))).status).toBe(
-      'REVIEW',
-    );
-    expect(lastStatus()).toMatchObject({ statusReason: 'OUT_UNVERIFIED' });
-    expect(posting.post).not.toHaveBeenCalled();
+  it('auto-posts an OUT when the household has no other bank account', async () => {
+    const { service, posting } = setup();
+    const out = await service.ingest(CTX, VCB('-', '150,000'));
+    expect(out.status).toBe('PROCESSED');
+    expect(posting.post).toHaveBeenCalled();
+  });
+
+  describe('OUT hold for a transfer leg', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it('holds an OUT while another account could send its IN leg', async () => {
+      const { service, repo, posting, lastStatus } = setup();
+      repo.hasOtherLinkedSource.mockResolvedValue(true);
+      const out = await service.ingest(CTX, VCB('-', '150,000'));
+      expect(out.status).toBe('REVIEW');
+      expect(lastStatus()).toMatchObject({
+        statusReason: 'TRANSFER_AWAITING_PEER',
+      });
+      expect(posting.post).not.toHaveBeenCalled();
+    });
+
+    it('routes the held OUT as an ordinary event after the hold', async () => {
+      const { service, repo, posting } = setup();
+      repo.hasOtherLinkedSource.mockResolvedValue(true);
+      await service.ingest(CTX, VCB('-', '150,000'));
+      repo.findEvent.mockResolvedValue({
+        id: 'evt-1',
+        householdId: 'hh-1',
+        userId: 'user-1',
+        providerCode: 'VCB',
+        identifierHmac: 'h',
+        amountMinor: 150000,
+        direction: 'OUT',
+        transactionAt: new Date(),
+        notificationAt: null,
+        receivedAt: new Date(),
+        status: 'RECEIVED',
+        transferPeerEventId: null,
+      });
+      await jest.advanceTimersByTimeAsync(10_000);
+      expect(repo.claimHeldEvent).toHaveBeenCalledWith('evt-1');
+      expect(posting.post).toHaveBeenCalledWith('hh-1', 'evt-1', 'user-1');
+    });
+
+    it('leaves a held OUT alone once its IN leg claimed it', async () => {
+      const { service, repo, posting } = setup();
+      repo.claimHeldEvent.mockResolvedValue(false);
+      await service.releaseHeld('hh-1', 'evt-1');
+      expect(repo.findEvent).not.toHaveBeenCalled();
+      expect(posting.post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('recoverStale', () => {
+    const STALE = {
+      id: 'evt-1',
+      householdId: 'hh-1',
+      userId: 'user-1',
+      providerCode: 'VCB',
+      identifierHmac: 'h',
+      amountMinor: 150000,
+      direction: 'IN',
+      transactionAt: new Date(),
+      notificationAt: null,
+      receivedAt: new Date(),
+      status: 'FAILED',
+      statusReason: 'INTERRUPTED',
+      transferPeerEventId: null,
+      moneyEventId: null,
+      parserVersion: 'vcb@1',
+      rawPayloadCiphertext: null,
+    };
+
+    it('routes a parsed event to the inbox, never auto-posting', async () => {
+      const { service, repo, posting, lastStatus } = setup();
+      repo.findEvent.mockResolvedValue(STALE);
+      await service.recoverStale('hh-1', 'evt-1');
+      expect(repo.claimStaleReceived).toHaveBeenCalledWith('evt-1');
+      expect(posting.post).not.toHaveBeenCalled();
+      expect(lastStatus()).toMatchObject({
+        status: 'REVIEW',
+        statusReason: 'MANUAL_MODE',
+      });
+    });
+
+    it('leaves an unparsed event without raw payload as INTERRUPTED', async () => {
+      const { service, repo, updates } = setup();
+      repo.findEvent.mockResolvedValue({ ...STALE, parserVersion: null });
+      await service.recoverStale('hh-1', 'evt-1');
+      expect(updates).toHaveLength(0);
+    });
+
+    it('does nothing when another sweep claimed it', async () => {
+      const { service, repo } = setup();
+      repo.claimStaleReceived.mockResolvedValue(false);
+      await service.recoverStale('hh-1', 'evt-1');
+      expect(repo.findEvent).not.toHaveBeenCalled();
+    });
   });
 
   it('reviews when the link was changed around the transaction time', async () => {
@@ -382,7 +477,7 @@ describe('BankIngestService own-account transfer', () => {
     expect(posting.post).not.toHaveBeenCalled();
   });
 
-  it('pairs an OUT with the income its IN leg already posted, waiving OUT_UNVERIFIED', async () => {
+  it('pairs an OUT with the income its IN leg already posted', async () => {
     const { service, repo, posting } = setup();
     repo.findTransferPeer.mockResolvedValue({
       ...PEER,
@@ -445,7 +540,7 @@ describe('BankIngestService own-account transfer', () => {
         ...ROUTED,
         direction: 'OUT',
         status: 'REVIEW',
-        statusReason: 'OUT_UNVERIFIED',
+        statusReason: 'TRANSFER_AWAITING_PEER',
         moneyEventType: null,
       });
       repo.findLateTransferPeer
@@ -474,11 +569,15 @@ describe('BankIngestService own-account transfer', () => {
       repo.findLateTransferPeer.mockResolvedValue({
         ...PEER,
         status: 'REVIEW',
-        statusReason: 'OUT_UNVERIFIED',
+        statusReason: 'TRANSFER_AWAITING_PEER',
         moneyEventId: null,
       });
       await service.ingest(CTX, VCB());
-      expect(posting.post).toHaveBeenLastCalledWith('hh-1', 'evt-peer', 'user-1');
+      expect(posting.post).toHaveBeenLastCalledWith(
+        'hh-1',
+        'evt-peer',
+        'user-1',
+      );
     });
 
     it('never pairs two posted transfers', async () => {
@@ -503,11 +602,16 @@ describe('BankIngestService own-account transfer', () => {
   });
 
   it('treats a lost pairing race as no peer', async () => {
+    jest.useFakeTimers();
     const { service, repo, lastStatus } = setup();
+    repo.hasOtherLinkedSource.mockResolvedValue(true);
     repo.findTransferPeer.mockResolvedValue({ ...PEER, moneyEventId: null });
     repo.pairTransfer.mockResolvedValue(false);
     await service.ingest(CTX, TCB_OUT);
-    expect(lastStatus()).toMatchObject({ statusReason: 'OUT_UNVERIFIED' });
+    expect(lastStatus()).toMatchObject({
+      statusReason: 'TRANSFER_AWAITING_PEER',
+    });
+    jest.useRealTimers();
   });
 });
 

@@ -878,7 +878,7 @@
           ]
         },
         {
-          "name": "VCB -150,000 (OUT → REVIEW OUT_UNVERIFIED)",
+          "name": "VCB -150,000 (OUT → PROCESSED, hoặc giữ 10s nếu có tài khoản khác)",
           "request": {
             "method": "POST",
             "header": [

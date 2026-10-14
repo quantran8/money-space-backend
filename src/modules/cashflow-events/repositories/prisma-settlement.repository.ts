@@ -5,6 +5,7 @@ import { PrismaRepository } from '../../../common/repositories/prisma.repository
 import type { IsoDate } from '../../../common/utils/clock';
 import type { SettledVia, SettlementEvidence } from '../domain/settlement';
 import type { MatchRuleView } from '../domain/note-match';
+import { TRANSFER_AWAITING_PEER } from '../../bank-sync/domain/transfer-counterpart';
 
 export interface SettlementMoneyEvent {
   id: string;
@@ -202,6 +203,11 @@ export class PrismaSettlementRepository extends PrismaRepository {
         where: {
           householdId,
           status: { in: ['REVIEW', 'UNMAPPED', 'DUPLICATE'] },
+          // A held OUT is not evidence until released. See memory/bank-sync.md.
+          OR: [
+            { statusReason: null },
+            { statusReason: { not: TRANSFER_AWAITING_PEER } },
+          ],
           amountMinor: { not: null },
           direction: direction === 'inflow' ? 'IN' : 'OUT',
           receivedAt: { gte: new Date(`${since}T00:00:00.000Z`) },

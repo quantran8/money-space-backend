@@ -1863,5 +1863,7 @@ model BankNotificationEvent {
   @@index([householdId, sourceId, transactionAt], map: "bank_notification_events_source_time_idx")
   @@index([householdId, identifierHmac, status], map: "bank_notification_events_identifier_idx")
   @@index([householdId, counterpartSourceId], map: "bank_notification_events_counterpart_idx")
+  // Cross-household sweeps: held OUT legs and abandoned ingests.
+  @@index([status, statusReason, receivedAt], map: "bank_notification_events_sweep_idx")
   @@map("bank_notification_events")
 }

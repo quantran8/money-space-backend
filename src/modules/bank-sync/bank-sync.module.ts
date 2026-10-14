@@ -15,6 +15,7 @@ import { BankIngestService } from './services/bank-ingest.service';
 import { BankPostingService } from './services/bank-posting.service';
 import { BankRawRetentionCron } from './services/bank-raw-retention.cron';
 import { BankSourcesService } from './services/bank-sources.service';
+import { BankTransferHoldCron } from './services/bank-transfer-hold.cron';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { BankSourcesService } from './services/bank-sources.service';
     BankPostingService,
     BankEventsService,
     BankRawRetentionCron,
+    BankTransferHoldCron,
     BankIngestTokenGuard,
     { provide: BANK_SYNC_REPOSITORY, useClass: PrismaBankSyncRepository },
   ],

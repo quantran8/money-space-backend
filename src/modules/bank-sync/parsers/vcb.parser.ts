@@ -3,7 +3,6 @@ import { parseVndAmount } from '../domain/vnd-amount';
 import {
   BankNotificationInput,
   BankNotificationParser,
-  OUT_UNVERIFIED,
   ParseResult,
   normalizeText,
 } from './bank-notification-parser';
@@ -66,7 +65,6 @@ export class VcbParser implements BankNotificationParser {
         externalReference: null,
         parserVersion: VERSION,
       },
-      reviewReason: direction === 'OUT' ? OUT_UNVERIFIED : undefined,
     };
   }
 

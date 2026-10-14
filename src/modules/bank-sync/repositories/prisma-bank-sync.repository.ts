@@ -8,7 +8,7 @@ import { isUniqueViolation } from '../../../common/repositories/prisma-errors';
 import { uuidv7 } from '../../../common/utils/uuid';
 import { PrismaService } from '../../../database/prisma/prisma.service';
 import type { BalanceObservation } from '../domain/wallet-drift';
-import { OUT_UNVERIFIED } from '../parsers/bank-notification-parser';
+import { TRANSFER_AWAITING_PEER } from '../domain/transfer-counterpart';
 import type {
   BankCredential,
   BankEventPatch,
@@ -45,6 +45,17 @@ const CREDENTIAL_SELECT = {
 const EVENT_INCLUDE = {
   moneyEvent: { select: { id: true, eventType: true } },
 } as const;
+
+// A held OUT stays out of the inbox until released. `not` alone would drop NULL reasons.
+const NOT_HELD: Prisma.BankNotificationEventWhereInput = {
+  OR: [
+    { statusReason: null },
+    { statusReason: { not: TRANSFER_AWAITING_PEER } },
+  ],
+};
+
+// A claimed event lands in the inbox if routing dies before it settles. See memory/bank-sync.md.
+const INTERRUPTED = { status: 'FAILED', statusReason: 'INTERRUPTED' } as const;
 
 /** Statuses an inbox still has to act on. */
 const OPEN_STATUSES: BankEventStatus[] = [
@@ -372,6 +383,7 @@ export class PrismaBankSyncRepository
       where: {
         householdId,
         status: { in: statuses },
+        ...NOT_HELD,
         ...(cursor ? { receivedAt: { lt: cursor } } : {}),
       },
       orderBy: { receivedAt: 'desc' },
@@ -384,7 +396,7 @@ export class PrismaBankSyncRepository
   async countOpenByStatus(householdId: string) {
     const rows = await this.prisma.bankNotificationEvent.groupBy({
       by: ['status'],
-      where: { householdId, status: { in: OPEN_STATUSES } },
+      where: { householdId, status: { in: OPEN_STATUSES }, ...NOT_HELD },
       _count: { _all: true },
     });
     return Object.fromEntries(rows.map((r) => [r.status, r._count._all]));
@@ -529,7 +541,7 @@ export class PrismaBankSyncRepository
               },
               {
                 status: 'REVIEW',
-                statusReason: OUT_UNVERIFIED,
+                statusReason: TRANSFER_AWAITING_PEER,
                 moneyEvent: { is: null },
               },
             ],
@@ -562,6 +574,60 @@ export class PrismaBankSyncRepository
       }
       throw error;
     });
+  }
+
+  async hasOtherLinkedSource(householdId: string, sourceId: string) {
+    const count = await this.prisma.bankExternalSource.count({
+      where: {
+        householdId,
+        id: { not: sourceId },
+        status: 'ACTIVE',
+        links: { some: { validTo: null } },
+      },
+    });
+    return count > 0;
+  }
+
+  findHeldEvents(before: Date, limit: number) {
+    return this.prisma.bankNotificationEvent.findMany({
+      where: {
+        status: 'REVIEW',
+        statusReason: TRANSFER_AWAITING_PEER,
+        receivedAt: { lt: before },
+      },
+      orderBy: { receivedAt: 'asc' },
+      take: limit,
+      select: { id: true, householdId: true },
+    });
+  }
+
+  async claimHeldEvent(id: string) {
+    const { count } = await this.prisma.bankNotificationEvent.updateMany({
+      where: { id, status: 'REVIEW', statusReason: TRANSFER_AWAITING_PEER },
+      data: INTERRUPTED,
+    });
+    return count === 1;
+  }
+
+  findStaleReceived(before: Date, limit: number) {
+    return this.prisma.bankNotificationEvent.findMany({
+      where: {
+        status: 'RECEIVED',
+        statusReason: null,
+        receivedAt: { lt: before },
+      },
+      orderBy: { receivedAt: 'asc' },
+      take: limit,
+      select: { id: true, householdId: true },
+    });
+  }
+
+  async claimStaleReceived(id: string) {
+    const { count } = await this.prisma.bankNotificationEvent.updateMany({
+      where: { id, status: 'RECEIVED' },
+      data: INTERRUPTED,
+    });
+    return count === 1;
   }
 
   async purgeExpiredRaw(now: Date, limit: number): Promise<number> {

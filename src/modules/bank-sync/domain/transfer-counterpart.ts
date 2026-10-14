@@ -1,3 +1,6 @@
+// An OUT leg naming its counterpart waits for the IN leg to post the transfer. See memory/bank-sync.md.
+export const TRANSFER_AWAITING_PEER = 'TRANSFER_AWAITING_PEER';
+
 const ACCOUNT = /^\d{6,19}$/;
 const MAX_CANDIDATES = 20;
 
