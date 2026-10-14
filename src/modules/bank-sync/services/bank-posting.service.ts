@@ -14,6 +14,10 @@ import type {
   BankEventStatus,
   BankNotificationEvent,
 } from '../entities/bank-sync.entity';
+import {
+  CATEGORY_CLASSIFIER,
+  type CategoryClassifier,
+} from '../classification/category-classifier';
 import { moneyEventNote } from '../domain/money-event-note';
 import { vnIsoDate } from '../domain/vn-time';
 import { balanceSyncTarget } from '../domain/wallet-drift';
@@ -52,7 +56,37 @@ export class BankPostingService {
     private readonly cache: CacheInvalidator,
     private readonly settlement: CashflowSettlementService,
     private readonly assets: AssetsService,
+    @Inject(CATEGORY_CLASSIFIER)
+    private readonly classifier: CategoryClassifier,
   ) {}
+
+  /** Classifier's pick, else `income` / `other`. A miss or failure never blocks posting. */
+  private async categoryFor(
+    householdId: string,
+    event: BankNotificationEvent,
+    note: string,
+  ): Promise<string> {
+    const inflow = event.direction === 'IN';
+    let code: string | null = null;
+    try {
+      code = await this.classifier.classify({
+        note,
+        direction: inflow ? 'IN' : 'OUT',
+        providerCode: event.providerCode,
+      });
+    } catch {
+      code = null;
+    }
+    const fallback = inflow ? 'income' : 'other';
+    if (code && code !== fallback) {
+      try {
+        return await this.moneyEvents.systemCategoryId(householdId, code);
+      } catch {
+        // Category not seeded — use the default.
+      }
+    }
+    return this.moneyEvents.systemCategoryId(householdId, fallback);
+  }
 
   /**
    * Event → money event, exactly once. The row lock serialises callers; the
@@ -104,10 +138,8 @@ export class BankPostingService {
             return 'posted' as const;
           }
           const inflow = event.direction === 'IN';
-          const categoryId = await this.moneyEvents.systemCategoryId(
-            householdId,
-            inflow ? 'income' : 'other',
-          );
+          const note = moneyEventNote(event.providerCode, event.description);
+          const categoryId = await this.categoryFor(householdId, event, note);
           const at =
             event.transactionAt ?? event.notificationAt ?? event.receivedAt;
           const created = await this.moneyEvents.createMoneyEvent(
@@ -120,7 +152,7 @@ export class BankPostingService {
               categoryId,
               toAssetId: inflow ? targetId : undefined,
               fromAssetId: inflow ? undefined : targetId,
-              note: moneyEventNote(event.providerCode, event.description),
+              note,
             },
             {
               actorId,
