@@ -64,6 +64,12 @@ and a missed branch is silent, permanent corruption with nothing to detect it.
 Derived, the same question is `assets.value < 0` at read time. No writes, no
 branches to miss.
 
+**Same-day order matters.** `event_date` is a date, not a time, so the replay
+breaks ties by `created_at` (then `id`). Without that, a bank "+3tr" followed
+minutes later by "−3tr" could replay out-then-in and mark the debit "Âm tiền"
+on a balance that never went negative. Unsaved events in a dry-run sort last
+within their day.
+
 ## Rules that need care
 
 - **`wallet_overdrawn` reads the wallet's current value**, off the asset list the

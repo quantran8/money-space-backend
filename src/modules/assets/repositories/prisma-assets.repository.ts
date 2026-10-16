@@ -694,7 +694,8 @@ export class PrismaAssetsRepository
         deletedAt: null,
         OR: [{ fromAssetId: assetId }, { toAssetId: assetId }],
       },
-      orderBy: { eventDate: 'asc' },
+      // Same-day events replay in recorded order, else an in→out pair can read as an overdraft.
+      orderBy: [{ eventDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
 
     return events.map((event) => mapMoneyEvent(event));
