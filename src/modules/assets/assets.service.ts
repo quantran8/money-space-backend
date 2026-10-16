@@ -1563,8 +1563,8 @@ export class AssetsService {
     const openingBalance =
       baseline?.openingBalance ?? this.deriveOpeningBalance(asset, events);
 
-    // Replay in date order. `findMoneyEventsByAsset` already orders by
-    // `eventDate asc`, so a back-dated edit lands in its chronological slot.
+    // Replay in date order. `findMoneyEventsByAsset` orders by (eventDate,
+    // createdAt), so a back-dated edit lands in its chronological slot.
     let running = openingBalance;
     for (const event of events) {
       running += this.eventContributionTo(event, assetId);
@@ -1646,8 +1646,10 @@ export class AssetsService {
       options?.baseline?.openingBalance ??
       this.deriveOpeningBalance(asset, stored);
     const events = options?.simulate
-      ? [...options.simulate(stored)].sort((left, right) =>
-          left.isoDate.localeCompare(right.isoDate),
+      ? [...options.simulate(stored)].sort(
+          (left, right) =>
+            left.isoDate.localeCompare(right.isoDate) ||
+            (left.createdAt ?? '\uffff').localeCompare(right.createdAt ?? '\uffff'),
         )
       : stored;
     let running = openingBalance;
