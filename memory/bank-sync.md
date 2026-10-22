@@ -231,6 +231,18 @@ là `AUTO`, vì người dùng chưa nhìn thấy chúng.
   số dư từ `Số dư: VND …`. Không có thời gian trong nội dung.
 - VCB: cụm `Số dư TK VCB <tk> ±x VND lúc dd-MM-yyyy HH:mm:ss` (giờ Việt Nam);
   số dư là cụm `Số dư x VND` **thứ hai**. `Ref` chưa được dùng làm reference.
+- VCB biên lai email (`vcb-receipt@1`, `VcbReceiptParser`, 2026-10-22): app
+  `Gmail` alias sang provider VCB nhưng **chỉ dùng parser biên lai**
+  (`parserFor(provider, app)`), nhận diện bằng dòng `Tài khoản nguồn:`. Quyết
+  định của chủ sản phẩm: Gmail chỉ nhận OUT, IN đã đi qua push của app VCB — nên
+  email dạng `Số dư TK VCB …` qua Gmail bị bỏ (`NOT_TRANSACTION`) để không trùng.
+  Mọi email Gmail khác cũng bị bỏ, không lưu. Biên lai chỉ gửi người
+  chuyển nên luôn OUT; số TK = `Tài khoản nguồn`; số tiền = `Số tiền` + `Số tiền
+  phí` khi `Loại phí: Người chuyển trả`; giờ `HH:mm … dd/MM/yyyy` (không có giây);
+  không có số dư → không đồng bộ số dư. Note = `Nội dung chuyển tiền`. Key lặp →
+  REVIEW. **Rủi ro ghi hai lần**: nếu app VCB cũng bắn push OUT cho cùng giao
+  dịch thì hai body khác nhau, không lớp chống trùng nào bắt (mục Chống trùng).
+  Giả định hiện tại: app VCB chỉ được setup cho IN.
 - Fail closed: thiếu cụm hoặc cụm khớp nhiều lần → không đoán.
 - OUT không còn bị ép REVIEW (`OUT_UNVERIFIED` đã gỡ 2026-10-13); OUT đi như IN,
   chỉ bị giữ 10s chờ chân transfer (mục trên).

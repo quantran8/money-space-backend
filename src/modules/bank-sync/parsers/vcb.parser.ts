@@ -73,7 +73,7 @@ export class VcbParser implements BankNotificationParser {
   }
 }
 
-function vnLocalToUtc(
+export function vnLocalToUtc(
   y: number,
   mo: number,
   d: number,

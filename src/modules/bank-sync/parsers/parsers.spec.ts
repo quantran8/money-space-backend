@@ -1,5 +1,6 @@
-import { providerForApp } from './parser-registry';
+import { parserFor, providerForApp } from './parser-registry';
 import { TechcombankParser } from './techcombank.parser';
+import { VcbReceiptParser } from './vcb-receipt.parser';
 import { VcbParser } from './vcb.parser';
 
 // Fabricated account numbers and amounts only.
@@ -17,6 +18,23 @@ const TCB_IN = {
 const VCB_IN = {
   title: 'Thông báo VCB',
   body: 'Số dư TK VCB 0123456789 +2,000 VND lúc 12-10-2026 14:44:34. Số dư 24,056,118 VND. Ref EXAMPLE123 chuyen tien 500,000',
+};
+
+const VCB_RECEIPT = {
+  title: 'Biên lai chuyển tiền qua tài khoản',
+  body: [
+    'Ngày, giờ giao dịch: 12:33 Thứ Tư 21/10/2026',
+    'Số lệnh giao dịch: 10000000001',
+    'Tài khoản nguồn: 0123456789',
+    'Tên người chuyển tiền: NGUYEN VAN A',
+    'Tài khoản người hưởng: VQREXAMPLE0001',
+    'Tên người hưởng: TRAN THI B',
+    'Tên ngân hàng hưởng: Ngân hàng Quân Đội',
+    'Số tiền: 2,000,000 VND',
+    'Loại phí: Người chuyển trả',
+    'Số tiền phí: 0 VND',
+    'Nội dung chuyển tiền: Thanh toan QR',
+  ].join('\n'),
 };
 
 describe('TechcombankParser', () => {
@@ -148,11 +166,75 @@ describe('VcbParser', () => {
   });
 });
 
+describe('VcbReceiptParser', () => {
+  const parser = new VcbReceiptParser();
+
+  it('reads an OUT movement from the source account', () => {
+    const result = parser.parse(VCB_RECEIPT);
+    expect(result).toEqual({
+      ok: true,
+      event: objectContaining({
+        providerCode: 'VCB',
+        accountNumber: '0123456789',
+        amountMinor: 2000000,
+        direction: 'OUT',
+        reportedBalanceMinor: null,
+        parserVersion: 'vcb-receipt@1',
+      }),
+    });
+    expect(result.ok && result.event.transactionAt?.toISOString()).toBe(
+      '2026-10-21T05:33:00.000Z',
+    );
+  });
+
+  it('adds the fee when the sender pays it', () => {
+    const result = parser.parse({
+      ...VCB_RECEIPT,
+      body: VCB_RECEIPT.body.replace(
+        'Số tiền phí: 0 VND',
+        'Số tiền phí: 5,500 VND',
+      ),
+    });
+    expect(result.ok && result.event.amountMinor).toBe(2005500);
+  });
+
+  it('fails closed when the amount line is missing', () => {
+    const result = parser.parse({
+      ...VCB_RECEIPT,
+      body: VCB_RECEIPT.body.replace('Số tiền: 2,000,000 VND\n', ''),
+    });
+    expect(result).toMatchObject({ ok: false, status: 'PARSE_FAILED' });
+  });
+
+  it('sends a repeated field to review', () => {
+    const result = parser.parse({
+      ...VCB_RECEIPT,
+      body: `${VCB_RECEIPT.body}\nSố tiền: 9,000 VND`,
+    });
+    expect(result).toMatchObject({ ok: false, status: 'REVIEW' });
+  });
+});
+
+describe('parserFor', () => {
+  it('reads only receipts from Gmail, never VCB pushes', () => {
+    const gmail = parserFor('VCB', 'Gmail');
+    expect(gmail.isBalanceMovement(VCB_RECEIPT)).toBe(true);
+    expect(gmail.isBalanceMovement(VCB_IN)).toBe(false);
+  });
+
+  it('keeps the push parser for the VCB app', () => {
+    const app = parserFor('VCB', 'VCB Digibank');
+    expect(app.isBalanceMovement(VCB_IN)).toBe(true);
+    expect(app.isBalanceMovement(VCB_RECEIPT)).toBe(false);
+  });
+});
+
 describe('providerForApp', () => {
   it.each([
     ['Techcombank', 'TECHCOMBANK'],
     ['VCB Digibank', 'VCB'],
     ['  vcb   digibank ', 'VCB'],
+    ['Gmail', 'VCB'],
     ['Zalo', null],
   ])('%s → %s', (app, expected) => {
     expect(providerForApp(app)).toBe(expected);
@@ -178,6 +260,12 @@ describe('isBalanceMovement', () => {
       vcb.isBalanceMovement({
         title: 'VCB',
         body: 'Nhận ngay ưu đãi 50,000 VND khi mở thẻ',
+      }),
+    ).toBe(false);
+    expect(
+      new VcbReceiptParser().isBalanceMovement({
+        title: 'Lịch họp',
+        body: 'Hẹn 10:00 mai nhé',
       }),
     ).toBe(false);
   });
