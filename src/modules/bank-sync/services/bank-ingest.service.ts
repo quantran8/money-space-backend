@@ -185,6 +185,7 @@ export class BankIngestService {
       return this.finish(event, {
         status: 'PARSE_FAILED',
         statusReason: 'APP_NOT_SUPPORTED',
+        description: maskLongNumbers(noteFromBody(input.body, null)),
       });
     }
 
@@ -307,6 +308,7 @@ export class BankIngestService {
       await this.repo.updateEvent(event.id, {
         status: 'PARSE_FAILED',
         statusReason: 'APP_NOT_SUPPORTED',
+        description: maskLongNumbers(noteFromBody(input.body, null)),
       });
       return 'PARSE_FAILED';
     }
@@ -346,6 +348,7 @@ export class BankIngestService {
         status: result.status,
         statusReason: result.reason,
         parserVersion: result.parserVersion,
+        description: maskLongNumbers(noteFromBody(input.body, null)),
       }).then((o) => o.status);
     }
 
@@ -718,5 +721,13 @@ function fingerprint(key: Buffer, dto: IngestBankNotificationDto): string {
 /** Masks digit runs that could be an account number. */
 function redact(title: string): string | null {
   const trimmed = title.trim().slice(0, 200);
-  return trimmed ? trimmed.replace(/\d{6,}/g, (d) => `••${d.slice(-4)}`) : null;
+  return trimmed ? maskLongNumbers(trimmed) : null;
+}
+
+/** Without a parsed account number, mask every long digit run (incl. `1903 1234 5678 01`). */
+export function maskLongNumbers(text: string): string {
+  return text.replace(/\d{4}(?: \d{2,4}){2,}|\d{6,}/g, (match) => {
+    const digits = match.replace(/\D/g, '');
+    return `••${digits.slice(-4)}`;
+  });
 }

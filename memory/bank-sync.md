@@ -109,7 +109,9 @@ post (`moneyEventNote`) note của money event chỉ lấy dòng cuối và cắ
 VCB: note là đoạn sau `Ref <mã>.` và trước chuỗi trace `FT…` (vd `Ref
 6286IBT….TRAN DINH QUAN chuyen FT2628….…` → `TRAN DINH QUAN chuyen`); không có
 `Ref` thì giữ nguyên. `description` của bank event vẫn giữ nguyên body đã che. Body
-được che và lưu vào `bank_notification_events.description` lúc parse, vì bản
+được che và lưu vào `bank_notification_events.description` lúc parse (parse lỗi /
+`APP_NOT_SUPPORTED` cũng lưu: không có số TK nên che mọi cụm ≥6 số và cụm số
+tách nhóm kiểu `1903 1234 5678 01` — `maskLongNumbers`), vì bản
 gốc mã hoá có thể đã tắt hoặc hết hạn khi người dùng xác nhận từ hộp thư. `money_events.notification_event_id UNIQUE` là chốt cuối chống
 post hai lần khi hai luồng chạy song song. `created_by` = user của credential
 (hoặc người bấm xác nhận trong inbox), không phải người tạo household.
