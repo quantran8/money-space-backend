@@ -4,7 +4,11 @@ import type { BankSyncRepository } from '../repositories/bank-sync.repository.in
 import type { BankNotificationEvent } from '../entities/bank-sync.entity';
 import { bankSyncConfig } from '../../../config/bank-sync.config';
 import { identifierHmac } from '../domain/identifier-hmac';
-import { BankIngestService, noteFromBody } from './bank-ingest.service';
+import {
+  BankIngestService,
+  maskLongNumbers,
+  noteFromBody,
+} from './bank-ingest.service';
 import type { BankPostingService } from './bank-posting.service';
 import type { CashflowMatcherService } from '../../cashflow-events/services/cashflow-matcher.service';
 
@@ -177,6 +181,18 @@ describe('BankIngestService.ingest', () => {
     const out = await service.ingest(CTX, { ...VCB(), app: 'Zalo' });
     expect(out.status).toBe('PARSE_FAILED');
     expect(lastStatus()).toMatchObject({ statusReason: 'APP_NOT_SUPPORTED' });
+  });
+
+  it('keeps the masked body when parsing fails', async () => {
+    const { service, lastStatus } = setup();
+    const out = await service.ingest(CTX, {
+      ...VCB(),
+      body: 'Số dư TK VCB 0123456789 +2,000',
+    });
+    expect(out.status).toBe('PARSE_FAILED');
+    expect(lastStatus()).toMatchObject({
+      description: 'Số dư TK VCB ••6789 +2,000',
+    });
   });
 
   it('parks an unknown account as UNMAPPED', async () => {
@@ -653,5 +669,17 @@ describe('noteFromBody', () => {
 
   it('leaves the body untouched when no account was parsed', () => {
     expect(noteFromBody('  + VND 2,000  ', null)).toBe('+ VND 2,000');
+  });
+});
+
+describe('maskLongNumbers', () => {
+  it('masks plain and space-grouped account numbers, keeps amounts and dates', () => {
+    expect(
+      maskLongNumbers(
+        'TK 0123456789, Tài khoản: 1903 1234 5678 01, 2,000,000 VND lúc 12-10-2026 14:44:34',
+      ),
+    ).toBe(
+      'TK ••6789, Tài khoản: ••7801, 2,000,000 VND lúc 12-10-2026 14:44:34',
+    );
   });
 });
