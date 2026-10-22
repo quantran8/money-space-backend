@@ -3,6 +3,7 @@ import type {
   ProviderCode,
 } from './bank-notification-parser';
 import { TechcombankParser } from './techcombank.parser';
+import { VcbReceiptParser } from './vcb-receipt.parser';
 import { VcbParser } from './vcb.parser';
 
 export const SUPPORTED_PROVIDERS: readonly ProviderCode[] = [
@@ -17,6 +18,7 @@ const APP_ALIASES: Record<string, ProviderCode> = {
   'vcb digibank': 'VCB',
   'vcb-digibank': 'VCB',
   vietcombank: 'VCB',
+  gmail: 'VCB',
 };
 
 const PARSERS: Record<ProviderCode, BankNotificationParser> = {
@@ -24,13 +26,24 @@ const PARSERS: Record<ProviderCode, BankNotificationParser> = {
   VCB: new VcbParser(),
 };
 
-export function providerForApp(app: string): ProviderCode | null {
-  const key = app.normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
-  return APP_ALIASES[key] ?? null;
+// Gmail reads VCB OUT receipts only; IN comes from the VCB app push.
+const APP_PARSERS: Record<string, BankNotificationParser> = {
+  gmail: new VcbReceiptParser(),
+};
+
+function appKey(app: string): string {
+  return app.normalize('NFC').trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-export function parserFor(provider: ProviderCode): BankNotificationParser {
-  return PARSERS[provider];
+export function providerForApp(app: string): ProviderCode | null {
+  return APP_ALIASES[appKey(app)] ?? null;
+}
+
+export function parserFor(
+  provider: ProviderCode,
+  app?: string,
+): BankNotificationParser {
+  return (app !== undefined && APP_PARSERS[appKey(app)]) || PARSERS[provider];
 }
 
 export function isProviderCode(value: unknown): value is ProviderCode {

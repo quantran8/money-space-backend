@@ -103,7 +103,7 @@ export class BankIngestService {
       );
 
     // Promo/system messages are dropped before any write. See memory/bank-sync.md.
-    if (provider && !parserFor(provider).isBalanceMovement(input)) {
+    if (provider && !parserFor(provider, dto.app).isBalanceMovement(input)) {
       this.logger.log(`bank notification skipped provider=${provider}`);
       return { eventId: null, status: 'NOT_TRANSACTION', replayed: false };
     }
@@ -340,7 +340,7 @@ export class BankIngestService {
     opts: RouteOptions,
   ): Promise<BankEventStatus> {
     const provider = event.providerCode as ProviderCode;
-    const result = parserFor(provider).parse(input);
+    const result = parserFor(provider, event.appName).parse(input);
     if (!result.ok) {
       return this.finish(event, {
         status: result.status,

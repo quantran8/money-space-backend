@@ -11,6 +11,10 @@ export function moneyEventNote(
       .trim();
   }
   if (providerCode === 'VCB') {
+    const receiptContent = /^\s*Nội dung chuyển tiền:(.*)$/mu.exec(
+      text.normalize('NFC'),
+    )?.[1];
+    if (receiptContent !== undefined) return receiptContent.trim();
     // Content sits between `Ref <code>.` and the `FT…` trace string.
     const content = /\bRef\s+[^\s.]+\.?\s*([\s\S]*)$/u.exec(text)?.[1];
     if (content === undefined) return text;
