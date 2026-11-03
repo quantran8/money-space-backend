@@ -93,6 +93,14 @@ services:
       # (5 duplicate certificates per week).
       - caddy_data:/data
       - caddy_config:/config
+      # /service/<name>/ routes written by other apps' deploys (vocab-backend) —
+      # see the import in the Caddyfile.
+      - ./routes:/etc/caddy/routes:ro
+    # `edge` is shared with other apps' compose projects on this host, so Caddy
+    # can proxy to them by alias. Created by the deploy before `up`.
+    networks:
+      - default
+      - edge
     depends_on:
       - backend
     restart: unless-stopped
@@ -100,6 +108,10 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+
+networks:
+  edge:
+    external: true
 
 # Redis persistence stays off (`--save ""`): a cache that survives restarts
 # would just serve staler data than a cold start.

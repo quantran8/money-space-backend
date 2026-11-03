@@ -207,6 +207,10 @@ jobs:
 
       - name: Upload compose file and Caddyfile
         run: |
+          # routes/ holds other apps' /service/<name>/ Caddy routes and the `edge`
+          # network connects Caddy to their containers; both must exist before `up`.
+          ssh oci "mkdir -p ${{ secrets.APP_DIR }}/routes && \
+            (docker network inspect edge > /dev/null 2>&1 || docker network create edge)"
           scp deploy/docker-compose.prod.yml oci:"${{ secrets.APP_DIR }}/docker-compose.yml"
           scp deploy/Caddyfile               oci:"${{ secrets.APP_DIR }}/Caddyfile"
 

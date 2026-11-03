@@ -120,6 +120,22 @@ Postgres is deliberately absent — the app talks to hosted Supabase.
   gone and the rollback becomes a rebuild. Migrations bound it in practice
   anyway: `prisma migrate deploy` is not reversed by starting an older image.
 
+## Other apps on this host
+
+vocab-backend (separate repo, separate compose project) is served from this
+domain at `/service/vocab/`. Contract this repo must keep:
+
+- The site block imports `/etc/caddy/routes/*.caddy`, mounted from
+  `$APP_DIR/routes`. Other apps' deploys write their snippet there and run
+  `caddy reload`; they restore the previous snippet if the reload is rejected,
+  because a bad file would otherwise crash-loop Caddy on its next restart.
+- money-space's own proxy sits in `handle {}`, so it is mutually exclusive with
+  the imported `handle_path /service/<name>/*` routes.
+- Caddy joins the external `edge` network; other apps' containers join it
+  under an alias. The deploy creates `edge` and `routes/` before `up`.
+- `docker image prune -af` in either deploy also prunes the other app's
+  unused images; both keep 7 days, so a rollback target can still vanish.
+
 ## Where it lives in code
 
 - `terraform/` — the host, network, registry and reserved IP.
