@@ -32,8 +32,18 @@
 	# The app sets its own CORS headers via app.enableCors(), so nothing is
 	# added here — duplicating them would produce two Access-Control-Allow-Origin
 	# values, which browsers reject outright.
-	reverse_proxy backend:3000 {
-		header_up X-Forwarded-Proto https
+	# Other apps on this host mount under /service/<name>/ on this same domain.
+	# Their deploys drop a route snippet into routes/ and reach their containers
+	# over the shared `edge` network; a glob with no matches is fine.
+	# See memory/infrastructure/deployment.md.
+	import /etc/caddy/routes/*.caddy
+
+	# Wrapped in `handle` so it is mutually exclusive with the imported
+	# handle_path routes: the more specific path matcher wins.
+	handle {
+		reverse_proxy backend:3000 {
+			header_up X-Forwarded-Proto https
+		}
 	}
 
 	# JSON so Alloy's json stage can parse the access log the same way it parses
