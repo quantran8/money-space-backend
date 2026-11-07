@@ -133,6 +133,11 @@ domain at `/service/vocab/`. Contract this repo must keep:
   the imported `handle_path /service/<name>/*` routes.
 - Caddy joins the external `edge` network; other apps' containers join it
   under an alias. The deploy creates `edge` and `routes/` before `up`.
+- Caddy proxies money-space at the alias `money-space-backend`, never `backend`.
+  Compose puts the service name on every network a service joins. vocab's service
+  was also `backend` (now `vocab-backend`); on `edge` the bare name resolved to
+  both, so part of `/api/v1/*` went to vocab and came back 404 with no CORS
+  headers. Any app joining `edge` must not name a service `backend`.
 - `docker image prune -af` in either deploy also prunes the other app's
   unused images; both keep 7 days, so a rollback target can still vanish.
 
