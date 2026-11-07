@@ -41,7 +41,8 @@
 	# Wrapped in `handle` so it is mutually exclusive with the imported
 	# handle_path routes: the more specific path matcher wins.
 	handle {
-		reverse_proxy backend:3000 {
+		# Not `backend`: that name also resolves to other apps' containers on `edge`.
+		reverse_proxy money-space-backend:3000 {
 			header_up X-Forwarded-Proto https
 		}
 	}

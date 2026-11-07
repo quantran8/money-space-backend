@@ -43,6 +43,12 @@ services:
       NODE_ENV: production
     ports:
       - '${APP_PORT:-3000}:3000'
+    # Caddy proxies to this alias, not to `backend`: Compose registers the
+    # service name on every network a service joins, and other apps on `edge`
+    # (vocab-backend) also call their service `backend`.
+    networks:
+      default:
+        aliases: [money-space-backend]
     depends_on:
       redis:
         condition: service_healthy
